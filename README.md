@@ -1,6 +1,11 @@
 ## Repository accompanying master thesis on generative AI in spatial planning
 
 
+### connect to hpc shell + useful commands
+- ssh login using: `ssh <username>@login01.sc.uni-leipzig.de`
+- check available modules: `module avail`
+- load required modules: `module load <module_name>`
+
 ### connect to jupyter hub server on HPC
 - selet exisitng juypter hub server in vs code on kernel selection
 - create a new session in jupyter hub
