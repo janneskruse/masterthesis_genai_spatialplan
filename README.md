@@ -16,6 +16,13 @@
 
 
 ### Installation
+- if you can not install python >=3.10 on your system: install from conda environment.yml: `conda env create -f environment.yml`
+    - then activate conda environment: `conda activate genaiSpatialplan`
+- else `conda deactivate` if you have conda installed
+- install poetry: `poetry install` to install packages from pyproject.toml
+- create jupyter kernel using: `poetry run python -m ipykernel install --user --name tf-genaiSpatialplan`
+
+Deprecated:
 - install from conda environment.yml: `conda env create -f environment.yml`
 - activate conda environment: `conda activate genaiSpatialplan`
 - install jupyter kernel using: `python -m ipykernel install --user --name genaiSpatialplan`
