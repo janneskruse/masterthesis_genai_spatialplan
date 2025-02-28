@@ -1,9 +1,23 @@
-name: tf-genaiSpatialplan
+name: genaiSpatialplan
 channels:
   - anaconda
   - defaults
 dependencies:
   - python=3.11
+  - pip
   - pip:
-    - poetry
+    - numpy
+    - pandas
+    - geopandas[complete]
+    - pyarrow
+    - osmnx
+    - matplotlib
+    - seaborn
+    - xarray
+    - rasterio
+    - fiona
+    - shapely
+    - leafmap
+    - ipyleaflet
+    - jupyter[complete]
     
