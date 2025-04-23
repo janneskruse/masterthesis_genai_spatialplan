@@ -6,18 +6,24 @@ dependencies:
   - python=3.11
   - pip
   - pip:
+    - python-dotenv
     - numpy
     - pandas
     - geopandas[complete]
+    - polars
     - pyarrow
     - osmnx
+    - overpass
     - matplotlib
+    - mapclassify
     - seaborn
-    - xarray
+    - xarray[complete]
+    - rioxarray
     - rasterio
     - fiona
     - shapely
     - leafmap
     - ipyleaflet
     - jupyter[complete]
+    - boto3
     
