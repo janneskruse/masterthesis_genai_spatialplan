@@ -11,7 +11,10 @@ dependencies:
     - pandas
     - geopandas[complete]
     - polars
+    - lonboard
     - pyarrow
+    - geoarrow-pyarrow 
+    - geoarrow-pandas
     - osmnx
     - overpass
     - matplotlib
