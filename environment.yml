@@ -9,7 +9,7 @@ dependencies:
     - python-dotenv
     - numpy
     - pandas
-    - geopandas[complete]
+    - geopandas
     - polars
     - lonboard
     - pyarrow
@@ -20,7 +20,9 @@ dependencies:
     - matplotlib
     - mapclassify
     - seaborn
-    - xarray[complete]
+    - xarray
+    - dask
+    - zarr
     - rioxarray
     - rasterio
     - scikit-image
@@ -28,6 +30,11 @@ dependencies:
     - shapely
     - leafmap
     - ipyleaflet
-    - jupyter[complete]
+    - jupyter
     - boto3
+    - torch
+    - torchvision
+    - torchaudio
+    - "--extra-index-url=https://download.pytorch.org/whl/cu118"
+    - torch-summary
     
