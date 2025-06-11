@@ -28,3 +28,14 @@ Deprecated:
 - else `conda deactivate` if you have conda installed
 - install poetry: `poetry install` to install packages from pyproject.toml
 - create jupyter kernel using: `poetry run python -m ipykernel install --user --name tf-genaiSpatialplan`
+
+### Copy from and to HPC
+- copy files from local to HPC: `scp <local_file_path> <username>@login01.sc.uni-leipzig.de:<remote_file_path>`
+- copy files from HPC to local: `scp <username>@login01.sc.uni-leipzig.de:<remote_file_path> <local_file_path>`
+
+Steps:
+1. create a new workspace on the HPC cluster: `ws_allocate <name> <duration>`, e.g. `ws_allocate genai_spatial 30`
+2. Set a reminder email before a workspace expires with `ws_send_ical <workspace~name> "<your~email>", e.g. `ws_send_ical <username>-genai_spatial "<your_email>@example.com"`
+3. Convert dataset to zip
+4. Copy the local dataset to the HPC cluster using `scp` command. e.g for model_input_dataset.zarr `scp model_input_dataset.zarr.zip <username>@login01.sc.uni-leipzig.de:/work/<username>-genai_spatial`
+5. Unzip the dataset on the HPC cluster using `unzip model_input_dataset.zarr.zip`
