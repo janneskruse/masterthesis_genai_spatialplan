@@ -5,6 +5,9 @@ poetry.lock
 
 data/*
 !data/processed
+!data/dwd/
+data/dwd/*
+!data/dwd/KL_Tageswerte_Beschreibung_Stationen.txt
 data/processed/*.zarr
 data/processed/*.zip
 data/processed/model_input.zarr
