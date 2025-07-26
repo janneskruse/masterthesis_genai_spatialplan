@@ -1,0 +1,9 @@
+max_cloud_coverage: 10
+temperature_day_filter:
+  min: 25
+  consecutive_days: 3
+  years: 
+    start: 2018
+    end: 2022
+regions: ["Leipzig", "Dresden", "Hamburg"]
+  
