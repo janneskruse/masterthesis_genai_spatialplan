@@ -3,6 +3,11 @@ poetry.lock
 
 .env
 
-data
+data/*
+!data/processed
+data/processed/*.zarr
+data/processed/*.zip
+data/processed/model_input.zarr
+
 *.pdf
 cache
