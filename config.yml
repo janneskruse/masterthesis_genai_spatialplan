@@ -7,5 +7,6 @@ temperature_day_filter:
 landsat_query:
   max_cloud_coverage: 10
   collections: ["landsat-c2l2-st"]
+big_data_storage_path: "work/zt75vipu-master/data"
 regions: ["Leipzig", "Dresden", "Hamburg"]
   
