@@ -1,9 +1,11 @@
-max_cloud_coverage: 10
 temperature_day_filter:
   min: 25
   consecutive_days: 3
   years: 
     start: 2018
     end: 2022
+landsat_query:
+  max_cloud_coverage: 10
+  collections: ["landsat-c2l2-st"]
 regions: ["Leipzig", "Dresden", "Hamburg"]
   
