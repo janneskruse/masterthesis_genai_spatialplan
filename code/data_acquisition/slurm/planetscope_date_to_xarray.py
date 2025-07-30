@@ -1,0 +1,283 @@
+## Script to aquire and pre-process Planet Lab's (Planetscope) data to an Xarray cube
+# Planetscope images are high resolution (3m) satellite images from Planet Labs
+# Planet lab's has a rest api for metadata based search: https://developers.planet.com/docs/apis/data/reference/#tag/Item-Search
+# More information on search filters etc. can be found here: https://developers.planet.com/docs/apis/data/searches-filtering/
+# From the results, the images then can be downloaded like indicated here:
+# https://developers.planet.com/docs/planetschool/downloading-imagery-with-data-api/
+
+## Import libraries
+# system
+import os
+import time
+import calendar
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import hashlib
+from dotenv import load_dotenv
+
+# data manipulation
+import json
+import yaml
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+import rasterio as rio # needed for xarray.rio to work
+import xarray as xr
+import rioxarray as rxr
+from skimage.exposure import match_histograms
+from rioxarray.merge import merge_arrays
+from shapely.geometry import box, shape
+
+# visualization
+from tqdm import tqdm
+
+##### Function to exit on error ######
+def exit_with_error(message):
+    print(message)
+    print("Finishing due to error at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit(1)
+
+###### setup config variables #######
+repo_name = 'masterthesis_genai_spatialplan'
+if not repo_name in os.getcwd():
+    os.chdir(repo_name)
+
+p=os.popen('git rev-parse --show-toplevel')
+repo_dir = p.read().strip()
+p.close()
+
+with open(f"{repo_dir}/config.yml", 'r') as stream:
+    config = yaml.safe_load(stream)
+
+# Load .env file
+load_dotenv(dotenv_path=f"{repo_dir}/.env")
+
+# planet lab
+base_url="https://api.planet.com/data/v1"
+planet_api_key=(os.getenv("PLANET_API_KEY"), "")
+request_path="/quick-search"
+url=f"{base_url}{request_path}"
+
+
+####### Get the region to process #######
+try:
+    if "REGION_NAME" in os.environ:
+        region = os.environ["REGION_NAME"] 
+    else:
+        exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+except Exception as e:
+    print("Error getting region from environment:", e)
+    exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+
+# setup folders
+big_data_storage_path = config.get("big_data_storage_path", "work/zt75vipu-master/data")
+planet_region_folder = f"{big_data_storage_path}/planet_scope/{region.lower()}"
+os.makedirs(planet_region_folder, exist_ok=True)
+
+##### get the landsat zarr file name ######
+try:
+    if "LANDSAT_ZARR_NAME" in os.environ:
+        landsat_zarr_name = os.environ["LANDSAT_ZARR_NAME"]
+    else:
+        exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+except Exception as e:
+    print("Error getting landsat zarr name from environment:", e)
+    exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+
+##### get the config variables from the landsat zarr name ######
+try:
+    landsat_zarr_name_noext = os.path.splitext(os.path.basename(landsat_zarr_name.split("/").pop()))[0]
+    parts = landsat_zarr_name_noext.split("_")
+    min_temperature = int([x for x in parts if x.startswith("ge")][0].replace("ge", ""))
+    max_cloud_cover = int([x for x in parts if x.startswith("cc")][0].replace("cc", ""))
+    years = [x for x in parts if x.isdigit() and len(x) == 4]
+    start_year = years[0]
+    end_year = years[1]
+    
+    if not min_temperature or not max_cloud_cover or not start_year or not end_year:
+        exit_with_error("Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+except Exception as e:
+    print("Error parsing landsat zarr name:", e)
+    exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    
+planet_zarr_name = f"{planet_region_folder}/planet_temperature_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
+
+######## Try except Planet data processing ########
+try:
+    
+    if os.path.exists(planet_zarr_name):
+        print(f"PlanetScope data already exists at {planet_zarr_name}, skipping processing.")
+        exit(0)
+    
+    if "FILENAME" in os.environ:
+        filename = os.environ["FILENAME"]
+    else:
+        exit_with_error("Filename not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    
+    folderpath=f"{planet_region_folder}/planet_tmp"
+    collection=gpd.read_parquet(filename)
+    scene_date=collection.date_id.iloc[0]
+    scene_date=scene_date.replace("-","")
+    collection_folder=f"{folderpath}/psscene_{scene_date}"
+    collection_files=os.listdir(collection_folder)
+    collection_files=[f"{collection_folder}/{file}" for file in collection_files]
+        
+    planet_date_zarr_name = f"{planet_region_folder}/planet_scope_{scene_date}.zarr"
+    
+    if os.path.exists(planet_date_zarr_name):
+        print(f"PlanetScope data for date {scene_date} already exists at {planet_date_zarr_name}, skipping processing.")
+        exit(0)
+        
+    ############ Define the bbox ############ 
+    ghsl_df_new = gpd.read_parquet(f"{repo_dir}/data/processed/ghsl_regions.parquet")
+    bbox_gdf = gpd.GeoDataFrame(geometry=ghsl_df_new[ghsl_df_new["region_name"]==region].bbox, crs="EPSG:4326")
+    bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
+    coordinates=json.loads(bbox_gdf.geometry.to_json())["features"][0]["geometry"]["coordinates"]
+
+    def readPlanetScopetoXarrayDS(filepath:str):
+        """
+        Read PlanetScope tif files to xarray dataset and attach metadata.
+        
+        args:
+        filepath: str, path to the tif file    
+        """
+        # Open with chunking for memory efficiency
+        xda=rxr.open_rasterio(filepath, chunks={'x': 1024, 'y': 1024})
+        xda = xda.rio.reproject("EPSG:4326")
+
+        #clip to bbox
+        xda = xda.rio.clip([bbox_gdf.geometry.iloc[0]], bbox_gdf.crs)
+
+        # rename bands to ['blue', 'green', 'red', 'nir']
+        xda=xda.rename({"band": "channel"})
+        xda=xda.assign_coords(channel=["blue", "green", "red", "nir"])
+
+        #remove spatial_ref coords
+        # xda=xda.drop_vars(["spatial_ref"])
+
+        #add attributes
+        xda=xda.assign_attrs(
+            scale_factor=0.0001,
+            offset=0.0,
+            units= 'reflectance',
+            description= 'Analysis-Ready PlanetScope Surface Reflectance'
+        )
+
+        #rename variable
+        xda=xda.rename("planetscope_sr_4band")
+
+        #process datetime from attributes
+        tiff_datetime = xda.attrs["TIFFTAG_DATETIME"]  # "2019:07:27 08:10:45"
+        tiff_datetime = tiff_datetime.replace(":", "-", 2)
+        xda = xda.expand_dims(time=[np.datetime64(tiff_datetime)])
+        
+        #remove unneeded attrs
+        xda.attrs.pop("TIFFTAG_DATETIME", None)
+        
+        
+        #add another variable from TIFFTAG_IMAGEDESCRIPTION
+        image_description = xda.attrs["TIFFTAG_IMAGEDESCRIPTION"]
+        xda.attrs.pop("TIFFTAG_IMAGEDESCRIPTION", None)
+        xds=xda.to_dataset()
+        xds["meta_planetscope_sr_4band"] = xr.DataArray([image_description], dims=["time"])
+        
+        return xds
+
+    def extract_quality_score(xds):
+        import json
+        try:
+            attrs = json.loads(xds["meta_planetscope_sr_4band"].values[0])
+            ac = attrs["atmospheric_correction"]
+            aot = ac["aot_used"]
+            zenith = ac["solar_zenith_angle"]
+            return 1 / ((1 + aot) * (1 + zenith))
+        except:
+            return 0  # fallback
+
+    #read all files
+    xds_list=[readPlanetScopetoXarrayDS(file) for file in collection_files]
+
+    # Sort by quality
+    xds_list.sort(key=extract_quality_score, reverse=True)
+
+    dataarrays = [
+        ds["planetscope_sr_4band"].squeeze("time").transpose("channel", "y", "x")
+        for ds in xds_list
+    ]
+
+    # set crs for all dataarrays
+    # for da in dataarrays:
+    #     da.rio.write_crs("EPSG:32633", inplace=True)
+
+    # as float for rio merge later
+    dataarrays = [
+        da.astype("float32") for da in dataarrays
+    ]
+
+    def safe_histogram_match(source, reference):
+        matched_bands = []
+        for b in range(source.shape[0]):
+            src = source[b].values
+            ref = reference[b].values
+
+            # Mask out invalid (nan or 0)
+            valid_src = np.isfinite(src) & (src > 0)
+            valid_ref = np.isfinite(ref) & (ref > 0)
+
+            # Only match on valid pixels
+            matched = np.full_like(src, np.nan, dtype="float32")
+            if valid_src.sum() > 0 and valid_ref.sum() > 0:
+                matched_valid = match_histograms(
+                    src[valid_src],
+                    ref[valid_ref],
+                )
+                matched[valid_src] = matched_valid.astype("float32")
+
+            matched_bands.append(matched)
+
+        return xr.DataArray(
+            np.stack(matched_bands),
+            dims=source.dims,
+            coords=source.coords,
+            attrs=source.attrs,
+        ).rio.write_crs(source.rio.crs)
+
+    reference = dataarrays[0]
+    matched_dataarrays = [reference]
+
+    # Apply to all except the reference scene
+    for da in dataarrays[1:]:
+        matched_dataarrays.append(safe_histogram_match(da, reference))
+
+
+    merged = merge_arrays(
+        matched_dataarrays,
+        method="first",
+        nodata=np.nan,
+        res=None,
+    )
+
+    # back to int
+    merged = (merged * 1).astype("int16")
+
+    # Add time dimension and rechunk
+    scene_date_np=np.datetime64(pd.to_datetime(scene_date))
+    merged = merged.expand_dims(time=[scene_date_np])
+    merged=merged.chunk({'y': 1024, 'x': 1024, 'time': 1, 'channel': 4})
+
+    # Derive NDVI dataarray from the planetscope data
+    #create dataset from merged
+    merged = merged.to_dataset(name="planetscope_sr_4band")
+
+    # create ndvi
+    merged["ndvi"] = (merged.planetscope_sr_4band.isel(channel=3) - merged.planetscope_sr_4band.isel(channel=2)) / (merged.planetscope_sr_4band.isel(channel=3) + merged.planetscope_sr_4band.isel(channel=2))
+
+    # this also applies all the transformations (mean() etc. and therefore might take some time)
+    merged.to_zarr(planet_date_zarr_name, mode='w')
+
+    # merged=xr.open_zarr(f"{planet_region_folder}/planet_scope_{scene_date}.zarr")
+
+except Exception as e:
+    print(f"An error occurred: {e}")
+    exit_with_error(f"An error occurred: {e}")

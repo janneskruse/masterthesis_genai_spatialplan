@@ -2,8 +2,9 @@ temperature_day_filter:
   min: 25
   consecutive_days: 3
   years: 
-    start: 2018
-    end: 2022
+    start: 2019
+    end: 2024
+  max_dates_per_year: 1 # to avoid too many scenes for planet scope
 landsat_query:
   max_cloud_coverage: 10
   collections: ["landsat-c2l2-st"]
