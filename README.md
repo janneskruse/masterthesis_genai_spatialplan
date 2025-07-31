@@ -1,20 +1,6 @@
 ## Repository accompanying master thesis on generative AI in spatial planning
 
 
-### connect to hpc shell + useful commands
-- ssh login using: `ssh <username>@login01.sc.uni-leipzig.de`
-- check available modules: `module avail`
-- load required modules: `module load <module_name>`
-
-### connect to jupyter hub server on HPC
-- selet exisitng juypter hub server in vs code on kernel selection
-- create a new session in jupyter hub
-- generate a token in the jupyter hub session
-- set url to `https://lab.sc.uni-leipzig.de/jupyter/`
-- set username to hpc username
-- set password/token to generated token
-
-
 ### Installation
 - install from conda environment.yml: `conda env create -f environment.yml`
 - activate conda environment: `conda activate genaiSpatialplan`
@@ -29,6 +15,17 @@ Deprecated:
 - install poetry: `poetry install` to install packages from pyproject.toml
 - create jupyter kernel using: `poetry run python -m ipykernel install --user --name tf-genaiSpatialplan`
 
+### Running the pipeline
+There is a pipeline for the data acquisition and processing to acquire the model input dataset. The pipeline can be configured to choose different regions and different temperature settings using the [config.yml](./config.yml) file. Please ensure all parameters are set before running the pipeline.
+
+Also, make sure to download and convert the respective building height dataset like done and explained in the notebook [osm_to_xarray.ipynb](./code/data_acquisition/osm_to_xarray.ipynb).
+For Germany there already is a parquet file containing the building height data [here](https://www.dropbox.com/scl/fi/g1krcq2zj5wb6letsf65m/building_heights_germany.parquet?rlkey=a8pmpqtlu9wowttvfxgcb5rjp&st=twctw6j3&dl=0) that you can download and save to [data/che_etal/Germany_Hungary_Iceland](./data/che_etal/Germany_Hungary_Iceland) for the pipeline to work on all German regions.
+
+To check which regions are available, open [data/ghsl/ghsl_data.parquet](./data/ghsl/ghsl_data.parquet) - e.g. using pandas or geopandas.
+
+The pipeline can then be submitted to the HPC cluster using the [`acquire_model_data.sh`](./code/data_acquisition/slurm/acquire_model_data.sh) script. This script will automatically create jobs for all pipeline steps. To check the status, run `squeue -u <username>` on the HPC cluster.
+
+
 ### Copy from and to HPC
 - copy files from local to HPC: `scp <local_file_path> <username>@login01.sc.uni-leipzig.de:<remote_file_path>`
 - copy files from HPC to local: `scp <username>@login01.sc.uni-leipzig.de:<remote_file_path> <local_file_path>`
@@ -39,3 +36,16 @@ Steps:
 3. Convert dataset to zip
 4. Copy the local dataset to the HPC cluster using `scp` command. e.g for model_input_dataset.zarr `scp model_input_dataset.zarr.zip <username>@login01.sc.uni-leipzig.de:/work/<username>-genai_spatial`
 5. Unzip the dataset on the HPC cluster using `unzip model_input_dataset.zarr.zip`
+
+### connect to hpc shell + useful commands
+- ssh login using: `ssh <username>@login01.sc.uni-leipzig.de`
+- check available modules: `module avail`
+- load required modules: `module load <module_name>`
+
+### connect to jupyter hub server on HPC
+- selet exisitng juypter hub server in vs code on kernel selection
+- create a new session in jupyter hub
+- generate a token in the jupyter hub session
+- set url to `https://lab.sc.uni-leipzig.de/jupyter/`
+- set username to hpc username
+- set password/token to generated token
