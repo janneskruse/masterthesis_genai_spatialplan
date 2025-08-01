@@ -16,14 +16,15 @@ Deprecated:
 - create jupyter kernel using: `poetry run python -m ipykernel install --user --name tf-genaiSpatialplan`
 
 ### Running the pipeline
-There is a pipeline for the data acquisition and processing to acquire the model input dataset. The pipeline can be configured to choose different regions and different temperature settings using the [config.yml](./config.yml) file. Please ensure all parameters are set before running the pipeline.
+There is a pipeline for the data acquisition and processing to acquire the model input dataset. The pipeline can be configured to choose different regions and different temperature settings using the [config.yml](./config.yml) file. 
 
-Also, make sure to download and convert the respective building height dataset like done and explained in the notebook [osm_to_xarray.ipynb](./code/data_acquisition/osm_to_xarray.ipynb).
-For Germany there already is a parquet file containing the building height data [here](https://www.dropbox.com/scl/fi/g1krcq2zj5wb6letsf65m/building_heights_germany.parquet?rlkey=a8pmpqtlu9wowttvfxgcb5rjp&st=twctw6j3&dl=0) that you can download and save to [data/che_etal/Germany_Hungary_Iceland](./data/che_etal/Germany_Hungary_Iceland) for the pipeline to work on all German regions.
+To run the pipeline:
 
-To check which regions are available, open [data/ghsl/ghsl_data.parquet](./data/ghsl/ghsl_data.parquet) - e.g. using pandas or geopandas.
-
-The pipeline can then be submitted to the HPC cluster using the [`submit_pipeline.sh`](./code/data_acquisition/slurm/submit_pipeline.sh) script. This script will automatically create jobs for all pipeline steps. To check the status, run `squeue -u <username>` on the HPC cluster.
+1. Please ensure all parameters are set before running the pipeline. To check which regions are available, open [data/ghsl/ghsl_data.parquet](./data/ghsl/ghsl_data.parquet) - e.g. using pandas or geopandas.
+2. Create a new workspace under your username on the HPC cluster. You can do this by running `ws_allocate <name> <duration>` in the HPC shell, e.g. `ws_allocate master 30` to create a workspace named `<username>-master` for 30 days.
+3. Make sure to download and convert the respective building height dataset like done and explained in the notebook [osm_to_xarray.ipynb](./code/data_acquisition/osm_to_xarray.ipynb). For Germany there already is a parquet file containing the building height data [here](https://www.dropbox.com/scl/fi/g1krcq2zj5wb6letsf65m/building_heights_germany.parquet?rlkey=a8pmpqtlu9wowttvfxgcb5rjp&st=twctw6j3&dl=0) that you can download and save to [data/che_etal/Germany_Hungary_Iceland](./data/che_etal/Germany_Hungary_Iceland) for the pipeline to work on all German regions.
+4. Create the conda environment like indicated above and activate it.
+5. Submit the pipeline to the HPC cluster using the [`submit_pipeline.py`](./code/data_acquisition/slurm/submit_pipeline.py) script: `python submit_pipeline.py`. This script will automatically create jobs for all pipeline steps. To check the status, run `squeue -u <username>` on the HPC cluster.
 
 
 ### Copy from and to HPC
