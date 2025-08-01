@@ -22,10 +22,10 @@ CONFIG_FILE="$REPO_ROOT/config.yml"
 
 # Load vars from config.yaml
 big_data_storage_path=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "big_data_storage_path")
-min_temperature=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.min_temperature")
-max_cloud_cover=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.max_cloud_cover")
-start_year=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.years.start_year")
-end_year=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.years.end_year")
+min_temperature=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.min")
+max_cloud_cover=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "landsat_query.max_cloud_coverage")
+start_year=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.years.start")
+end_year=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.years.end")
 
 # Construct the input filename
 input_filename ="${big_data_storage_path}/processed/input_config_ge${min_temperature}_cc${max_cloud_cover}_${start_year}_${end_year}.zarr"

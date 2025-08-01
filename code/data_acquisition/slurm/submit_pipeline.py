@@ -60,10 +60,10 @@ def main():
     print("Loading configuration...")
     
     big_data_storage_path = config['big_data_storage_path']
-    min_temperature = config['temperature_day_filter']['min_temperature']
-    max_cloud_cover = config['temperature_day_filter']['max_cloud_cover']
-    start_year = config['temperature_day_filter']['years']['start_year']
-    end_year = config['temperature_day_filter']['years']['end_year']
+    min_temperature = config['temperature_day_filter']['min']
+    max_cloud_cover = config['landsat_query']['max_cloud_coverage']
+    start_year = config['temperature_day_filter']['years']['start']
+    end_year = config['temperature_day_filter']['years']['end']
     
     # Construct the input filename
     input_filename = f"{big_data_storage_path}/processed/input_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
