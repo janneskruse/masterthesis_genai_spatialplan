@@ -1,5 +1,16 @@
 #!/bin/bash
 
+#SBATCH --time=0:01:00
+#SBATCH --job-name="SubmitPipeline"
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=10
+#SBATCH --partition=paul
+#SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de
+#SBATCH --mail-type=ALL 
+#SBATCH -o "outputs/request_planetscope.%j.txt"
+
 # Load Anaconda environment
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
@@ -10,7 +21,6 @@ REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
 CONFIG_FILE="$REPO_ROOT/config.yml"
 
 # Load vars from config.yaml
-eval $(python ${REPO_ROOT}/code/helpers/landsat_config.py "$CONFIG_FILE" "$region")
 big_data_storage_path=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "big_data_storage_path")
 min_temperature=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.min_temperature")
 max_cloud_cover=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.max_cloud_cover")
