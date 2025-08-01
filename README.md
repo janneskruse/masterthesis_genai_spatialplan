@@ -23,7 +23,7 @@ For Germany there already is a parquet file containing the building height data 
 
 To check which regions are available, open [data/ghsl/ghsl_data.parquet](./data/ghsl/ghsl_data.parquet) - e.g. using pandas or geopandas.
 
-The pipeline can then be submitted to the HPC cluster using the [`acquire_model_data.sh`](./code/data_acquisition/slurm/acquire_model_data.sh) script. This script will automatically create jobs for all pipeline steps. To check the status, run `squeue -u <username>` on the HPC cluster.
+The pipeline can then be submitted to the HPC cluster using the [`submit_pipeline.sh`](./code/data_acquisition/slurm/submit_pipeline.sh) script. This script will automatically create jobs for all pipeline steps. To check the status, run `squeue -u <username>` on the HPC cluster.
 
 
 ### Copy from and to HPC
