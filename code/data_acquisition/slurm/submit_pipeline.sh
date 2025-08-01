@@ -80,7 +80,24 @@ for region in "${regions[@]}"; do
         echo "PlanetScope job ID: $planet_request_job_id"
     else
         echo "PlanetScope file already exists for $region: $planet_zarr_name"
+        planet_request_job_id=""
     fi
+
+    # if all exists but not the processed zarr, submit the combine job
+    if [ -z "$landsat_job_id" ] && [ -z "$osm_job_id" ] && [ -z "$planet_request_job_id" ] && [ ! -f "$processed_zarr_name" ]; then
+        echo "Submitting combine job for $region (file: $processed_zarr_name)"
+    
+        # Check if a combine job is already running for this region
+        existing_job=$(squeue -u $USER --name="combine_region_$region" --noheader --format="%i" 2>/dev/null)
+        
+        if [ -n "$existing_job" ]; then
+            echo "Combine job already running for region $region (Job ID: $existing_job). Skipping submission."
+        else
+            # Submit the combine job for the region
+            combine_job=$(sbatch --parsable --job-name="combine_region_$region" --export=region="$region",landsat_zarr_name="$landsat_zarr_name",osm_zarr_name="$osm_zarr_name",planet_zarr_name="$planet_zarr_name",region_filenames_json="$region_filenames_json" ./combine_region_datasets.sh)
+            echo "Submitted combine job for region $region: $combine_job"
+            done
+        fi
     
     echo "---"
 done
