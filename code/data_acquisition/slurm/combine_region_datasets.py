@@ -1,13 +1,9 @@
-## Script to aquire and pre-process Planet Lab's (Planetscope) data to an Xarray cube
-# Planetscope images are high resolution (3m) satellite images from Planet Labs
-# Planet lab's has a rest api for metadata based search: https://developers.planet.com/docs/apis/data/reference/#tag/Item-Search
-# More information on search filters etc. can be found here: https://developers.planet.com/docs/apis/data/searches-filtering/
-# From the results, the images then can be downloaded like indicated here:
-# https://developers.planet.com/docs/planetschool/downloading-imagery-with-data-api/
+## Combine all datasets of the region to a single zarr file
 
 ## Import libraries
 # system
 import os
+import sys
 import time
 import calendar
 import requests
@@ -47,18 +43,11 @@ p=os.popen('git rev-parse --show-toplevel')
 repo_dir = p.read().strip()
 p.close()
 
+# import helper functions
+# sys.path.append(f"{repo_dir}/code/helpers")
+
 with open(f"{repo_dir}/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
-
-# Load .env file
-load_dotenv(dotenv_path=f"{repo_dir}/.env")
-
-# planet lab
-base_url="https://api.planet.com/data/v1"
-planet_api_key=(os.getenv("PLANET_API_KEY"), "")
-request_path="/quick-search"
-url=f"{base_url}{request_path}"
-
 
 ####### Get the region to process #######
 try:
@@ -72,8 +61,8 @@ except Exception as e:
 
 # setup folders
 big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
-planet_region_folder = f"{big_data_storage_path}/planet_scope/{region.lower()}"
-os.makedirs(planet_region_folder, exist_ok=True)
+processed_region_folder = f"{big_data_storage_path}/processed/{region.lower()}"
+os.makedirs(processed_region_folder, exist_ok=True)
 
 ##### get the landsat zarr file name ######
 try:
@@ -100,35 +89,38 @@ try:
 except Exception as e:
     print("Error parsing landsat zarr name:", e)
     exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    
-planet_zarr_name = f"{planet_region_folder}/planet_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 
-######## Try except Planet data processing ########
+
+####### get the planet zarr file name ######
 try:
-    if os.path.exists(planet_zarr_name):
-        print(f"PlanetScope data already exists at {planet_zarr_name}, skipping processing.")
-        exit(0)
-    
-    if "FILENAMES" in os.environ:
-        filenames = os.environ["FILENAMES"]
+    if "PLANET_ZARR_NAME" in os.environ:
+        planet_zarr_name = os.environ["PLANET_ZARR_NAME"]
     else:
-        exit_with_error("Filenames not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-
-    print(f"Processing PlanetScope data for region {region} from files: {filenames} at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    exit(0) # for testing purposes
-
-    xr_ds_list = [xr.open_zarr(filename) for filename in filenames.split(",") if os.path.exists(filename)]
-
-    if not xr_ds_list:
-        exit_with_error("No valid xarray datasets found in the provided filenames, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    
-    #concat along time dimension
-    xds = xr.concat(xr_ds_list, dim="time")
-    
-    # write to zarr
-    xds.to_zarr(planet_zarr_name, mode='w', consolidated=True)
-    print(f"PlanetScope data written to {planet_zarr_name}")
-
+        exit_with_error("Planet Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
 except Exception as e:
-    print(f"An error occurred: {e}")
-    exit_with_error(f"An error occurred: {e}")
+    print("Error getting planet zarr name from environment:", e)
+    exit_with_error("Planet Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    
+####### get the OSM zarr file name ######
+try:
+    if "OSM_ZARR_NAME" in os.environ:
+        osm_zarr_name = os.environ["OSM_ZARR_NAME"]
+    else:
+        exit_with_error("OSM Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+except Exception as e:
+    print("Error getting OSM zarr name from environment:", e)
+    exit_with_error("OSM Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    
+processed_zarr_name = f"{processed_region_folder}/input_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
+
+print(f"Combining datasets for region: {region} at", time.strftime("%Y-%m-%d %H:%M:%S"), "to store at", processed_zarr_name)
+exit(0)  # Exit early for testing purposes
+
+if os.path.exists(processed_zarr_name):
+    print(f"Processed data already exists at {processed_zarr_name}, skipping processing.")
+    exit(0)
+
+####### read the zarr files #######
+xr_landsat = xr.open_zarr(landsat_zarr_name)
+xr_planet = xr.open_zarr(planet_zarr_name)
+xr_osm = xr.open_zarr(osm_zarr_name)

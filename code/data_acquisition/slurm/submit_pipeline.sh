@@ -1,0 +1,86 @@
+#!/bin/bash
+
+# Load Anaconda environment
+source /home/sc.uni-leipzig.de/${USER}/.bashrc
+source activate genaiSpatialplan
+
+# Find the repository root directory to locate the config file
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
+CONFIG_FILE="$REPO_ROOT/config.yml"
+
+# Load vars from config.yaml
+eval $(python ${REPO_ROOT}/code/helpers/landsat_config.py "$CONFIG_FILE" "$region")
+big_data_storage_path=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "big_data_storage_path")
+min_temperature=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.min_temperature")
+max_cloud_cover=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.max_cloud_cover")
+start_year=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.years.start_year")
+end_year=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.years.end_year")
+
+# Construct the input filename
+input_filename ="${big_data_storage_path}/processed/input_config_ge${min_temperature}_cc${max_cloud_cover}_${start_year}_${end_year}.zarr"
+echo "Input filename: $input_filename"
+
+# Check if the input file already exists
+if [ -f "$input_filename" ]; then
+    echo "Input file already exists: $input_filename"
+    exit 0
+else
+    echo "Input file does not exist, proceeding with data acquisition."
+fi
+
+region_filenames_json=$(python ${REPO_ROOT}/code/helpers/get_region_filenames.py "$CONFIG_FILE")
+
+# Submit jobs for each region
+for region in "${regions[@]}"; do
+    echo "Processing region: $region"
+    
+    # Extract filenames for the region
+    landsat_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".landsat_zarr_name")
+    osm_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".osm_zarr_name")
+    planet_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".planet_zarr_name")
+    processed_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".processed_zarr_name")
+
+    # If the processed zarr file already exists, skip the region
+    if [ -f "$processed_zarr_name" ]; then
+        echo "Processed Zarr file for region $region already exists: $processed_zarr_name"
+        continue
+    fi
+
+    # Submit Landsat job
+    if [ ! -f "$landsat_zarr_name" ]; then
+        echo "Submitting Landsat job for $region (file: $landsat_zarr_name)"
+        landsat_job_id=$(sbatch --parsable --export=region="$region",landsat_zarr_name="$landsat_zarr_name" ./landsat_to_xarray.sh)
+        echo "Landsat job ID: $landsat_job_id"
+    else
+        echo "Landsat file already exists for $region: $landsat_zarr_name"
+        landsat_job_id=""
+    fi
+
+    # Submit OSM job
+    if [ ! -f "$osm_zarr_name" ]; then
+        echo "Submitting OSM job for $region (file: $osm_zarr_name)"
+        osm_job_id=$(sbatch --parsable --export=region="$region",osm_zarr_name="$osm_zarr_name",region_filenames_json="$region_filenames_json" ./osm_to_xarray.sh)
+        echo "OSM job ID: $osm_job_id"
+    else
+        echo "OSM file already exists for $region: $osm_zarr_name"
+        osm_job_id=""
+    fi
+
+    # Submit PlanetScope job with dependency on Landsat job
+    if [ ! -f "$planet_zarr_name" ]; then
+        echo "Submitting PlanetScope job for $region (file: $planet_zarr_name)"
+        
+        # Only add dependency if Landsat job was actually submitted
+        if [ -n "$landsat_job_id" ]; then
+            planet_request_job_id=$(sbatch --dependency=afterok:$landsat_job_id --export=region="$region",landsat_zarr_name="$landsat_zarr_name",planet_zarr_name="$planet_zarr_name",region_filenames_json="$region_filenames_json" ./request_planetscope.sh)
+        else
+            planet_request_job_id=$(sbatch --export=region="$region",landsat_zarr_name="$landsat_zarr_name",planet_zarr_name="$planet_zarr_name",region_filenames_json="$region_filenames_json" ./request_planetscope.sh)
+        fi
+        echo "PlanetScope job ID: $planet_request_job_id"
+    else
+        echo "PlanetScope file already exists for $region: $planet_zarr_name"
+    fi
+    
+    echo "---"
+done

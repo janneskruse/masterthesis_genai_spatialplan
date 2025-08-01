@@ -50,8 +50,8 @@ with open(f"{repo_dir}/config.yml", 'r') as stream:
     
 ####### Get the region to process #######
 try:
-    if "REGION_NAME" in os.environ:
-        region = os.environ["REGION_NAME"] 
+    if "REGION" in os.environ:
+        region = os.environ["REGION"] 
     else:
         exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
 except Exception as e:
@@ -59,12 +59,14 @@ except Exception as e:
     exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
 
 # setup folders
-big_data_storage_path = config.get("big_data_storage_path", "work/zt75vipu-master/data")
+big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
 osm_region_folder = f"{big_data_storage_path}/osm/{region.lower()}"
 os.makedirs(osm_region_folder, exist_ok=True)
 
-
 osm_zarr_name = f"{osm_region_folder}/osm_rasterized.zarr"
+
+print("Processing region:", region, "at", time.strftime("%Y-%m-%d %H:%M:%S"), "to produce zarr file:", osm_zarr_name)
+exit(0)  # Exit early for testing purposes
 
 ######## Try except Planet data processing ########
 try:

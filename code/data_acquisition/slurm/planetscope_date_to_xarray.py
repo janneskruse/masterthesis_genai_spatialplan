@@ -9,11 +9,6 @@
 # system
 import os
 import time
-import calendar
-import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
-import hashlib
 from dotenv import load_dotenv
 
 # data manipulation
@@ -27,10 +22,6 @@ import xarray as xr
 import rioxarray as rxr
 from skimage.exposure import match_histograms
 from rioxarray.merge import merge_arrays
-from shapely.geometry import box, shape
-
-# visualization
-from tqdm import tqdm
 
 ##### Function to exit on error ######
 def exit_with_error(message):
@@ -62,8 +53,8 @@ url=f"{base_url}{request_path}"
 
 ####### Get the region to process #######
 try:
-    if "REGION_NAME" in os.environ:
-        region = os.environ["REGION_NAME"] 
+    if "REGION" in os.environ:
+        region = os.environ["REGION"] 
     else:
         exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
 except Exception as e:
@@ -71,7 +62,7 @@ except Exception as e:
     exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
 
 # setup folders
-big_data_storage_path = config.get("big_data_storage_path", "work/zt75vipu-master/data")
+big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
 planet_region_folder = f"{big_data_storage_path}/planet_scope/{region.lower()}"
 os.makedirs(planet_region_folder, exist_ok=True)
 
@@ -101,7 +92,7 @@ except Exception as e:
     print("Error parsing landsat zarr name:", e)
     exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
     
-planet_zarr_name = f"{planet_region_folder}/planet_temperature_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
+planet_zarr_name = f"{planet_region_folder}/planet_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 
 ######## Try except Planet data processing ########
 try:
@@ -128,6 +119,10 @@ try:
     if os.path.exists(planet_date_zarr_name):
         print(f"PlanetScope data for date {scene_date} already exists at {planet_date_zarr_name}, skipping processing.")
         exit(0)
+        
+        
+    print("Processing file:", filename, "at", time.strftime("%Y-%m-%d %H:%M:%S"), "to produce zarr file:", planet_date_zarr_name)
+    exit(0)  # Exit early for testing purposes
         
     ############ Define the bbox ############ 
     ghsl_df_new = gpd.read_parquet(f"{repo_dir}/data/processed/ghsl_regions.parquet")

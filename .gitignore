@@ -12,5 +12,7 @@ data/processed/*.zarr
 data/processed/*.zip
 data/processed/model_input.zarr
 
+__pycache__/
+
 *.pdf
 cache

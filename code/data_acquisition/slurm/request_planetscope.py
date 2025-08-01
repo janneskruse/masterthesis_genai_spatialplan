@@ -8,6 +8,7 @@
 ## Import libraries
 # system
 import os
+import sys
 import time
 import calendar
 import requests
@@ -47,6 +48,10 @@ p=os.popen('git rev-parse --show-toplevel')
 repo_dir = p.read().strip()
 p.close()
 
+# import helper functions
+sys.path.append(f"{repo_dir}/code/helpers")
+from submit_job import submit_processing_job
+
 with open(f"{repo_dir}/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
 
@@ -59,11 +64,10 @@ planet_api_key=(os.getenv("PLANET_API_KEY"), "")
 request_path="/quick-search"
 url=f"{base_url}{request_path}"
 
-
 ####### Get the region to process #######
 try:
-    if "REGION_NAME" in os.environ:
-        region = os.environ["REGION_NAME"] 
+    if "REGION" in os.environ:
+        region = os.environ["REGION"] 
     else:
         exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
 except Exception as e:
@@ -71,7 +75,7 @@ except Exception as e:
     exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
 
 # setup folders
-big_data_storage_path = config.get("big_data_storage_path", "work/zt75vipu-master/data")
+big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
 planet_region_folder = f"{big_data_storage_path}/planet_scope/{region.lower()}"
 os.makedirs(planet_region_folder, exist_ok=True)
 
@@ -101,9 +105,25 @@ except Exception as e:
     print("Error parsing landsat zarr name:", e)
     exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
     
-planet_zarr_name = f"{planet_region_folder}/planet_temperature_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
+try:
+    if "REGION_FILENAMES_JSON" in os.environ:
+        region_filenames_json = os.environ["REGION_FILENAMES_JSON"]
+    else:
+        exit_with_error("Region filenames JSON not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+except Exception as e:
+    print("Error getting region filenames JSON from environment:", e)
+    exit_with_error("Region filenames JSON not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    
+planet_zarr_name = f"{planet_region_folder}/planet_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 
-######## Try except Planet data processing ########
+print(f"Requesting PlanetScope with Landsat Zarr file: {landsat_zarr_name} for region: {region} at", time.strftime("%Y-%m-%d %H:%M:%S"), "to store at", planet_zarr_name)
+
+test_folderpath=f"{planet_region_folder}/planet_tmp"
+test_filenames=[f"{test_folderpath}/planet_scope_cover_{i.replace('-','')}.parquet" for i in ["2023-01-01", "2023-02-01", "2023-03-01"]]
+submit_processing_job("Process Planetscope Data", "./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=test_filenames, region_filenames_json=region_filenames_json)
+exit(0)  # Exit early for testing purposes
+
+######## Planet data processing ########
 try:
     
     if os.path.exists(planet_zarr_name):
@@ -182,11 +202,11 @@ try:
             end_month=str(month+1 if month !=12 else 1).zfill(2)
             end_day=calendar.monthrange(int(year), int(end_month))[1]
             
-            start_year=year if month != 1 else str(int(year)-1)
-            end_year=year if month != 12 else str(int(year)+1)
+            local_start_year=year if month != 1 else str(int(year)-1)
+            local_end_year=year if month != 12 else str(int(year)+1)
 
-            start=f"{start_year}-{start_month}-01"
-            end=f"{end_year}-{end_month}-{end_day}"
+            start=f"{local_start_year}-{start_month}-01"
+            end=f"{local_end_year}-{end_month}-{end_day}"
             
             date_range_filter={
                 "type":"DateRangeFilter",
@@ -547,6 +567,10 @@ try:
         
         # Request download for each collection
         requestPlanetItemDownload(filename)
+        
+    print("Finished processing PlanetScope data at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    submit_processing_job("Process Planetscope Data", "./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=filenames, region_filenames_json=region_filenames_json)
+    exit(0)
 
 except Exception as e:
     print(f"An error occurred: {e}")

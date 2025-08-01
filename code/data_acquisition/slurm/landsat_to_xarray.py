@@ -3,6 +3,7 @@
 ####### Import libraries #######
 # system
 import os
+import sys
 import zipfile
 import time
 import calendar
@@ -37,13 +38,12 @@ p=os.popen('git rev-parse --show-toplevel')
 repo_dir = p.read().strip()
 p.close()
 
+# helpers functions
+sys.path.append(f"{repo_dir}/code/helpers")
+from landsat_config import get_landsat_config_vars
+
 # Load .env file
 load_dotenv(dotenv_path=f"{repo_dir}/.env")
-
-with open(f"{repo_dir}/config.yml", 'r') as stream:
-    config = yaml.safe_load(stream)
-    
-big_data_storage_path = config.get("big_data_storage_path", "work/zt75vipu-master/data")
 
 # get aws credentials
 aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID")
@@ -58,14 +58,17 @@ def exit_with_error(message):
 
 ####### Get the region to process #######
 try:
-    if "REGION_NAME" in os.environ:
-        region = os.environ["REGION_NAME"] 
+    if "REGION" in os.environ:
+        region = os.environ["REGION"] 
     else:
         exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
 except Exception as e:
     print("Error getting region from environment:", e)
     exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    
+
+
+print(f"Processing region: {region} at", time.strftime("%Y-%m-%d %H:%M:%S"))
+exit(0)  # Exit early for testing purposes
 
 ######## Try except Landsat data processing ########
 try:
@@ -77,20 +80,22 @@ try:
     bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
 
     ####### Get/Define the config parameters ########
-    landsat_region_folder = f"{big_data_storage_path}/landsat/{region.lower()}"
-    os.makedirs(landsat_region_folder, exist_ok=True)
+    config_vars = get_landsat_config_vars(os.path.join(repo_dir, "config.yml"), region)
     
-    end_year = config["temperature_day_filter"]["years"].get("end", 2023)
-    start_year = config["temperature_day_filter"]["years"].get("start", 1950)
-    
-    min_temperature = config["temperature_day_filter"]["min"]
-    consecutive_days = config["temperature_day_filter"]["consecutive_days"]
-    
-    max_cloud_cover = config["landsat_query"].get("max_cloud_coverage", 10)
-    collections = config["landsat_query"].get("collections", ["landsat-c2l2-st"])
+    big_data_storage_path = config_vars["big_data_storage_path"]
+    landsat_region_folder = config_vars["landsat_region_folder"]
 
-    landsat_zarr_name = f"{landsat_region_folder}/landsat_temperature_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
-    stac_filename = f"{landsat_region_folder}/stac_query_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.parquet"
+    landsat_zarr_name = config_vars["landsat_zarr_name"]
+    stac_filename = config_vars["stac_filename"]
+
+    min_temperature = config_vars["min_temperature"]
+    max_cloud_cover = config_vars["max_cloud_cover"]
+    start_year = config_vars["start_year"]
+    end_year = config_vars["end_year"]
+    consecutive_days = config_vars["consecutive_days"]
+    collections = config_vars["collections"]
+    max_dates_per_year = config_vars["max_dates_per_year"]
+
     
     if not os.path.exists(landsat_zarr_name):
         print(f"Creating Landsat zarr dataset at {landsat_zarr_name} at", time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -485,8 +490,6 @@ try:
             It stores both the thermal and the qa_pixel tif files.
             '''
             
-            landsat_region_folder = f"{big_data_storage_path}/landsat/{region.lower()}"
-            os.makedirs(f"{landsat_region_folder}/landsat_temperature", exist_ok=True)
             output_path_base = f"{landsat_region_folder}/landsat_temperature/{product['stac_id']}"
             output_path_thermal = f"{output_path_base}_thermal.tif"
             output_path_qa_pixel = f"{output_path_base}_qa_pixel.tif"
@@ -696,15 +699,12 @@ try:
         valid_pixel_percentage = landsat_xr_ds.qa_pixel.notnull().mean(dim=['x', 'y']).compute()
         landsat_xr_ds = landsat_xr_ds.where(valid_pixel_percentage >= (100-max_cloud_cover)/100, drop=True)
 
-        try:
-            max_dates_per_year = config["temperature_day_filter"]["max_dates_per_year"]
-
-            if max_dates_per_year:
+        if max_dates_per_year:
                 # group by year and take the first max_dates_per_year dates
                 landsat_xr_ds = landsat_xr_ds.groupby('time.year').apply(
                     lambda x: x.isel(time=np.arange(min(max_dates_per_year, len(x.time))))
                 )
-        except:
+        else:
             print("No max_dates_per_year configured, skipping this step.")
 
         #save as zarr dataset
