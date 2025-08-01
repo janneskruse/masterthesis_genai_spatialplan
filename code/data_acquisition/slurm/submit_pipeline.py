@@ -14,6 +14,7 @@ p.close()
 # Import helper functions
 sys.path.append(f"{repo_dir}/code/helpers")
 from submit_job import submit_processing_job
+from get_region_filenames import get_region_filenames
 
 with open(f"{repo_dir}/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
@@ -25,16 +26,10 @@ def run_command(command, capture_output=True):
         return result.stdout.strip() if capture_output else None
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {command}")
-        print(f"Error: {e}")
+        print(f"Return code: {e.returncode}")
+        print(f"Stdout: {e.stdout}")
+        print(f"Stderr: {e.stderr}")
         return None
-
-def get_region_filenames():
-    """Get region filenames using the helper script."""
-    command = f"python {repo_dir}/code/helpers/get_region_filenames.py \"{repo_dir}/config.yml\""
-    result = run_command(command)
-    if result:
-        return json.loads(result)
-    return {}
 
 def check_existing_job(job_name_pattern):
     """Check if a job with the given name pattern is already running."""
@@ -77,7 +72,7 @@ def main():
         print("Input file does not exist, proceeding with data acquisition.")
     
     # Get region filenames
-    region_filenames_json = get_region_filenames()
+    region_filenames_json = get_region_filenames(config_path=f"{repo_dir}/config.yml")
     regions = list(region_filenames_json.keys()) if region_filenames_json else []
     
     # Submit jobs for each region

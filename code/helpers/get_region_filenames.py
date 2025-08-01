@@ -6,6 +6,8 @@ import json
 
 def get_region_filenames(config_path):
     
+    print("Getting region filenames from config...")
+    
     if not config_path:
         p=os.popen('git rev-parse --show-toplevel')
         repo_dir = p.read().strip()
@@ -17,6 +19,9 @@ def get_region_filenames(config_path):
 
     regions = config.get("regions", [])
     big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
+    
+    print("Regions to process:", regions)
+    
     region_filenames = {}
     for region in regions:
         landsat_region_folder = f"{big_data_storage_path}/landsat/{region.lower()}"
