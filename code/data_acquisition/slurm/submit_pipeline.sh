@@ -9,7 +9,7 @@
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de
 #SBATCH --mail-type=ALL 
-#SBATCH -o "outputs/request_planetscope.%j.txt"
+#SBATCH -o "outputs/submit_pipeline.%j.txt"
 
 # Load Anaconda environment
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
