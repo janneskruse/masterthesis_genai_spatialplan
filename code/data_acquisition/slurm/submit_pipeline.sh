@@ -107,7 +107,6 @@ for region in "${regions[@]}"; do
             # Submit the combine job for the region
             combine_job=$(sbatch --parsable --job-name="combine_region_$region" --export=region="$region",landsat_zarr_name="$landsat_zarr_name",osm_zarr_name="$osm_zarr_name",planet_zarr_name="$planet_zarr_name",region_filenames_json="$region_filenames_json" ./combine_region_datasets.sh)
             echo "Submitted combine job for region $region: $combine_job"
-            done
         fi
     
     echo "---"
