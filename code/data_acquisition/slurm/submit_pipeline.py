@@ -12,8 +12,8 @@ p.close()
 
 # Import helper functions
 sys.path.append(f"{repo_dir}/code/helpers")
-from submit_job import submit_job_with_dependency
-from get_region_filenames import get_region_filenames, check_existing_job
+from submit_job import submit_job_with_dependency, check_existing_job
+from get_region_filenames import get_region_filenames
 
 with open(f"{repo_dir}/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
