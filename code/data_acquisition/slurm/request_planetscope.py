@@ -50,7 +50,7 @@ p.close()
 
 # import helper functions
 sys.path.append(f"{repo_dir}/code/helpers")
-from submit_job import submit_processing_job
+from submit_job import submit_job_with_dependency
 
 with open(f"{repo_dir}/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
@@ -120,7 +120,7 @@ print(f"Requesting PlanetScope with Landsat Zarr file: {landsat_zarr_name} for r
 
 test_folderpath=f"{planet_region_folder}/planet_tmp"
 test_filenames=[f"{test_folderpath}/planet_scope_cover_{i.replace('-','')}.parquet" for i in ["2023-01-01", "2023-02-01", "2023-03-01"]]
-submit_processing_job("Process Planetscope Data", "./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=test_filenames, region_filenames_json=region_filenames_json)
+submit_job_with_dependency("./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=test_filenames, region_filenames_json=region_filenames_json)
 exit(0)  # Exit early for testing purposes
 
 ######## Planet data processing ########
@@ -569,7 +569,7 @@ try:
         requestPlanetItemDownload(filename)
         
     print("Finished processing PlanetScope data at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    submit_processing_job("Process Planetscope Data", "./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=filenames, region_filenames_json=region_filenames_json)
+    submit_job_with_dependency("./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=filenames, region_filenames_json=region_filenames_json)
     exit(0)
 
 except Exception as e:
