@@ -39,15 +39,31 @@ def check_existing_job(job_name_pattern):
 
 def submit_job_with_dependency(script_path, dependency_job_id=None, **kwargs):
     """Submit a SLURM job with optional dependency."""
-    export_str = ",".join([f"{k}={v}" for k, v in kwargs.items()])
+    escaped_kwargs = {}
+    for k, v in kwargs.items():
+        if isinstance(v, str) and (v.startswith('{') or '"' in v):
+            # Use single quotes to wrap region names etc.
+            escaped_v = v.replace("'", "'\"'\"'")
+            escaped_kwargs[k] = f"'{escaped_v}'"
+        else:
+            escaped_kwargs[k] = v
     
+    export_str = ",".join([f"{k}={v}" for k, v in escaped_kwargs.items()])
+    
+    #Extract job id
     if dependency_job_id:
+        if "Submitted batch job" in str(dependency_job_id):
+            dependency_job_id = dependency_job_id.split()[-1]
         cmd = f"sbatch --parsable --dependency=afterok:{dependency_job_id} --export={export_str} {script_path}"
     else:
         cmd = f"sbatch --parsable --export={export_str} {script_path}"
     
     print(f"Command: {cmd}")
-    job_id = os.popen(cmd).read().strip()
+    result = run_command(cmd)
+    if result and "Submitted batch job" in result:
+        job_id = result.split()[-1]  # Extract job number
+    else:
+        job_id = result
     return job_id
 
 def main():
