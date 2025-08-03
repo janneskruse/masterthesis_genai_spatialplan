@@ -60,7 +60,7 @@ REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
 CONFIG_FILE="$REPO_ROOT/config.yml"
 
 # Load the config variables
-regions=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "regions")
+regions=($(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "regions" | tr ',' ' '))
 
 # Check if for all regions the job has finished (the files exist)
 for region in "${regions[@]}"; do

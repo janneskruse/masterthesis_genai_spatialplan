@@ -26,9 +26,10 @@ min_temperature=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "
 max_cloud_cover=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "landsat_query.max_cloud_coverage")
 start_year=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.years.start")
 end_year=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "temperature_day_filter.years.end")
+regions=($(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "regions" | tr ',' ' '))
 
 # Construct the input filename
-input_filename ="${big_data_storage_path}/processed/input_config_ge${min_temperature}_cc${max_cloud_cover}_${start_year}_${end_year}.zarr"
+input_filename="${big_data_storage_path}/processed/input_config_ge${min_temperature}_cc${max_cloud_cover}_${start_year}_${end_year}.zarr"
 echo "Input filename: $input_filename"
 
 # Check if the input file already exists
