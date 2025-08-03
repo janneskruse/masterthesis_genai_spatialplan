@@ -1,8 +1,11 @@
-poetry.lock
-.ipynb_checkpoints
+# doc files
+*.pdf
 
+# setup files
+poetry.lock
 .env
 
+# data files
 data/*
 !data/processed
 !data/dwd/
@@ -12,7 +15,13 @@ data/processed/*.zarr
 data/processed/*.zip
 data/processed/model_input.zarr
 
+# cache files
 __pycache__/
-
-*.pdf
+.ipynb_checkpoints
 cache
+
+# pipeline output
+code/data_acquisition/slurm/*.out
+code/data_acquisition/slurm/*.err
+code/data_acquisition/slurm/*.txt
+code/data_acquisition/slurm/outputs/*
