@@ -6,7 +6,7 @@
 #SBATCH --tasks-per-node=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem-per-cpu=10
+#SBATCH --mem-per-cpu=1000
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de #please indicate your own email here
 #SBATCH --mail-type=ALL
