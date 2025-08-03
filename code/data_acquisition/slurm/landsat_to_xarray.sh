@@ -16,4 +16,4 @@ source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
 # Execute the landsat_to_xarray.py script
-python3 src/landsat_to_xarray.py --region=${region}
+python3 landsat_to_xarray.py --region=${region}
