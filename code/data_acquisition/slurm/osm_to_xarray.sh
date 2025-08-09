@@ -16,21 +16,21 @@ source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
 # Execute the OSM to Xarray script
-python3 -u osm_to_xarray.py --region=${region}
+python3 -u osm_to_xarray.py --REGION ${REGION}
 
 
 #check if for all files of the region the jobs have finished (the files exist) and if so, submit the combine job
 # Extract filenames for the region
-landsat_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".landsat_zarr_name")
-osm_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".osm_zarr_name")
-planet_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".planet_zarr_name")
-processed_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".processed_zarr_name")
+landsat_zarr_name=$(echo "$REGION_FILENAMES_JSON" | jq -r ".\"$REGION\".landsat_zarr_name")
+osm_zarr_name=$(echo "$REGION_FILENAMES_JSON" | jq -r ".\"$REGION\".osm_zarr_name")
+planet_zarr_name=$(echo "$REGION_FILENAMES_JSON" | jq -r ".\"$REGION\".planet_zarr_name")
+processed_zarr_name=$(echo "$REGION_FILENAMES_JSON" | jq -r ".\"$REGION\".processed_zarr_name")
 
 # Check if the zarr files exist
 if [[ -f "$landsat_zarr_name" && -f "$osm_zarr_name" && -f "$planet_zarr_name" ]]; then
-    echo "All required files for region $region exist"
+    echo "All required files for region $REGION exist"
 else
-    echo "Missing files for region $region. Please check the processing steps."
+    echo "Missing files for region $REGION. Please check the processing steps."
     exit 1
 fi
 
@@ -42,15 +42,14 @@ else
     echo "Processed Zarr file does not exist, proceeding with combination."
     
     # Check if a combine job is already running for this region
-    existing_job=$(squeue -u $USER --name="combine_region_$region" --noheader --format="%i" 2>/dev/null)
+    existing_job=$(squeue -u $USER --name="combine_region_$REGION" --noheader --format="%i" 2>/dev/null)
     
     if [ -n "$existing_job" ]; then
-        echo "Combine job already running for region $region (Job ID: $existing_job). Skipping submission."
+        echo "Combine job already running for region $REGION (Job ID: $existing_job). Skipping submission."
     else
         # Submit the combine job for the region
-        combine_job=$(sbatch --parsable --job-name="combine_region_$region" --export=region="$region",landsat_zarr_name="$landsat_zarr_name",osm_zarr_name="$osm_zarr_name",planet_zarr_name="$planet_zarr_name",region_filenames_json="$region_filenames_json" ./combine_region_datasets.sh)
-        echo "Submitted combine job for region $region: $combine_job"
-        done
+        combine_job=$(sbatch --parsable --job-name="combine_region_$REGION" --export=REGION="$REGION",LANDSAT_ZARR_NAME="$landsat_zarr_name",OSM_ZARR_NAME="$osm_zarr_name",PLANET_ZARR_NAME="$planet_zarr_name",REGION_FILENAMES_JSON="$REGION_FILENAMES_JSON" ./combine_region_datasets.sh)
+        echo "Submitted combine job for region $REGION: $combine_job"
     fi
 fi
 
@@ -67,7 +66,7 @@ for region in "${regions[@]}"; do
     echo "Processing region: $region"
     
     # Extract filename for the region
-    processed_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".processed_zarr_name")
+    processed_zarr_name=$(echo "$REGION_FILENAMES_JSON" | jq -r ".\"$region\".processed_zarr_name")
 
     # Check if the zarr files exist
     if [ -f "$processed_zarr_name" ]; then
@@ -78,6 +77,6 @@ for region in "${regions[@]}"; do
     fi
 
 # Submit the combine job
-combine_job=$(sbatch --parsable --export=region_filenames_json="$region_filenames_json"  ./combine_datasets.sh)
+combine_job=$(sbatch --parsable --export=REGION_FILENAMES_JSON="$REGION_FILENAMES_JSON"  ./combine_datasets.sh)
 echo "Submitted combine job for all regions: $combine_job"
 done

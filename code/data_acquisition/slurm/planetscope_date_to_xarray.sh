@@ -16,4 +16,4 @@ source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
 # Run the planetscope_date_to_xarray.py script
-python3 -u planetscope_date_to_xarray.py --region ${region} --landsat_zarr_name ${landsat_zarr_name} --filename ${filename}
+python3 -u planetscope_date_to_xarray.py --REGION ${REGION} --LANDSAT_ZARR_NAME ${LANDSAT_ZARR_NAME} --FILENAME ${FILENAME}

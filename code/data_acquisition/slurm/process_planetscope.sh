@@ -33,12 +33,12 @@ regions=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "regions"
 job_ids=()
 for filename in $filenames; do
     echo "Processing file: $filename"
-    file_job=$(sbatch --parsable --export=region="$region",filename="$filename",landsat_zarr_name="$landsat_zarr_name" ./planetscope_date_to_xarray.sh)
+    file_job=$(sbatch --parsable --export=REGION="$REGION",FILENAME="$FILENAME",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME" ./planetscope_date_to_xarray.sh)
     job_ids+=($file_job)
 
 # Add all jobs as dependency to finish on submitting the combine job
 dependency_string=$(IFS=:; echo "${job_ids[*]}")
-combine_job=$(sbatch --parsable --export=region="$region",filenames="$filenames",landsat_zarr_name="$landsat_zarr_name",region_filenames_json="$region_filenames_json" --dependency=afterok:$dependency_string ./combine_planetscope_xarrays.sh)
+combine_job=$(sbatch --parsable --export=REGION="$REGION",FILENAMES="$FILENAMES",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME",REGION_FILENAMES_JSON="$REGION_FILENAMES_JSON" --dependency=afterok:$dependency_string ./combine_planetscope_xarrays.sh)
 echo "Submitted combine job: $combine_job"
 
 done

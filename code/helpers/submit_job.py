@@ -23,6 +23,7 @@ def submit_job_with_dependency(script_path, dependency_job_id=None, **kwargs):
     """Submit a SLURM job with optional dependency."""
     escaped_kwargs = {}
     for k, v in kwargs.items():
+        k = k.upper()  # uppercase the key
         if isinstance(v, str) and (v.startswith('{') or '"' in v):
             # Use single quotes to wrap region names etc.
             escaped_v = v.replace("'", "'\"'\"'")

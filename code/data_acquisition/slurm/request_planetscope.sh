@@ -16,4 +16,4 @@ source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
 # Run the planetscop request script
-python3 -u request_planetscope.py --region ${region} --landsat_zarr_name ${landsat_zarr_name}
+python3 -u request_planetscope.py --REGION ${REGION} --LANDSAT_ZARR_NAME ${LANDSAT_ZARR_NAME}
