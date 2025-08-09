@@ -31,7 +31,7 @@ regions=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "regions"
 
 # For each filename, submit a job for the planetscope processing
 job_ids=()
-for filename in $filenames; do
+for filename in $FILENAMES; do
     echo "Processing file: $filename"
     file_job=$(sbatch --parsable --export=REGION="$REGION",FILENAME="$FILENAME",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME" ./planetscope_date_to_xarray.sh)
     job_ids+=($file_job)
