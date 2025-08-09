@@ -26,8 +26,9 @@ def submit_job_with_dependency(script_path, dependency_job_id=None, **kwargs):
         k = k.upper()  # uppercase the key
         if isinstance(v, list):
             # List to space-separated string for SLURM
-            list_str = ' '.join(str(item) for item in v)
-            escaped_kwargs[k] = f'"{list_str}"'
+            # list_str = ' '.join(str(item) for item in v)
+            # escaped_kwargs[k] = f'"{list_str}"'
+            escaped_kwargs[k] = f"'{v}'"
         elif isinstance(v, str) and (v.startswith('{') or '"' in v):
             # Single quotes to wrap region names etc.
             escaped_v = v.replace("'", "'\"'\"'")
