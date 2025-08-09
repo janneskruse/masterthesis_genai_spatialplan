@@ -58,25 +58,24 @@ try:
     if "REGION_FILENAMES_JSON" in os.environ:
         region_filenames_json = os.environ["REGION_FILENAMES_JSON"]
     else:
-        exit_with_error("Region filenames JSON not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Region filenames JSON not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting region filenames JSON from environment:", e)
-    exit_with_error("Region filenames JSON not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Region filenames JSON not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
 # Parse the JSON string to a Python dictionary
 try:
     region_filenames_json = json.loads(region_filenames_json)
 except json.JSONDecodeError as e:
     print("Error decoding JSON from environment variable REGION_FILENAMES_JSON:", e)
-    exit_with_error("Invalid JSON format for region filenames, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Invalid JSON format for region filenames, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # retrieve landsat zarr name from first entry
 try:
     landsat_zarr_name = list(region_filenames_json.values())[0]["landsat_zarr_name"]
 except KeyError as e:
     print("Error retrieving landsat zarr name from region filenames JSON:", e)
-    exit_with_error("Landsat Zarr name not found in region filenames JSON, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-
+    exit_with_error(f"Landsat Zarr name not found in region filenames JSON, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 ##### get the config variables from the landsat zarr name ######
 try:
@@ -89,10 +88,10 @@ try:
     end_year = years[1]
     
     if not min_temperature or not max_cloud_cover or not start_year or not end_year:
-        exit_with_error("Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error parsing landsat zarr name:", e)
-    exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 processed_zarr_name = f"{processed_folder}/input_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 

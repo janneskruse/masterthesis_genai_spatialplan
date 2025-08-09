@@ -53,10 +53,10 @@ try:
     if "REGION" in os.environ:
         region = os.environ["REGION"] 
     else:
-        exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting region from environment:", e)
-    exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # setup folders
 big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")

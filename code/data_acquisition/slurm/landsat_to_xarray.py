@@ -61,13 +61,12 @@ try:
     if "REGION" in os.environ:
         region = os.environ["REGION"] 
     else:
-        exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting region from environment:", e)
-    exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-
-print(f"Processing region: {region} at", time.strftime("%Y-%m-%d %H:%M:%S"))
+print(f"Processing region: {region} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 exit(0)  # Exit early for testing purposes
 
 ######## Try except Landsat data processing ########
@@ -146,7 +145,7 @@ try:
                 stations_gpd = stations_gpd[(stations_gpd['date_end'].dt.year >= end_year) & (stations_gpd['date_start'].dt.year <= start_year)]
             except KeyError:
                 print("No stations found for the given year range. Please check your configuration.")
-                exit_with_error("No stations found for the given year range, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+                exit_with_error(f"No stations found for the given year range, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
             # Get the center of the bbox and find the closest (most urban) station
             bbox_center = bbox_gdf.geometry.centroid.iloc[0]

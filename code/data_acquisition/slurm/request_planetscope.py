@@ -69,10 +69,10 @@ try:
     if "REGION" in os.environ:
         region = os.environ["REGION"] 
     else:
-        exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting region from environment:", e)
-    exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # setup folders
 big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
@@ -84,10 +84,10 @@ try:
     if "LANDSAT_ZARR_NAME" in os.environ:
         landsat_zarr_name = os.environ["LANDSAT_ZARR_NAME"]
     else:
-        exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting landsat zarr name from environment:", e)
-    exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 ##### get the config variables from the landsat zarr name ######
 try:
@@ -100,23 +100,23 @@ try:
     end_year = years[1]
     
     if not min_temperature or not max_cloud_cover or not start_year or not end_year:
-        exit_with_error("Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error parsing landsat zarr name:", e)
-    exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    
+    exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
 try:
     if "REGION_FILENAMES_JSON" in os.environ:
         region_filenames_json = os.environ["REGION_FILENAMES_JSON"]
     else:
-        exit_with_error("Region filenames JSON not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Region filenames JSON not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting region filenames JSON from environment:", e)
-    exit_with_error("Region filenames JSON not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    
+    exit_with_error(f"Region filenames JSON not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
 planet_zarr_name = f"{planet_region_folder}/planet_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 
-print(f"Requesting PlanetScope with Landsat Zarr file: {landsat_zarr_name} for region: {region} at", time.strftime("%Y-%m-%d %H:%M:%S"), "to store at", planet_zarr_name)
+print(f"Requesting PlanetScope with Landsat Zarr file: {landsat_zarr_name} for region: {region} at {time.strftime('%Y-%m-%d %H:%M:%S')} to store at {planet_zarr_name}")
 
 test_folderpath=f"{planet_region_folder}/planet_tmp"
 test_filenames=[f"{test_folderpath}/planet_scope_cover_{i.replace('-','')}.parquet" for i in ["2023-01-01", "2023-02-01", "2023-03-01"]]
@@ -254,7 +254,7 @@ try:
     planet_bydate_list=[df for df in planet_bydate_list if df is not None]
     if not planet_bydate_list:
         print("No PlanetScope items found")
-        exit_with_error("No PlanetScope items found, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"No PlanetScope items found, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
         planet_bydate_df=pd.concat(planet_bydate_list, ignore_index=True)
         planet_bydate_df.head(2)

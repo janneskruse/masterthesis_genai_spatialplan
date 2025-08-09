@@ -56,10 +56,10 @@ try:
     if "REGION" in os.environ:
         region = os.environ["REGION"] 
     else:
-        exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting region from environment:", e)
-    exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # setup folders
 big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
@@ -71,10 +71,10 @@ try:
     if "LANDSAT_ZARR_NAME" in os.environ:
         landsat_zarr_name = os.environ["LANDSAT_ZARR_NAME"]
     else:
-        exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting landsat zarr name from environment:", e)
-    exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 ##### get the config variables from the landsat zarr name ######
 try:
@@ -87,11 +87,11 @@ try:
     end_year = years[1]
     
     if not min_temperature or not max_cloud_cover or not start_year or not end_year:
-        exit_with_error("Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error parsing landsat zarr name:", e)
-    exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    
+    exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
 planet_zarr_name = f"{planet_region_folder}/planet_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 
 ######## Try except Planet data processing ########
@@ -104,8 +104,8 @@ try:
     if "FILENAME" in os.environ:
         filename = os.environ["FILENAME"]
     else:
-        exit_with_error("Filename not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    
+        exit_with_error(f"Filename not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
     folderpath=f"{planet_region_folder}/planet_tmp"
     collection=gpd.read_parquet(filename)
     scene_date=collection.date_id.iloc[0]

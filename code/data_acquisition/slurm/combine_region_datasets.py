@@ -54,10 +54,10 @@ try:
     if "REGION" in os.environ:
         region = os.environ["REGION"] 
     else:
-        exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting region from environment:", e)
-    exit_with_error("Region not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # setup folders
 big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
@@ -69,10 +69,10 @@ try:
     if "LANDSAT_ZARR_NAME" in os.environ:
         landsat_zarr_name = os.environ["LANDSAT_ZARR_NAME"]
     else:
-        exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting landsat zarr name from environment:", e)
-    exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 ##### get the config variables from the landsat zarr name ######
 try:
@@ -85,10 +85,10 @@ try:
     end_year = years[1]
     
     if not min_temperature or not max_cloud_cover or not start_year or not end_year:
-        exit_with_error("Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error parsing landsat zarr name:", e)
-    exit_with_error("Landsat Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 
 ####### get the planet zarr file name ######
@@ -96,24 +96,24 @@ try:
     if "PLANET_ZARR_NAME" in os.environ:
         planet_zarr_name = os.environ["PLANET_ZARR_NAME"]
     else:
-        exit_with_error("Planet Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"Planet Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting planet zarr name from environment:", e)
-    exit_with_error("Planet Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit_with_error(f"Planet Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
 ####### get the OSM zarr file name ######
 try:
     if "OSM_ZARR_NAME" in os.environ:
         osm_zarr_name = os.environ["OSM_ZARR_NAME"]
     else:
-        exit_with_error("OSM Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        exit_with_error(f"OSM Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 except Exception as e:
     print("Error getting OSM zarr name from environment:", e)
-    exit_with_error("OSM Zarr name not set in environment, finishing at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    
+    exit_with_error(f"OSM Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
 processed_zarr_name = f"{processed_region_folder}/input_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 
-print(f"Combining datasets for region: {region} at", time.strftime("%Y-%m-%d %H:%M:%S"), "to store at", processed_zarr_name)
+print(f"Combining datasets for region: {region} at {time.strftime('%Y-%m-%d %H:%M:%S')} to store at {processed_zarr_name}")
 exit(0)  # Exit early for testing purposes
 
 if os.path.exists(processed_zarr_name):
