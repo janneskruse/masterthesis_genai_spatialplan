@@ -10,7 +10,7 @@
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de #please indicate your own email here
 #SBATCH --mail-type=ALL
-#SBATCH -o "outputs/process_planetscope.%j.txt" #j for the job id
+#SBATCH -o "outputs/process_planetscope_${REGION}.%j.txt" #j for the job id
 
 # ACTIVATE ANACONDA
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
