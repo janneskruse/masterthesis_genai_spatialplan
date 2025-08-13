@@ -61,6 +61,7 @@ for filename in "${FILENAME_ARRAY[@]}"; do
     echo "Processing file: $filename"
     file_job=$(sbatch --parsable --export=REGION="$REGION",FILENAME="$filename",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME" ./planetscope_date_to_xarray.sh)
     job_ids+=($file_job)
+done
 
 # # For each filename, submit a job for the planetscope processing
 # job_ids=()

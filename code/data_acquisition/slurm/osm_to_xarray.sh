@@ -75,6 +75,7 @@ for region in "${regions[@]}"; do
         echo "Missing processed Zarr file for region $region. Please check the processing steps."
         exit 1
     fi
+done
 
 # Submit the combine job
 combine_job=$(sbatch --parsable --export=REGION_FILENAMES_JSON="$REGION_FILENAMES_JSON"  ./combine_datasets.sh)
