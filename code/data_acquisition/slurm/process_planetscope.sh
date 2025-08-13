@@ -39,10 +39,12 @@ source activate genaiSpatialplan
 
 # Parse FILENAMES
 echo "Filenames: $FILENAMES"
-if [[ $FILENAMES == "["* ]]; then
-    # remove brackets, quotes, and split by comma
-    FILENAMES_CLEAN=$(echo "$FILENAMES" | sed "s/\[//g" | sed "s/\]//g" | sed "s/'//g" | sed "s/\"//g" | sed 's/, */ /g')
-    IFS=' ' read -ra FILENAME_ARRAY <<< "$FILENAMES_CLEAN"
+if [[ "$FILENAMES" == *:* ]]; then
+    # colon-separated values
+    IFS=':' read -r -a FILENAME_ARRAY <<< "$FILENAMES"
+elif printf '%s' "$FILENAMES" | grep -q $'\n'; then
+    # newline-separated values
+    mapfile -t FILENAME_ARRAY < <(printf '%s' "$FILENAMES")
 else
     # assume space-separated
     read -ra FILENAME_ARRAY <<< "$FILENAMES"

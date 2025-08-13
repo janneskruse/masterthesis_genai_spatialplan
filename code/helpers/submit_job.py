@@ -1,4 +1,3 @@
-import os
 import subprocess
 
 def run_command(command, capture_output=True):
@@ -28,7 +27,8 @@ def submit_job_with_dependency(script_path, dependency_job_id=None, **kwargs):
             # List to space-separated string for SLURM
             # list_str = ' '.join(str(item) for item in v)
             # escaped_kwargs[k] = f'"{list_str}"'
-            escaped_kwargs[k] = f"'{v}'"
+            list_str = ":".join(str(item) for item in v)
+            escaped_kwargs[k] = f"'{list_str}'"
         elif isinstance(v, str) and (v.startswith('{') or '"' in v):
             # Single quotes to wrap region names etc.
             escaped_v = v.replace("'", "'\"'\"'")
