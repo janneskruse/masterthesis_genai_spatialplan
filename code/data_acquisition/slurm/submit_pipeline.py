@@ -41,6 +41,9 @@ def main():
     
     # Get region filenames
     region_filenames_json = get_region_filenames(config_path=f"{repo_dir}/config.yml")
+    print("Region filenames JSON loaded successfully: ", region_filenames_json)
+    
+    # Get list of regions from the JSON
     regions = list(region_filenames_json.keys()) if region_filenames_json else []
     
     # Submit jobs for each region
