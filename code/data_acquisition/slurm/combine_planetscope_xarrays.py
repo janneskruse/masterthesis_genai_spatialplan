@@ -114,10 +114,19 @@ try:
     else:
         exit_with_error(f"Filenames not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    print(f"Processing PlanetScope data for region {region} from files: {filenames} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Processing PlanetScope data for region {region} using metadata from files: {filenames} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     exit(0) # for testing purposes
+    
+    folderpath=f"{planet_region_folder}/planet_tmp"
+    planet_zarr_filenames=[]
+    for filename in filenames.split(","):
+        collection=gpd.read_parquet(filename)
+        scene_date=collection.date_id.iloc[0]
+        scene_date=scene_date.replace("-","")
+        planet_date_zarr_name = f"{planet_region_folder}/planet_scope_{scene_date}.zarr"
+        planet_zarr_filenames.append(planet_date_zarr_name)
 
-    xr_ds_list = [xr.open_zarr(filename) for filename in filenames.split(",") if os.path.exists(filename)]
+    xr_ds_list = [xr.open_zarr(filename) for filename in planet_zarr_filenames if os.path.exists(filename)]
 
     if not xr_ds_list:
         exit_with_error(f"No valid xarray datasets found in the provided filenames, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
