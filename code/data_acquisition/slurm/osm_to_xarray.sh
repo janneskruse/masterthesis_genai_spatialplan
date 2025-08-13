@@ -22,7 +22,7 @@ echo "Processing region: $REGION"
 python3 -u osm_to_xarray.py --REGION ${REGION}
 
 # Print Region Filenames JSON
-echo "Region Filenames JSON: $region_filenames_json"
+echo "Region Filenames JSON: $REGION_FILENAMES_JSON"
 
 # Extract filenames for the region
 landsat_zarr_name=$(echo "$REGION_FILENAMES_JSON" | jq -r ".\"$REGION\".landsat_zarr_name")
