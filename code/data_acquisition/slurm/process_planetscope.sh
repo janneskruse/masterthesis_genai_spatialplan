@@ -75,7 +75,7 @@ done
 
 # Add all jobs as dependency to finish on submitting the combine job
 dependency_string=$(IFS=:; echo "${job_ids[*]}")
-combine_job=$(sbatch --parsable --export=REGION="$REGION",FILENAMES="$FILENAMES",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME",REGION_FILENAMES_JSON="$REGION_FILENAMES_JSON" --dependency=afterok:$dependency_string ./combine_planetscope_xarrays.sh)
+combine_job=$(sbatch --parsable --export=ALL --dependency=afterok:$dependency_string ./combine_planetscope_xarrays.sh)
 echo "Submitted combine job: $combine_job"
 echo "Dependency string: $dependency_string"
 

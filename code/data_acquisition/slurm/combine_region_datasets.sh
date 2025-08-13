@@ -55,7 +55,7 @@ for region in "${regions[@]}"; do
 done
 
 # Submit the combine job
-combine_job=$(sbatch --parsable --export=region_filenames_json="$region_filenames_json"  ./combine_datasets.sh)
+combine_job=$(sbatch --parsable --export=ALL  ./combine_datasets.sh)
 echo "Submitted combine job for all regions: $combine_job"
 done
 

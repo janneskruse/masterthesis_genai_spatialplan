@@ -52,7 +52,7 @@ else
         echo "Combine job already running for region $REGION (Job ID: $existing_job). Skipping submission."
     else
         # Submit the combine job for the region
-        combine_job=$(sbatch --parsable --job-name="combine_region_$REGION" --export=REGION="$REGION",LANDSAT_ZARR_NAME="$landsat_zarr_name",OSM_ZARR_NAME="$osm_zarr_name",PLANET_ZARR_NAME="$planet_zarr_name",REGION_FILENAMES_JSON="$REGION_FILENAMES_JSON" ./combine_region_datasets.sh)
+        combine_job=$(sbatch --parsable --job-name="combine_region_$REGION" --export=ALL ./combine_region_datasets.sh)
         echo "Submitted combine job for region $REGION: $combine_job"
     fi
 fi
@@ -93,6 +93,6 @@ for region in "${regions[@]}"; do
 done
 
 # Submit the combine job
-combine_job=$(sbatch --parsable --export=REGION_FILENAMES_JSON="$REGION_FILENAMES_JSON"  ./combine_datasets.sh)
+combine_job=$(sbatch --parsable --export=ALL  ./combine_datasets.sh)
 echo "Submitted combine job for all regions: $combine_job"
 done
