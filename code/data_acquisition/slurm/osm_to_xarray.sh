@@ -15,6 +15,9 @@
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
+# Print region to be processed
+echo "Processing region: $REGION"
+
 # Execute the OSM to Xarray script
 python3 -u osm_to_xarray.py --REGION ${REGION}
 

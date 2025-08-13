@@ -16,6 +16,9 @@
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
+# Print region to be processed
+echo "Processing region: $REGION"
+
 # if [ -n $SLURM_JOB_ID ];  then
 #     # check the original location through scontrol and $SLURM_JOB_ID
 #     SCRIPT_PATH=$(scontrol show job $SLURM_JOB_ID | awk -F= '/Command=/{print $2}')

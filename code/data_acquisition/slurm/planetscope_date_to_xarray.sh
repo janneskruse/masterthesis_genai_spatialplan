@@ -15,5 +15,8 @@
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
+# Print region to be processed
+echo "Processing region: $REGION"
+
 # Run the planetscope_date_to_xarray.py script
 python3 -u planetscope_date_to_xarray.py --REGION ${REGION} --LANDSAT_ZARR_NAME ${LANDSAT_ZARR_NAME} --FILENAME ${FILENAME}

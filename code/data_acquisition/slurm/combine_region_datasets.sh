@@ -16,6 +16,9 @@
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
+# Print region to be processed
+echo "Processing region: $REGION"
+
 python3 -u combine_region_datasets.py --region "$region" --landsat_zarr_name "$landsat_zarr_name" --osm_zarr_name "$osm_zarr_name" --planet_zarr_name "$planet_zarr_name"
 
 

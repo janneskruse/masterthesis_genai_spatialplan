@@ -15,5 +15,8 @@
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
+# Print region to be processed
+echo "Processing region: $REGION"
+
 # Run the planetscop request script
 python3 -u request_planetscope.py --REGION ${REGION} --LANDSAT_ZARR_NAME ${LANDSAT_ZARR_NAME}

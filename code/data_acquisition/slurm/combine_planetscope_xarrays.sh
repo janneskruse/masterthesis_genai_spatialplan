@@ -16,6 +16,9 @@
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
+# Print region to be processed
+echo "Processing region: $REGION"
+
 # Run the combine job for the planetscope datasets
 python3 -u combine_planetscope_xarrays.py --region "$REGION" --landsat_zarr_name "$LANDSAT_ZARR_NAME" --filenames="$FILENAMES"
 
