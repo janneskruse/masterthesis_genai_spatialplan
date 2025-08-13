@@ -16,8 +16,16 @@
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
+if [ -n $SLURM_JOB_ID ];  then
+    # check the original location through scontrol and $SLURM_JOB_ID
+    SCRIPT_PATH=$(scontrol show job $SLURM_JOB_ID | awk -F= '/Command=/{print $2}')
+else
+    # otherwise: started with bash. Get the real location.
+    SCRIPT_PATH=$(realpath $0)
+fi
+
 # Find the repository root directory to locate the config file
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+SCRIPT_DIR=$( cd -- "--" "$(dirname -- "$SCRIPT_PATH")" &> /dev/null && pwd )
 REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
 CONFIG_FILE="$REPO_ROOT/config.yml"
 
