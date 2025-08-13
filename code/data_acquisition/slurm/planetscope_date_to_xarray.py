@@ -106,6 +106,10 @@ try:
     else:
         exit_with_error(f"Filename not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
+    print("Processing file:", filename, "at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    exit(0)  # Exit early for testing purposes
+
+
     folderpath=f"{planet_region_folder}/planet_tmp"
     collection=gpd.read_parquet(filename)
     scene_date=collection.date_id.iloc[0]
@@ -119,10 +123,6 @@ try:
     if os.path.exists(planet_date_zarr_name):
         print(f"PlanetScope data for date {scene_date} already exists at {planet_date_zarr_name}, skipping processing.")
         exit(0)
-        
-        
-    print("Processing file:", filename, "at", time.strftime("%Y-%m-%d %H:%M:%S"), "to produce zarr file:", planet_date_zarr_name)
-    exit(0)  # Exit early for testing purposes
         
     ############ Define the bbox ############ 
     ghsl_df_new = gpd.read_parquet(f"{repo_dir}/data/processed/ghsl_regions.parquet")
