@@ -16,38 +16,58 @@
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
-if [ -n $SLURM_JOB_ID ];  then
-    # check the original location through scontrol and $SLURM_JOB_ID
-    SCRIPT_PATH=$(scontrol show job $SLURM_JOB_ID | awk -F= '/Command=/{print $2}')
+# if [ -n $SLURM_JOB_ID ];  then
+#     # check the original location through scontrol and $SLURM_JOB_ID
+#     SCRIPT_PATH=$(scontrol show job $SLURM_JOB_ID | awk -F= '/Command=/{print $2}')
+# else
+#     # otherwise: started with bash. Get the real location.
+#     SCRIPT_PATH=$(realpath $0)
+# fi
+
+# # Find the repository root directory to locate the config file
+# SCRIPT_DIR=$( cd -- "--" "$(dirname -- "$SCRIPT_PATH")" &> /dev/null && pwd )
+# REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
+# CONFIG_FILE="$REPO_ROOT/config.yml"
+
+# # Load the config variables
+# big_data_storage_path=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "big_data_storage_path")
+# regions=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "regions")
+
+# # Get the filenames from request_planetscope
+# # eval $(python ${REPO_ROOT}/code/helpers/get_timeid_filenames_planet.py "$landsat_zarr_name" "$region" "$big_data_storage_path")
+# # echo $filenames
+
+# Parse FILENAMES
+if [[ $FILENAMES == "["* ]]; then
+    # remove brackets and quotes, split by comma
+    FILENAMES_CLEAN=$(echo "$FILENAMES" | sed "s/\[//g" | sed "s/\]//g" | sed "s/'//g" | sed "s/\"//g")
+    IFS=',' read -ra FILENAME_ARRAY <<< "$FILENAMES_CLEAN"
 else
-    # otherwise: started with bash. Get the real location.
-    SCRIPT_PATH=$(realpath $0)
+    # assume space-separated
+    read -ra FILENAME_ARRAY <<< "$FILENAMES"
 fi
 
-# Find the repository root directory to locate the config file
-SCRIPT_DIR=$( cd -- "--" "$(dirname -- "$SCRIPT_PATH")" &> /dev/null && pwd )
-REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
-CONFIG_FILE="$REPO_ROOT/config.yml"
-
-# Load the config variables
-big_data_storage_path=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "big_data_storage_path")
-regions=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "regions")
-
-# Get the filenames from request_planetscope
-# eval $(python ${REPO_ROOT}/code/helpers/get_timeid_filenames_planet.py "$landsat_zarr_name" "$region" "$big_data_storage_path")
-# echo $filenames
-
-# For each filename, submit a job for the planetscope processing
 job_ids=()
-for filename in $FILENAMES; do
+for filename in "${FILENAME_ARRAY[@]}"; do
+    # trim whitespace
+    filename=$(echo "$filename" | xargs)
+    
     echo "Processing file: $filename"
-    file_job=$(sbatch --parsable --export=REGION="$REGION",FILENAME="$FILENAME",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME" ./planetscope_date_to_xarray.sh)
+    file_job=$(sbatch --parsable --export=REGION="$REGION",FILENAME="$filename",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME" ./planetscope_date_to_xarray.sh)
     job_ids+=($file_job)
+
+# # For each filename, submit a job for the planetscope processing
+# job_ids=()
+# for filename in $FILENAMES; do
+#     echo "Processing file: $filename"
+#     file_job=$(sbatch --parsable --export=REGION="$REGION",FILENAME="$filename",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME" ./planetscope_date_to_xarray.sh)
+#     job_ids+=($file_job)
 
 # Add all jobs as dependency to finish on submitting the combine job
 dependency_string=$(IFS=:; echo "${job_ids[*]}")
 combine_job=$(sbatch --parsable --export=REGION="$REGION",FILENAMES="$FILENAMES",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME",REGION_FILENAMES_JSON="$REGION_FILENAMES_JSON" --dependency=afterok:$dependency_string ./combine_planetscope_xarrays.sh)
 echo "Submitted combine job: $combine_job"
+echo "Dependency string: $dependency_string"
 
 done
 
