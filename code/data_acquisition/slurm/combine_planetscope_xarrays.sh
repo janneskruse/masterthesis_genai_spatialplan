@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --time=00:10:00
-#SBATCH --job-name="Process_PlanetScope"
+#SBATCH --job-name="Combine_PlanetScope_Xarrays"
 #SBATCH --nodes=1
 #SBATCH --tasks-per-node=1
 #SBATCH --ntasks=1
@@ -10,7 +10,7 @@
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de #please indicate your own email here
 #SBATCH --mail-type=ALL
-#SBATCH -o "process_planetscope.%j.txt" #j for the job id
+#SBATCH -o "outputs/combine_planetscope_xarrays.%j.txt" #j for the job id
 
 # ACTIVATE ANACONDA
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
