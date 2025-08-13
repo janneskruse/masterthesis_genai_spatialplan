@@ -10,7 +10,7 @@
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de #please indicate your own email here
 #SBATCH --mail-type=ALL
-#SBATCH -o "combine_region_datasets_${REGION}.%j.txt" #j for the job id
+#SBATCH -o "combine_region_datasets.%j.txt" #j for the job id
 
 # ACTIVATE ANACONDA
 source /home/sc.uni-leipzig.de/${USER}/.bashrc

@@ -9,7 +9,7 @@
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de
 #SBATCH --mail-type=ALL
-#SBATCH -o "outputs/landsat_to_xarray_${REGION}.%j.txt"
+#SBATCH -o "outputs/landsat_to_xarray.%j.txt"
 
 # Load Anaconda environment
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
