@@ -17,21 +17,25 @@ source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
 # Run the combine job for the planetscope datasets
-python3 -u combine_planetscope_xarrays.py --region "$region" --landsat_zarr_name "$landsat_zarr_name" --planet_zarr_name "$planet_zarr_name" --filenames="$filenames"
+python3 -u combine_planetscope_xarrays.py --region "$REGION" --landsat_zarr_name "$LANDSAT_ZARR_NAME" --filenames="$FILENAMES"
 
-
-#check if for all files of the region the jobs have finished (the files exist) and if so, submit the combine job
 # Extract filenames for the region
-landsat_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".landsat_zarr_name")
-osm_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".osm_zarr_name")
-planet_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".planet_zarr_name")
-processed_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".processed_zarr_name")
+landsat_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$REGION\".landsat_zarr_name")
+osm_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$REGION\".osm_zarr_name")
+planet_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$REGION\".planet_zarr_name")
+processed_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$REGION\".processed_zarr_name")
+
+# Print the filenames for debugging
+echo "Landsat Zarr Name: $landsat_zarr_name"
+echo "OSM Zarr Name: $osm_zarr_name"
+echo "Planet Zarr Name: $planet_zarr_name"
+echo "Processed Zarr Name: $processed_zarr_name"
 
 # Check if the zarr files exist
 if [[ -f "$landsat_zarr_name" && -f "$osm_zarr_name" && -f "$planet_zarr_name" ]]; then
-    echo "All required files for region $region exist"
+    echo "All required files for region $REGION exist"
 else
-    echo "Missing files for region $region. Please check the processing steps."
+    echo "Missing files for region $REGION. Please check the processing steps."
     exit 1
 fi
 
