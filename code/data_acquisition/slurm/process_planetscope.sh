@@ -79,7 +79,5 @@ combine_job=$(sbatch --parsable --export=REGION="$REGION",FILENAMES="$FILENAMES"
 echo "Submitted combine job: $combine_job"
 echo "Dependency string: $dependency_string"
 
-done
-
     
 
