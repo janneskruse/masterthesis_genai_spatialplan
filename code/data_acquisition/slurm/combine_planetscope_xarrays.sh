@@ -22,6 +22,9 @@ echo "Processing region: $REGION"
 # Run the combine job for the planetscope datasets
 python3 -u combine_planetscope_xarrays.py --region "$REGION" --landsat_zarr_name "$LANDSAT_ZARR_NAME" --filenames="$FILENAMES"
 
+# Print Region Filenames JSON
+echo "Region Filenames JSON: $region_filenames_json"
+
 # Extract filenames for the region
 landsat_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$REGION\".landsat_zarr_name")
 osm_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$REGION\".osm_zarr_name")

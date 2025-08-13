@@ -21,7 +21,7 @@ echo "Processing region: $REGION"
 
 python3 -u combine_region_datasets.py --region "$region" --landsat_zarr_name "$landsat_zarr_name" --osm_zarr_name "$osm_zarr_name" --planet_zarr_name "$planet_zarr_name"
 
-
+# Get the script path
 if [ -n $SLURM_JOB_ID ];  then
     # check the original location through scontrol and $SLURM_JOB_ID
     SCRIPT_PATH=$(scontrol show job $SLURM_JOB_ID | awk -F= '/Command=/{print $2}')

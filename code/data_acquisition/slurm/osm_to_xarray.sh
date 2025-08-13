@@ -21,8 +21,9 @@ echo "Processing region: $REGION"
 # Execute the OSM to Xarray script
 python3 -u osm_to_xarray.py --REGION ${REGION}
 
+# Print Region Filenames JSON
+echo "Region Filenames JSON: $region_filenames_json"
 
-#check if for all files of the region the jobs have finished (the files exist) and if so, submit the combine job
 # Extract filenames for the region
 landsat_zarr_name=$(echo "$REGION_FILENAMES_JSON" | jq -r ".\"$REGION\".landsat_zarr_name")
 osm_zarr_name=$(echo "$REGION_FILENAMES_JSON" | jq -r ".\"$REGION\".osm_zarr_name")
@@ -56,8 +57,19 @@ else
     fi
 fi
 
+
+#### When already processed all regions, submit the combine job for all regions
+# Get the script path
+if [ -n $SLURM_JOB_ID ];  then
+    # check the original location through scontrol and $SLURM_JOB_ID
+    SCRIPT_PATH=$(scontrol show job $SLURM_JOB_ID | awk -F= '/Command=/{print $2}')
+else
+    # otherwise: started with bash. Get the real location.
+    SCRIPT_PATH=$(realpath $0)
+fi
+
 # Find the repository root directory to locate the config file
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+SCRIPT_DIR=$( cd -- "--" "$(dirname -- "$SCRIPT_PATH")" &> /dev/null && pwd )
 REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
 CONFIG_FILE="$REPO_ROOT/config.yml"
 
