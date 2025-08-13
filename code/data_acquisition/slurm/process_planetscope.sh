@@ -47,11 +47,14 @@ else
     read -ra FILENAME_ARRAY <<< "$FILENAMES"
 fi
 
+# Print for debugging
+echo "FILENAME_ARRAY: ${FILENAME_ARRAY[@]}"
+
 job_ids=()
 for filename in "${FILENAME_ARRAY[@]}"; do
     # trim whitespace
     filename=$(echo "$filename" | xargs)
-    
+
     echo "Processing file: $filename"
     file_job=$(sbatch --parsable --export=REGION="$REGION",FILENAME="$filename",LANDSAT_ZARR_NAME="$LANDSAT_ZARR_NAME" ./planetscope_date_to_xarray.sh)
     job_ids+=($file_job)
