@@ -385,7 +385,10 @@ try:
     
 
     ######### Create the rasterized datasets #########
+    print("Creating rasterized datasets from OSM data...")
+    
     #### Retrieve street lines, set a more appropriate width and convert to xarray ds
+    print("Retrieving streets from OSM data...")
     # Note: the column 'smootheness' is the "physical usability of a way for wheeled vehicles, particularly regarding surface regularity/flatness" https://wiki.openstreetmap.org/wiki/Key:smoothness
 
     #filter out streets
@@ -495,11 +498,13 @@ try:
     os.makedirs(types_folder_path, exist_ok=True)
     
     # write to zarr
+    print("Writing streets to zarr...")
     streets_xr.to_zarr(f"{types_folder_path}/rasterized_streets.zarr", mode="w", consolidated=True, compute=True)
 
 
 
     #### Retrieve water bodies and convert to xarray ds #####
+    print("Retrieving water bodies from OSM data...")
     water_gdf=osm_gdf[osm_gdf["natural"] == "water"]
     water_gdf = water_gdf[["geometry",  "name", "water"]]
     
@@ -551,11 +556,13 @@ try:
 
 
     # write to zarr
+    print("Writing water bodies to zarr...")
     water_xr.to_zarr(f"{types_folder_path}/rasterized_water.zarr", mode="w", consolidated=True, compute=True)
 
 
 
     #### Retrieve buildings with service attributes and convert to xarray ds
+    print("Retrieving buildings from OSM data...")
     buildings_gdf = osm_gdf[osm_gdf["building"].notnull()]
 
     #at least 50% of data in the columns
@@ -594,11 +601,13 @@ try:
     buildings_xr.attrs.update(buildings_xr["buildings"].attrs)
 
     # write to zarr
+    print("Writing buildings to zarr...")
     buildings_xr.to_zarr(f"{types_folder_path}/rasterized_buildings.zarr", mode="w", consolidated=True, compute=True)
 
 
 
     #### Get 3D buildings from Yangzi Che et al. and convert to xarray ds
+    print("Retrieving 3D building heights from Yangzi Che et al. (2024)...")
     # There is a global ML retrieved 3D building footprint dataset available from the Copernicus Global Land Service: 
     # 3D-GloBFP: the first global three-dimensional building footprint dataset
     # https://essd.copernicus.org/articles/16/5357/2024/essd-16-5357-2024-assets.html
@@ -714,11 +723,13 @@ try:
     )
 
     #write to zarr
+    print("Saving building heights xarray dataset to zarr...")
     building_heights_xr.to_zarr(f"{types_folder_path}/rasterized_building_heights.zarr", mode="w", consolidated=True, compute=True)
 
 
 
     #### Retrieve landuse and convert to xarray ds  ####
+    print("Processing landuse data...")
     # everything that is not streets or buildings
     landuse_gdf = osm_gdf[~osm_gdf["building"].notnull() & ~osm_gdf["highway"].notnull() & ~osm_gdf["railway"].notnull() & ~osm_gdf["water"].isin(["lake", "river", "canal"]) & ~osm_gdf["waterway"].isin(["river", "stream", "canal"])] 
     landuse_gdf = landuse_gdf[landuse_gdf.geometry.is_valid]
@@ -764,10 +775,12 @@ try:
     )
     
     #write to zarr
+    print("Saving landuse xarray dataset to zarr...")
     landuse_xr.to_zarr(f"{types_folder_path}/rasterized_landuse.zarr", mode="w", consolidated=True, compute=True)
 
 
     ##### Merge all datasets ######
+    print("Merging all datasets into a single xarray dataset...")
     building_heights_xr = xr.open_zarr(f"{types_folder_path}/rasterized_building_heights.zarr", consolidated=True, decode_times=False)
     streets_xr = xr.open_zarr(f"{types_folder_path}/rasterized_streets.zarr", consolidated=True, decode_times=False)
     buildings_xr = xr.open_zarr(f"{types_folder_path}/rasterized_buildings.zarr", consolidated=True, decode_times=False)
@@ -783,7 +796,10 @@ try:
     merged_xr = merged_xr.rename({"lat": "y", "lon": "x"})
 
     # save as zarr
+    print(f"Saving merged xarray dataset to {osm_zarr_name}")
     merged_xr.to_zarr(osm_zarr_name, mode="w", consolidated=True, compute=True)
+    
+    print(f"OSM data processing completed successfully for region {region} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 except Exception as e:
     print(f"An error occurred: {e}")
