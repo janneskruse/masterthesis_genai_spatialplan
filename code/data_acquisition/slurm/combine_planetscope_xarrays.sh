@@ -53,14 +53,14 @@ else
     echo "Processed Zarr file does not exist, proceeding with combination."
     
     # Check if a combine job is already running for this region
-    existing_job=$(squeue -u $USER --name="combine_region_$region" --noheader --format="%i" 2>/dev/null)
-    
+    existing_job=$(squeue -u $USER --name="combine_region_$REGION" --noheader --format="%i" 2>/dev/null)
+
     if [ -n "$existing_job" ]; then
-        echo "Combine job already running for region $region (Job ID: $existing_job). Skipping submission."
+        echo "Combine job already running for region $REGION (Job ID: $existing_job). Skipping submission."
     else
         # Submit the combine job for the region
-        combine_job=$(sbatch --parsable --job-name="combine_region_$region" --export=ALL ./combine_region_datasets.sh)
-        echo "Submitted combine job for region $region: $combine_job"
+        combine_job=$(sbatch --parsable --job-name="combine_region_$REGION" --export=ALL ./combine_region_datasets.sh)
+        echo "Submitted combine job for region $REGION: $combine_job"
     fi
 fi
 
