@@ -134,6 +134,9 @@ try:
     #concat along time dimension
     xds = xr.concat(xr_ds_list, dim="time")
     
+    # rechunk the data to avoid memory issues
+    xds = xds.chunk({'time': 1, 'y': 1024, 'x': 1024})
+    
     # write to zarr
     xds.to_zarr(planet_zarr_name, mode='w', consolidated=True)
     print(f"PlanetScope data written to {planet_zarr_name}")
