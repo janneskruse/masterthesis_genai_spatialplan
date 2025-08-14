@@ -755,11 +755,30 @@ try:
         landuse_gdf = osm_gdf[~osm_gdf["building"].notnull() & ~osm_gdf["highway"].notnull() & ~osm_gdf["railway"].notnull() & ~osm_gdf["water"].isin(["lake", "river", "canal"]) & ~osm_gdf["waterway"].isin(["river", "stream", "canal"])] 
         landuse_gdf = landuse_gdf[landuse_gdf.geometry.is_valid]
 
-        # reduce columns
-        landuse_gdf = landuse_gdf[["id", "geometry", "landuse", "boundary", "natural", "water", "waterway", "leisure", "railway", "amenity"]]
+        # # reduce columns
+        # landuse_gdf = landuse_gdf[["id", "geometry", "landuse", "boundary", "natural", "water", "waterway", "leisure", "railway", "amenity"]]
 
+        # # create combined column
+        # landuse_gdf["combined_landuse"] = landuse_gdf["landuse"].combine_first(landuse_gdf["water"]).combine_first(landuse_gdf["boundary"]).combine_first(landuse_gdf["natural"]).combine_first(landuse_gdf["waterway"]).combine_first(landuse_gdf["leisure"]).combine_first(landuse_gdf["railway"]).combine_first(landuse_gdf["amenity"])
+
+        required_columns = ["id", "geometry"]
+        optional_columns = ["landuse", "boundary", "natural", "water", "waterway", "leisure", "railway", "amenity"]
+        available_optional_columns = [col for col in optional_columns if col in landuse_gdf.columns]
+        
+        # reduce columns
+        available_columns = required_columns + available_optional_columns
+        landuse_gdf = landuse_gdf[available_columns]
+        
         # create combined column
-        landuse_gdf["combined_landuse"] = landuse_gdf["landuse"].combine_first(landuse_gdf["water"]).combine_first(landuse_gdf["boundary"]).combine_first(landuse_gdf["natural"]).combine_first(landuse_gdf["waterway"]).combine_first(landuse_gdf["leisure"]).combine_first(landuse_gdf["railway"]).combine_first(landuse_gdf["amenity"])
+        if available_optional_columns:
+            combined_landuse = landuse_gdf[available_optional_columns[0]]
+            for col in available_optional_columns[1:]:
+                combined_landuse = combined_landuse.combine_first(landuse_gdf[col])
+            landuse_gdf["combined_landuse"] = combined_landuse
+        else:
+            landuse_gdf["combined_landuse"] = pd.NA
+        
+
 
         #remove duplicates
         landuse_gdf = landuse_gdf.drop_duplicates(subset=['id'])
