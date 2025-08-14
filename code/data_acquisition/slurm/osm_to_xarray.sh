@@ -3,9 +3,9 @@
 #SBATCH --time=1:00:00
 #SBATCH --job-name="osm_to_xarray"
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --ntasks=10
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=1000
+#SBATCH --mem=8000
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de
 #SBATCH --mail-type=ALL

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-#SBATCH --time=0:01:00
+#SBATCH --time=0:20:00
 #SBATCH --job-name="Planetscope_to_Xarray"
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=1000
+#SBATCH --mem=10000
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de
 #SBATCH --mail-type=ALL 

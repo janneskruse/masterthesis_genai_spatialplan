@@ -20,7 +20,6 @@ from bs4 import BeautifulSoup
 import boto3
 
 # data manipulation
-import yaml
 import json
 from thefuzz import fuzz
 import numpy as np
@@ -67,7 +66,7 @@ except Exception as e:
     exit_with_error(f"Region not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 print(f"Processing region: {region} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-exit(0)  # Exit early for testing purposes
+# exit(0)  # Exit early for testing purposes
 
 ######## Try except Landsat data processing ########
 try:

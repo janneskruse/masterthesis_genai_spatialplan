@@ -1,9 +1,9 @@
 #!/bin/bash
 
-#SBATCH --time=0:01:00
+#SBATCH --time=2:00:00
 #SBATCH --job-name="Request_PlanetScope"
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --ntasks=10
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=1000
 #SBATCH --partition=paul

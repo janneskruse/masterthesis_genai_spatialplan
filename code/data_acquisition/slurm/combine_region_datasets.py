@@ -114,13 +114,56 @@ except Exception as e:
 processed_zarr_name = f"{processed_region_folder}/input_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 
 print(f"Combining datasets for region: {region} at {time.strftime('%Y-%m-%d %H:%M:%S')} to store at {processed_zarr_name}")
-exit(0)  # Exit early for testing purposes
+# exit(0)  # Exit early for testing purposes
 
 if os.path.exists(processed_zarr_name):
     print(f"Processed data already exists at {processed_zarr_name}, skipping processing.")
     exit(0)
 
 ####### read the zarr files #######
-xr_landsat = xr.open_zarr(landsat_zarr_name)
 xr_planet = xr.open_zarr(planet_zarr_name)
 xr_osm = xr.open_zarr(osm_zarr_name)
+
+drop_vars = ['qa_pixel',
+ 'stac_id',
+ 'view_sun_azimuth',
+ 'surface_temp_b10',
+ 'view_off_nadir',
+ 'view_sun_elevation']
+
+xr_landsat = xr.open_zarr(landsat_zarr_name, consolidated=True, decode_times=False, drop_variables=drop_vars)
+
+# rename surface_temp_b10 to land_surface_temp
+xr_landsat = xr_landsat.rename({"surface_temp_b10_masked": "landsat_surface_temp_b10_masked"})
+
+#convert time values to pandas datetime
+xr_landsat['time'] = xr.DataArray(
+    data=pd.to_datetime(xr_landsat['time'].values).tz_localize(None),
+    dims='time',
+    coords={'time': pd.to_datetime(xr_landsat['time'].values).tz_localize(None)}
+)
+
+print("Landsat bounds:", xr_landsat.rio.bounds())
+print("Planet bounds:", xr_planet.rio.bounds())
+print("OSM bounds:", xr_osm.rio.bounds())
+
+
+merged_xs = xr.merge(
+    [xr_planet, xr_landsat, xr_osm],
+    compat="override",
+    join="outer",
+    fill_value=np.nan,
+)
+
+# convert to minute precision
+merged_xs['time'] = xr.DataArray(
+    pd.to_datetime(merged_xs['time'].values).floor('min'),
+    dims='time'
+)
+
+# write to zarr
+merged_xs.to_zarr(processed_zarr_name,
+    mode="w",
+    consolidated=True,
+    compute=True,
+)

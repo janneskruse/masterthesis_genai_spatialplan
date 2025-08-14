@@ -1,11 +1,11 @@
 #!/bin/bash
 
-#SBATCH --time=0:01:00
+#SBATCH --time=0:30:00
 #SBATCH --job-name="Landsat_to_xarray"
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --ntasks=10
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=1000
+#SBATCH --mem=20000
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de
 #SBATCH --mail-type=ALL

@@ -66,7 +66,7 @@ os.makedirs(osm_region_folder, exist_ok=True)
 osm_zarr_name = f"{osm_region_folder}/osm_rasterized.zarr"
 
 print("Processing region:", region, "at", time.strftime("%Y-%m-%d %H:%M:%S"), "to produce zarr file:", osm_zarr_name)
-exit(0)  # Exit early for testing purposes
+# exit(0)  # Exit early for testing purposes
 
 ######## Try except Planet data processing ########
 try:

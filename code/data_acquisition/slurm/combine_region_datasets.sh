@@ -43,7 +43,7 @@ for region in "${regions[@]}"; do
     echo "Processing region: $region"
     
     # Extract filename for the region
-    processed_zarr_name=$(echo "$region_filenames_json" | jq -r ".\"$region\".processed_zarr_name")
+    processed_zarr_name=$(echo "$REGION_FILENAMES_JSON" | jq -r ".\"$region\".processed_zarr_name")
 
     # Check if the zarr files exist
     if [ -f "$processed_zarr_name" ]; then

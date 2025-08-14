@@ -107,7 +107,7 @@ try:
         exit_with_error(f"Filename not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     print("Processing file:", filename, "at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    exit(0)  # Exit early for testing purposes
+    # exit(0)  # Exit early for testing purposes
 
 
     folderpath=f"{planet_region_folder}/planet_tmp"

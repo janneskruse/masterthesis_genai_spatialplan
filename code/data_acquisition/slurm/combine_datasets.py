@@ -96,10 +96,36 @@ except Exception as e:
 processed_zarr_name = f"{processed_folder}/input_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 
 print("Combining datasets... at", time.strftime("%Y-%m-%d %H:%M:%S"), "to store at", processed_zarr_name)
-exit(0)  # Exit early for testing purposes
+# exit(0)  # Exit early for testing purposes
 
 if os.path.exists(processed_zarr_name):
     print(f"Processed data already exists at {processed_zarr_name}, skipping processing.")
     exit(0)
 
 ####### read the zarr files from all regions #######
+print("Reading zarr files from all regions...")
+
+processed_zarr_names = []
+for region, filenames in region_filenames_json.items():
+    processed_zarr_names.append(filenames.get("processed_zarr_name"))
+    
+xds_list = []
+for zarr_name in processed_zarr_names:
+    print("Reading", zarr_name)
+    try:
+        xr_data = xr.open_zarr(zarr_name, consolidated=True)
+        xds_list.append(xr_data)
+    except Exception as e:
+        print("Error reading", zarr_name, ":", e)
+        
+        
+if not xds_list:
+    exit_with_error(f"No valid xarray datasets found in the provided filenames, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+# Concatenate along time dimension
+print("Concatenating datasets along time dimension...")
+xds = xr.concat(xds_list, dim="time")
+
+# Write to zarr
+print("Writing combined dataset to", processed_zarr_name)
+xds.to_zarr(processed_zarr_name, mode='w', consolidated=True)

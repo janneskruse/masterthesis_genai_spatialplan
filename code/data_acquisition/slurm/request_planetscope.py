@@ -118,10 +118,11 @@ planet_zarr_name = f"{planet_region_folder}/planet_config_ge{min_temperature}_cc
 
 print(f"Requesting PlanetScope with Landsat Zarr file: {landsat_zarr_name} for region: {region} at {time.strftime('%Y-%m-%d %H:%M:%S')} to store at {planet_zarr_name}")
 
-test_folderpath=f"{planet_region_folder}/planet_tmp"
-test_filenames=[f"{test_folderpath}/planet_scope_cover_{i.replace('-','')}.parquet" for i in ["2023-01-01", "2023-02-01", "2023-03-01"]]
-submit_job_with_dependency("./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=test_filenames, region_filenames_json=region_filenames_json)
-exit(0)  # Exit early for testing purposes
+# comment this out for testing:
+# test_folderpath=f"{planet_region_folder}/planet_tmp"
+# test_filenames=[f"{test_folderpath}/planet_scope_cover_{i.replace('-','')}.parquet" for i in ["2023-01-01", "2023-02-01", "2023-03-01"]]
+# submit_job_with_dependency("./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=test_filenames, region_filenames_json=region_filenames_json)
+# exit(0)  # Exit early for testing purposes
 
 ######## Planet data processing ########
 try:
