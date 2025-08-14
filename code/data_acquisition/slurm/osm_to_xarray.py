@@ -389,395 +389,418 @@ try:
     
     #### Retrieve street lines, set a more appropriate width and convert to xarray ds
     print("Retrieving streets from OSM data...")
-    # Note: the column 'smootheness' is the "physical usability of a way for wheeled vehicles, particularly regarding surface regularity/flatness" https://wiki.openstreetmap.org/wiki/Key:smoothness
-
-    #filter out streets
-    streets_gdf = osm_gdf[osm_gdf["highway"].notnull()]
-    streets_gdf = streets_gdf[streets_gdf.geometry.type == "LineString"]
-
-    #remove all columns where more than 50% nans
-    streets_gdf = streets_gdf.dropna(axis=1, thresh=len(streets_gdf) * 0.5)
-
-    #rename lit to lighting
-    streets_gdf = streets_gdf.rename(columns={"lit": "lighting"})
-
-    # Convert to polygons with width by feature based buffering
-    # The width for german streets is managed by:
-    # - Richtlinien für die Anlage von Autobahnen https://www.fgsv-verlag.de/raa-guidelines-for-the-design-of-motorways-edition-2008-translation-2011-englische-ubersetzung
-    # - Richtlinien für die Anlage von Landstraßen https://www.bast.de/DE/Verkehrstechnik/Fachthemen/v1-strassentypen.html
-    # The following simplifies the values for the different highway classes:
-
-    # create a dict for highway classifications and their corresponding widths
-    widths = {
-        'motorway': 24,
-        'motorway_link': 16,
-        'trunk': 24,
-        'trunk_link': 16,
-        'primary': 15,
-        'primary_link': 12,
-        'secondary': 12,
-        'secondary_link': 11,
-        'tertiary': 11,
-        'tertiary_link': 11,
-        'residential': 5.5,
-        'living_street': 5.5,
-        'pedestrian': 2,
-        'road': 11,	
-        'service': 5.5,
-        'minor_service': 5.5,
-        'footway': 2,
-        'cycleway': 2,
-        'path': 2,
-        'steps': 2,
-    }
-
-    # Apply the width classification
-    streets_gdf['buffer_width'] = streets_gdf['highway'].apply(lambda x: widths.get(x, 5.5))  # Default to 5.5 if not found
-
-    #convert to projected coordinates (UTM 33N)
-    streets_gdf = streets_gdf.to_crs(epsg=32633)
-
-    # Create the buffer polygons with the appropriate width
-    streets_gdf["geometry"] = streets_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)
-
-    # convert back to WGS84
-    streets_gdf = streets_gdf.to_crs(epsg=4326)
-
-    # create xarray raster dataarrays
-    streets_xr = streets_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_size=image_size,
-        x_coords=lon,
-        y_coords=lat,
-        name="streets",
-        long_name="Streets OSM",
-        description="Rasterized streets from OSM data",
-        mapping_col=None,
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
-
-    streets_xr_surface = streets_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_size=image_size,
-        x_coords=lon,
-        y_coords=lat,
-        name="streets_surface",
-        long_name="Streets OSM surface",
-        description="Rasterized streets with surface types from OSM data",
-        mapping_col='surface', # this is the surface type
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
-    streets_xr_service = streets_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_size=image_size,
-        x_coords=lon,
-        y_coords=lat,
-        name="streets_service",
-        long_name="Streets OSM service",
-        description="Rasterized streets with service types from OSM data",
-        mapping_col='highway', # this is the service type
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
-
-    # Merge the streetsdataarrays to a single dataset
-    streets_xr = xr.merge([streets_xr, streets_xr_surface, streets_xr_service])
-
-    streets_xr.attrs.update(streets_xr["streets"].attrs)
-
-    #save to geotiff
     types_folder_path= f"{osm_region_folder}/types"
     os.makedirs(types_folder_path, exist_ok=True)
+    streets_zarr_name = f"{types_folder_path}/rasterized_streets.zarr"
     
-    # write to zarr
-    print("Writing streets to zarr...")
-    streets_xr.to_zarr(f"{types_folder_path}/rasterized_streets.zarr", mode="w", consolidated=True, compute=True)
+    if not os.path.exists(streets_zarr_name):
+        # Note: the column 'smootheness' is the "physical usability of a way for wheeled vehicles, particularly regarding surface regularity/flatness" https://wiki.openstreetmap.org/wiki/Key:smoothness
 
+        #filter out streets
+        streets_gdf = osm_gdf[osm_gdf["highway"].notnull()]
+        streets_gdf = streets_gdf[streets_gdf.geometry.type == "LineString"]
+
+        #remove all columns where more than 50% nans
+        streets_gdf = streets_gdf.dropna(axis=1, thresh=len(streets_gdf) * 0.5)
+
+        #rename lit to lighting
+        streets_gdf = streets_gdf.rename(columns={"lit": "lighting"})
+
+        # Convert to polygons with width by feature based buffering
+        # The width for german streets is managed by:
+        # - Richtlinien für die Anlage von Autobahnen https://www.fgsv-verlag.de/raa-guidelines-for-the-design-of-motorways-edition-2008-translation-2011-englische-ubersetzung
+        # - Richtlinien für die Anlage von Landstraßen https://www.bast.de/DE/Verkehrstechnik/Fachthemen/v1-strassentypen.html
+        # The following simplifies the values for the different highway classes:
+
+        # create a dict for highway classifications and their corresponding widths
+        widths = {
+            'motorway': 24,
+            'motorway_link': 16,
+            'trunk': 24,
+            'trunk_link': 16,
+            'primary': 15,
+            'primary_link': 12,
+            'secondary': 12,
+            'secondary_link': 11,
+            'tertiary': 11,
+            'tertiary_link': 11,
+            'residential': 5.5,
+            'living_street': 5.5,
+            'pedestrian': 2,
+            'road': 11,	
+            'service': 5.5,
+            'minor_service': 5.5,
+            'footway': 2,
+            'cycleway': 2,
+            'path': 2,
+            'steps': 2,
+        }
+
+        # Apply the width classification
+        streets_gdf['buffer_width'] = streets_gdf['highway'].apply(lambda x: widths.get(x, 5.5))  # Default to 5.5 if not found
+
+        #convert to projected coordinates (UTM 33N)
+        streets_gdf = streets_gdf.to_crs(epsg=32633)
+
+        # Create the buffer polygons with the appropriate width
+        streets_gdf["geometry"] = streets_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)
+
+        # convert back to WGS84
+        streets_gdf = streets_gdf.to_crs(epsg=4326)
+
+        # create xarray raster dataarrays
+        streets_xr = streets_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_size=image_size,
+            x_coords=lon,
+            y_coords=lat,
+            name="streets",
+            long_name="Streets OSM",
+            description="Rasterized streets from OSM data",
+            mapping_col=None,
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
+
+        streets_xr_surface = streets_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_size=image_size,
+            x_coords=lon,
+            y_coords=lat,
+            name="streets_surface",
+            long_name="Streets OSM surface",
+            description="Rasterized streets with surface types from OSM data",
+            mapping_col='surface', # this is the surface type
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
+        streets_xr_service = streets_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_size=image_size,
+            x_coords=lon,
+            y_coords=lat,
+            name="streets_service",
+            long_name="Streets OSM service",
+            description="Rasterized streets with service types from OSM data",
+            mapping_col='highway', # this is the service type
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
+
+        # Merge the streetsdataarrays to a single dataset
+        streets_xr = xr.merge([streets_xr, streets_xr_surface, streets_xr_service])
+
+        streets_xr.attrs.update(streets_xr["streets"].attrs)
+        
+        # write to zarr
+        print("Writing streets to zarr...")
+        streets_xr.to_zarr(streets_zarr_name, mode="w", consolidated=True, compute=True)
+    else:
+        print(f"Streets data already exists at {streets_zarr_name}, skipping processing.")
+        streets_xr = xr.open_zarr(streets_zarr_name, consolidated=True)
 
 
     #### Retrieve water bodies and convert to xarray ds #####
     print("Retrieving water bodies from OSM data...")
-    water_gdf=osm_gdf[osm_gdf["natural"] == "water"]
-    water_gdf = water_gdf[["geometry",  "name", "water"]]
-    
-    # filter out waterways
-    water_gdf = osm_gdf[(osm_gdf["water"].isin(["lake", "river", "canal"]) | osm_gdf["waterway"].isin(["river", "stream", "canal"]))]
-    water_gdf = water_gdf[["id", "geometry", "name", "water", "waterway"]]
+    water_zarr_name = f"{types_folder_path}/rasterized_water.zarr"
+    if not os.path.exists(water_zarr_name):
+        water_gdf=osm_gdf[osm_gdf["natural"] == "water"]
+        water_gdf = water_gdf[["geometry",  "name", "water"]]
+        
+        # filter out waterways
+        water_gdf = osm_gdf[(osm_gdf["water"].isin(["lake", "river", "canal"]) | osm_gdf["waterway"].isin(["river", "stream", "canal"]))]
+        water_gdf = water_gdf[["id", "geometry", "name", "water", "waterway"]]
 
-    # buffer dict for waterway types
-    waterway_buffer = {
-        'river': 14,
-        'stream': 1,
-        'canal': 3,
-    }
+        # buffer dict for waterway types
+        waterway_buffer = {
+            'river': 14,
+            'stream': 1,
+            'canal': 3,
+        }
 
-    # buffer waterway geometries
-    water_gdf['buffer_width'] = water_gdf['waterway'].apply(lambda x: waterway_buffer.get(x, 5))  # Default to 5 if not 
+        # buffer waterway geometries
+        water_gdf['buffer_width'] = water_gdf['waterway'].apply(lambda x: waterway_buffer.get(x, 5))  # Default to 5 if not 
 
-    # convert to projected coordinates (UTM 33N)
-    water_gdf = water_gdf.to_crs(epsg=32633)
+        # convert to projected coordinates (UTM 33N)
+        water_gdf = water_gdf.to_crs(epsg=32633)
 
-    # Create the buffer polygons with an appropriate width
-    water_gdf["geometry"] = water_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)
+        # Create the buffer polygons with an appropriate width
+        water_gdf["geometry"] = water_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)
 
-    # convert back to WGS84
-    water_gdf = water_gdf.to_crs(epsg=4326)
+        # convert back to WGS84
+        water_gdf = water_gdf.to_crs(epsg=4326)
 
-    # create combined water colum
-    water_gdf["combined_water"] = water_gdf["water"].combine_first(water_gdf["waterway"])
+        # create combined water colum
+        water_gdf["combined_water"] = water_gdf["water"].combine_first(water_gdf["waterway"])
 
-    #remove duplicates
-    water_gdf = water_gdf.drop_duplicates(subset=['id'])
-    water_gdf = water_gdf.drop(columns=['water', 'waterway'])
+        #remove duplicates
+        water_gdf = water_gdf.drop_duplicates(subset=['id'])
+        water_gdf = water_gdf.drop(columns=['water', 'waterway'])
 
-    # Convert to xarray raster dataarray
-    water_xr = water_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_size=image_size,
-        x_coords=lon,
-        y_coords=lat,
-        name="water",
-        long_name="Water OSM",
-        description="Rasterized water from OSM data",
-        mapping_col="combined_water",
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
+        # Convert to xarray raster dataarray
+        water_xr = water_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_size=image_size,
+            x_coords=lon,
+            y_coords=lat,
+            name="water",
+            long_name="Water OSM",
+            description="Rasterized water from OSM data",
+            mapping_col="combined_water",
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
 
 
-    # write to zarr
-    print("Writing water bodies to zarr...")
-    water_xr.to_zarr(f"{types_folder_path}/rasterized_water.zarr", mode="w", consolidated=True, compute=True)
+        # write to zarr
+        print("Writing water bodies to zarr...")
+        water_xr.to_zarr(water_zarr_name, mode="w", consolidated=True, compute=True)
+    else:
+        print(f"Water bodies data already exists at {water_zarr_name}, skipping processing.")
+        water_xr = xr.open_zarr(water_zarr_name, consolidated=True)
 
 
 
     #### Retrieve buildings with service attributes and convert to xarray ds
     print("Retrieving buildings from OSM data...")
-    buildings_gdf = osm_gdf[osm_gdf["building"].notnull()]
+    buildings_zarr_name = f"{types_folder_path}/rasterized_buildings.zarr"
+    
+    if not os.path.exists(buildings_zarr_name):
+        buildings_gdf = osm_gdf[osm_gdf["building"].notnull()]
 
-    #at least 50% of data in the columns
-    buildings_gdf = buildings_gdf.dropna(axis=1, thresh=len(buildings_gdf) * 0.5)
+        #at least 50% of data in the columns
+        buildings_gdf = buildings_gdf.dropna(axis=1, thresh=len(buildings_gdf) * 0.5)
 
-    # convert to xarray raster dataarray
-    buildings_xr = buildings_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_size=image_size,
-        x_coords=lon,
-        y_coords=lat,
-        name="buildings",
-        long_name="Buildings OSM",
-        description="Rasterized buildings from OSM data",
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
-    buildings_xr_service = buildings_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_size=image_size,
-        x_coords=lon,
-        y_coords=lat,
-        name="buildings_service",
-        long_name="Buildings OSM service",
-        description="Rasterized buildings with service from OSM data",
-        mapping_col="building", # this is the service type
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
+        # convert to xarray raster dataarray
+        buildings_xr = buildings_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_size=image_size,
+            x_coords=lon,
+            y_coords=lat,
+            name="buildings",
+            long_name="Buildings OSM",
+            description="Rasterized buildings from OSM data",
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
+        buildings_xr_service = buildings_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_size=image_size,
+            x_coords=lon,
+            y_coords=lat,
+            name="buildings_service",
+            long_name="Buildings OSM service",
+            description="Rasterized buildings with service from OSM data",
+            mapping_col="building", # this is the service type
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
 
-    buildings_xr = xr.merge([buildings_xr, buildings_xr_service])
-    buildings_xr.attrs.update(buildings_xr["buildings"].attrs)
+        buildings_xr = xr.merge([buildings_xr, buildings_xr_service])
+        buildings_xr.attrs.update(buildings_xr["buildings"].attrs)
 
-    # write to zarr
-    print("Writing buildings to zarr...")
-    buildings_xr.to_zarr(f"{types_folder_path}/rasterized_buildings.zarr", mode="w", consolidated=True, compute=True)
-
+        # write to zarr
+        print("Writing buildings to zarr...")
+        buildings_xr.to_zarr(buildings_zarr_name, mode="w", consolidated=True, compute=True)
+    else:
+        print(f"Buildings data already exists at {buildings_zarr_name}, skipping processing.")
+        buildings_xr = xr.open_zarr(buildings_zarr_name, consolidated=True)
 
 
     #### Get 3D buildings from Yangzi Che et al. and convert to xarray ds
     print("Retrieving 3D building heights from Yangzi Che et al. (2024)...")
-    # There is a global ML retrieved 3D building footprint dataset available from the Copernicus Global Land Service: 
-    # 3D-GloBFP: the first global three-dimensional building footprint dataset
-    # https://essd.copernicus.org/articles/16/5357/2024/essd-16-5357-2024-assets.html
-    # This dataset is huge! 
-    # Using GDALs ogr2ogr directly in a docker container is probably the fastest conversion to parquet:
-    # 
-    # ```bash
-    # 
-    # docker pull osgeo/gdal:ubuntu-full-3.5.2
-    # docker run --rm -it -v ${PWD}/data/che_etal/Germany_Hungary_Iceland:/data osgeo/gdal:ubuntu-full-3.5.2 `
-    #   ogr2ogr `
-    #   /data/building_heights_germany.parquet `
-    #   /data/Germany.shp `
-    #   -dialect SQLite `
-    #   -sql "SELECT geometry, Height FROM 'Germany'" `
-    #   -lco COMPRESSION=BROTLI `
-    #   -lco POLYGON_ORIENTATION=COUNTERCLOCKWISE `
-    #   -lco ROW_GROUP_SIZE=9999999
-    # 
-    # ```
+    building_heights_zarr_name = f"{types_folder_path}/rasterized_building_heights.zarr"
     
-    ## use duckdb to read the parquet with spatial filtering
-    # Install and load the spatial extension
-    duckdb.sql("""
-        INSTALL spatial;
-        LOAD spatial;
-        SET enable_geoparquet_conversion = false; 
-    """) # enable_geoparquet_conversion = false --> has to be set when the parquet is not pure geoparquet but WKB encoded geometries
-
-    # query within bbox and sort by hilbert curve
-    duckdb.sql(f"""
-        CREATE TEMP TABLE tmp_buildings AS
-        SELECT
-            Height AS height,
-            ST_AsWKB(ST_GeomFromWKB("GEOMETRY")) AS geom                 
-        FROM read_parquet('{repo_dir}/data/che_etal/Germany_Hungary_Iceland/building_heights_germany.parquet', filename=true, hive_partitioning=1)
-        WHERE ST_Within(
-            ST_GeomFromWKB("GEOMETRY"),
-            ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})
-        )
-        ORDER BY ST_Hilbert(ST_GeomFromWKB("GEOMETRY"), ST_Extent(ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})))
-    """)
-
-    # fetch as arrow table and pandas dataframe
-    building_heights_table = duckdb.sql("SELECT * FROM tmp_buildings").arrow()
-    building_heights_df = duckdb.sql("SELECT * FROM tmp_buildings").df()
-
-    ## Convert WKB to Shapely geometries
-    # geometry to list
-    wkb_list = building_heights_table['geom'].to_pylist()
-
-    # collect coordinates
-    geom_offsets = [0]
-    ring_offsets = []
-    xs = []
-    ys = []
-
-    for wkb_blob in wkb_list:
-        geom = wkb.loads(wkb_blob)
+    if not os.path.exists(building_heights_zarr_name):
+        # There is a global ML retrieved 3D building footprint dataset available from the Copernicus Global Land Service: 
+        # 3D-GloBFP: the first global three-dimensional building footprint dataset
+        # https://essd.copernicus.org/articles/16/5357/2024/essd-16-5357-2024-assets.html
+        # This dataset is huge! 
+        # Using GDALs ogr2ogr directly in a docker container is probably the fastest conversion to parquet:
+        # 
+        # ```bash
+        # 
+        # docker pull osgeo/gdal:ubuntu-full-3.5.2
+        # docker run --rm -it -v ${PWD}/data/che_etal/Germany_Hungary_Iceland:/data osgeo/gdal:ubuntu-full-3.5.2 `
+        #   ogr2ogr `
+        #   /data/building_heights_germany.parquet `
+        #   /data/Germany.shp `
+        #   -dialect SQLite `
+        #   -sql "SELECT geometry, Height FROM 'Germany'" `
+        #   -lco COMPRESSION=BROTLI `
+        #   -lco POLYGON_ORIENTATION=COUNTERCLOCKWISE `
+        #   -lco ROW_GROUP_SIZE=9999999
+        # 
+        # ```
         
-        if geom.geom_type == 'Polygon':
-            rings = [geom.exterior] + list(geom.interiors)
-        elif geom.geom_type == 'MultiPolygon':
-            rings = []
-            for poly in geom.geoms:
-                rings.append(poly.exterior)
-                rings.extend(poly.interiors)
-        else:
-            continue  # skip non-polygonal types
+        ## use duckdb to read the parquet with spatial filtering
+        # Install and load the spatial extension
+        duckdb.sql("""
+            INSTALL spatial;
+            LOAD spatial;
+            SET enable_geoparquet_conversion = false; 
+        """) # enable_geoparquet_conversion = false --> has to be set when the parquet is not pure geoparquet but WKB encoded geometries
 
-        # Add each ring
-        for ring in rings:
-            ring_coords = np.array(ring.coords)
-            xs.extend(ring_coords[:, 0])
-            ys.extend(ring_coords[:, 1])
-            ring_offsets.append(len(xs))
+        # query within bbox and sort by hilbert curve
+        duckdb.sql(f"""
+            CREATE TEMP TABLE tmp_buildings AS
+            SELECT
+                Height AS height,
+                ST_AsWKB(ST_GeomFromWKB("GEOMETRY")) AS geom                 
+            FROM read_parquet('{repo_dir}/data/che_etal/Germany_Hungary_Iceland/building_heights_germany.parquet', filename=true, hive_partitioning=1)
+            WHERE ST_Within(
+                ST_GeomFromWKB("GEOMETRY"),
+                ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})
+            )
+            ORDER BY ST_Hilbert(ST_GeomFromWKB("GEOMETRY"), ST_Extent(ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})))
+        """)
 
-        geom_offsets.append(len(ring_offsets))
+        # fetch as arrow table and pandas dataframe
+        building_heights_table = duckdb.sql("SELECT * FROM tmp_buildings").arrow()
+        building_heights_df = duckdb.sql("SELECT * FROM tmp_buildings").df()
 
-    # Convert to numpy arrays
-    xs = np.array(xs)
-    ys = np.array(ys)
-    ring_offsets = np.array(ring_offsets, dtype=np.int32)
-    geom_offsets = np.array(geom_offsets[:-1], dtype=np.int32)
+        ## Convert WKB to Shapely geometries
+        # geometry to list
+        wkb_list = building_heights_table['geom'].to_pylist()
 
-    # build geoarrow polygon array
-    polygon_array = ga.polygon().from_geobuffers(
-        None,            # no validity bitmap
-        geom_offsets,    # polygon offset
-        ring_offsets,    # ring offset
-        xs,
-        ys
-    )
-    gdf= ga.to_geopandas(polygon_array)
+        # collect coordinates
+        geom_offsets = [0]
+        ring_offsets = []
+        xs = []
+        ys = []
 
-    building_heights_gdf = gpd.GeoDataFrame(building_heights_df, geometry=gdf.geometry, crs="EPSG:4326")
-    building_heights_gdf = building_heights_gdf.drop(columns=['geom'])
+        for wkb_blob in wkb_list:
+            geom = wkb.loads(wkb_blob)
+            
+            if geom.geom_type == 'Polygon':
+                rings = [geom.exterior] + list(geom.interiors)
+            elif geom.geom_type == 'MultiPolygon':
+                rings = []
+                for poly in geom.geoms:
+                    rings.append(poly.exterior)
+                    rings.extend(poly.interiors)
+            else:
+                continue  # skip non-polygonal types
 
-    # convert to xarray raster dataarray
-    building_heights_xr = building_heights_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_size=image_size,
-        x_coords=lon,
-        y_coords=lat,
-        name="buildings_heights",
-        long_name="Buildings Heights OSM",
-        description="Rasterized buildings heights from OSM data",
-        mapping_col="height",
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
+            # Add each ring
+            for ring in rings:
+                ring_coords = np.array(ring.coords)
+                xs.extend(ring_coords[:, 0])
+                ys.extend(ring_coords[:, 1])
+                ring_offsets.append(len(xs))
 
-    #write to zarr
-    print("Saving building heights xarray dataset to zarr...")
-    building_heights_xr.to_zarr(f"{types_folder_path}/rasterized_building_heights.zarr", mode="w", consolidated=True, compute=True)
+            geom_offsets.append(len(ring_offsets))
 
+        # Convert to numpy arrays
+        xs = np.array(xs)
+        ys = np.array(ys)
+        ring_offsets = np.array(ring_offsets, dtype=np.int32)
+        geom_offsets = np.array(geom_offsets[:-1], dtype=np.int32)
+
+        # build geoarrow polygon array
+        polygon_array = ga.polygon().from_geobuffers(
+            None,            # no validity bitmap
+            geom_offsets,    # polygon offset
+            ring_offsets,    # ring offset
+            xs,
+            ys
+        )
+        gdf= ga.to_geopandas(polygon_array)
+
+        building_heights_gdf = gpd.GeoDataFrame(building_heights_df, geometry=gdf.geometry, crs="EPSG:4326")
+        building_heights_gdf = building_heights_gdf.drop(columns=['geom'])
+
+        # convert to xarray raster dataarray
+        building_heights_xr = building_heights_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_size=image_size,
+            x_coords=lon,
+            y_coords=lat,
+            name="buildings_heights",
+            long_name="Buildings Heights OSM",
+            description="Rasterized buildings heights from OSM data",
+            mapping_col="height",
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
+
+        #write to zarr
+        print("Saving building heights xarray dataset to zarr...")
+        building_heights_xr.to_zarr(building_heights_zarr_name, mode="w", consolidated=True, compute=True)
+    else:
+        print(f"Building heights data already exists at {building_heights_zarr_name}, skipping processing.")
+        building_heights_xr = xr.open_zarr(building_heights_zarr_name, consolidated=True)
 
 
     #### Retrieve landuse and convert to xarray ds  ####
     print("Processing landuse data...")
-    # everything that is not streets or buildings
-    landuse_gdf = osm_gdf[~osm_gdf["building"].notnull() & ~osm_gdf["highway"].notnull() & ~osm_gdf["railway"].notnull() & ~osm_gdf["water"].isin(["lake", "river", "canal"]) & ~osm_gdf["waterway"].isin(["river", "stream", "canal"])] 
-    landuse_gdf = landuse_gdf[landuse_gdf.geometry.is_valid]
-
-    # reduce columns
-    landuse_gdf = landuse_gdf[["id", "geometry", "landuse", "boundary", "natural", "water", "waterway", "leisure", "railway", "amenity"]]
-
-    # create combined column
-    landuse_gdf["combined_landuse"] = landuse_gdf["landuse"].combine_first(landuse_gdf["water"]).combine_first(landuse_gdf["boundary"]).combine_first(landuse_gdf["natural"]).combine_first(landuse_gdf["waterway"]).combine_first(landuse_gdf["leisure"]).combine_first(landuse_gdf["railway"]).combine_first(landuse_gdf["amenity"])
-
-    #remove duplicates
-    landuse_gdf = landuse_gdf.drop_duplicates(subset=['id'])
-
-    #give railway 0.5 buffer width
-    landuse_gdf['buffer_width'] = landuse_gdf['railway'].apply(lambda x: 0.5 if x == "rail" else 0)  # Default to 0 if not found
-
-    # convert to projected coordinates (UTM 33N)
-    landuse_gdf = landuse_gdf.to_crs(epsg=32633)
-
-    # Create the buffer polygons with the appropriate width
-    landuse_gdf["geometry"] = landuse_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)
-
-    # convert back to WGS84
-    landuse_gdf = landuse_gdf.to_crs(epsg=4326)
-
-    #drop columns
-    landuse_gdf.drop(columns=['landuse', 'water', 'boundary', 'natural', 'waterway', 'leisure', 'railway', 'amenity'], inplace=True)
-
-    # convert to xarray raster dataarray
-    landuse_xr = landuse_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_size=image_size,
-        x_coords=lon,
-        y_coords=lat,
-        name="landuse",
-        long_name="Landuse OSM",
-        description="Rasterized landuse from OSM data",
-        mapping_col="combined_landuse",
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
+    landuse_zarr_name = f"{types_folder_path}/rasterized_landuse.zarr"
     
-    #write to zarr
-    print("Saving landuse xarray dataset to zarr...")
-    landuse_xr.to_zarr(f"{types_folder_path}/rasterized_landuse.zarr", mode="w", consolidated=True, compute=True)
+    if not os.path.exists(landuse_zarr_name):
+        # everything that is not streets or buildings
+        landuse_gdf = osm_gdf[~osm_gdf["building"].notnull() & ~osm_gdf["highway"].notnull() & ~osm_gdf["railway"].notnull() & ~osm_gdf["water"].isin(["lake", "river", "canal"]) & ~osm_gdf["waterway"].isin(["river", "stream", "canal"])] 
+        landuse_gdf = landuse_gdf[landuse_gdf.geometry.is_valid]
 
+        # reduce columns
+        landuse_gdf = landuse_gdf[["id", "geometry", "landuse", "boundary", "natural", "water", "waterway", "leisure", "railway", "amenity"]]
+
+        # create combined column
+        landuse_gdf["combined_landuse"] = landuse_gdf["landuse"].combine_first(landuse_gdf["water"]).combine_first(landuse_gdf["boundary"]).combine_first(landuse_gdf["natural"]).combine_first(landuse_gdf["waterway"]).combine_first(landuse_gdf["leisure"]).combine_first(landuse_gdf["railway"]).combine_first(landuse_gdf["amenity"])
+
+        #remove duplicates
+        landuse_gdf = landuse_gdf.drop_duplicates(subset=['id'])
+
+        #give railway 0.5 buffer width
+        landuse_gdf['buffer_width'] = landuse_gdf['railway'].apply(lambda x: 0.5 if x == "rail" else 0)  # Default to 0 if not found
+
+        # convert to projected coordinates (UTM 33N)
+        landuse_gdf = landuse_gdf.to_crs(epsg=32633)
+
+        # Create the buffer polygons with the appropriate width
+        landuse_gdf["geometry"] = landuse_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)
+
+        # convert back to WGS84
+        landuse_gdf = landuse_gdf.to_crs(epsg=4326)
+
+        #drop columns
+        landuse_gdf.drop(columns=['landuse', 'water', 'boundary', 'natural', 'waterway', 'leisure', 'railway', 'amenity'], inplace=True)
+
+        # convert to xarray raster dataarray
+        landuse_xr = landuse_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_size=image_size,
+            x_coords=lon,
+            y_coords=lat,
+            name="landuse",
+            long_name="Landuse OSM",
+            description="Rasterized landuse from OSM data",
+            mapping_col="combined_landuse",
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
+        
+        #write to zarr
+        print("Saving landuse xarray dataset to zarr...")
+        landuse_xr.to_zarr(landuse_zarr_name, mode="w", consolidated=True, compute=True)
+    else:
+        print(f"Landuse data already exists at {landuse_zarr_name}, skipping processing.")
+        landuse_xr = xr.open_zarr(landuse_zarr_name, consolidated=True)
 
     ##### Merge all datasets ######
     print("Merging all datasets into a single xarray dataset...")
