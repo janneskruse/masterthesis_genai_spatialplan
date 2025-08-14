@@ -12,7 +12,9 @@ import sys
 import time
 import calendar
 import requests
+import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 import threading
 import hashlib
 from dotenv import load_dotenv
@@ -568,13 +570,32 @@ try:
     
     
     ######### request all date downloads #########
-    for filename in filenames:
-        if not os.path.exists(filename):
-            print(f"File {filename} does not exist, skipping download.")
-            continue
+    # for filename in filenames:
+    #     if not os.path.exists(filename):
+    #         print(f"File {filename} does not exist, skipping download.")
+    #         continue
         
         # Request download for each collection
-        requestPlanetItemDownload(filename)
+        # requestPlanetItemDownload(filename)
+    def process_filename_wrapper(filename):
+        """Wrapper function for multiprocessing"""
+        if not os.path.exists(filename):
+            print(f"File {filename} does not exist, skipping download.")
+            return f"Skipped: {filename}"
+        
+        try:
+            requestPlanetItemDownload(filename)
+            return f"Completed: {filename}"
+        except Exception as e:
+            return f"Error processing {filename}: {e}"
+
+        
+    with ProcessPoolExecutor(max_workers=min(len(filenames), 4)) as executor:
+        futures = {executor.submit(process_filename_wrapper, filename): filename for filename in filenames}
+        
+        for future in as_completed(futures):
+            result = future.result()
+            print(result)
         
     print("Finished processing PlanetScope data at", time.strftime("%Y-%m-%d %H:%M:%S"))
     submit_job_with_dependency("./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=filenames, region_filenames_json=region_filenames_json)
