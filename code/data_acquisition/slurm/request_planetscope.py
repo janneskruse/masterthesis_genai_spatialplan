@@ -294,7 +294,8 @@ try:
             merged_gdf = pd.concat([merged_gdf, gpd.GeoDataFrame([row], crs=df.crs)], ignore_index=True)
 
             # Update the merged geometry
-            merged_geom = merged_gdf.unary_union
+            # merged_geom = merged_gdf.unary_union
+            merged_geom = merged_gdf.union_all()
 
             if merged_geom.covers(bbox_geom):
                 # Success: fully covered the bbox
