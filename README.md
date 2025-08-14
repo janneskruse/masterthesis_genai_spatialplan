@@ -44,7 +44,7 @@ Steps:
 - load required modules: `module load <module_name>`
 
 ### connect to jupyter hub server on HPC
-- selet exisitng juypter hub server in vs code on kernel selection
+- select existing jupyter hub server in vs code on kernel selection
 - create a new session in jupyter hub
 - generate a token in the jupyter hub session
 - set url to `https://lab.sc.uni-leipzig.de/jupyter/`

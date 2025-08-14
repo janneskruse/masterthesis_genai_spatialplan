@@ -553,6 +553,11 @@ try:
         scene_date=scene_date.replace("-","")
         scene_folderpath=f"{folderpath}/psscene_{scene_date}"
         os.makedirs(scene_folderpath, exist_ok=True)
+        
+        # if already lebgth of files in scene_folderpath is equal to length of download_urls, skip download
+        if len(os.listdir(scene_folderpath)) == len(download_urls):
+            print(f"All files for {collection_gdf_file} already downloaded, skipping download.")
+            return
 
         # download files
         for i, url in enumerate(download_urls):
