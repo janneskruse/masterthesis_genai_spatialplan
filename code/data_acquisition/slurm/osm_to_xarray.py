@@ -777,7 +777,9 @@ try:
         landuse_gdf = landuse_gdf.to_crs(epsg=4326)
 
         #drop columns
-        landuse_gdf.drop(columns=['landuse', 'water', 'boundary', 'natural', 'waterway', 'leisure', 'railway', 'amenity'], inplace=True)
+        columns_to_drop = ['landuse', 'water', 'boundary', 'natural', 'waterway', 'leisure', 'railway', 'amenity']
+        existing_columns_to_drop = [col for col in columns_to_drop if col in landuse_gdf.columns]
+        landuse_gdf.drop(columns=existing_columns_to_drop, inplace=True)
 
         # convert to xarray raster dataarray
         landuse_xr = landuse_gdf.to_raster.to_xr_dataarray(
