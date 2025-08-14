@@ -362,7 +362,7 @@ try:
     # Save fully covered scene meta as geoparquet
     filenames= []
     folderpath=f"{planet_region_folder}/planet_tmp"
-    os.makedirs(os.path.dirname(folderpath), exist_ok=True)
+    os.makedirs(folderpath, exist_ok=True)
     for i, df in planet_scope_cover_df_list:
         filename=f"{folderpath}/planet_scope_cover_{i.replace('-','')}.parquet"
         filenames.append(filename)
