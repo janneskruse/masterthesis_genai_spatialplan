@@ -119,7 +119,7 @@ try:
     
     folderpath=f"{planet_region_folder}/planet_tmp"
     planet_zarr_filenames=[]
-    for filename in filenames.split(","):
+    for filename in filenames.split(":"):
         collection=gpd.read_parquet(filename)
         scene_date=collection.date_id.iloc[0]
         scene_date=scene_date.replace("-","")
