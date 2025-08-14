@@ -115,7 +115,7 @@ try:
         exit_with_error(f"Filenames not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     print(f"Processing PlanetScope data for region {region} using metadata from files: {filenames} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    exit(0) # for testing purposes
+    # exit(0) # for testing purposes
     
     folderpath=f"{planet_region_folder}/planet_tmp"
     planet_zarr_filenames=[]
