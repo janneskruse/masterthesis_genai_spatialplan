@@ -285,7 +285,8 @@ try:
             Merged rows that together cover the full bbox_gdf
         '''
         merged_gdf = gpd.GeoDataFrame()
-        bbox_geom = bbox_gdf.unary_union  # the target coverage geometry (the full bbox)
+        # bbox_geom = bbox_gdf.unary_union  # the target coverage geometry (the full bbox)
+        bbox_geom = bbox_gdf.union_all()
 
         while not df.empty:
             row = df.iloc[0]
