@@ -9,28 +9,13 @@
 # system
 import os
 import time
-import calendar
-import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
-import hashlib
 from dotenv import load_dotenv
 
 # data manipulation
-import json
 import yaml
-import numpy as np
-import pandas as pd
 import geopandas as gpd
 import rasterio as rio # needed for xarray.rio to work
 import xarray as xr
-import rioxarray as rxr
-from skimage.exposure import match_histograms
-from rioxarray.merge import merge_arrays
-from shapely.geometry import box, shape
-
-# visualization
-from tqdm import tqdm
 
 ##### Function to exit on error ######
 def exit_with_error(message):
@@ -126,20 +111,24 @@ try:
         planet_date_zarr_name = f"{planet_region_folder}/planet_scope_{scene_date}.zarr"
         planet_zarr_filenames.append(planet_date_zarr_name)
 
+    print(f"Found PlanetScope Zarr files: {planet_zarr_filenames} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     xr_ds_list = [xr.open_zarr(filename) for filename in planet_zarr_filenames if os.path.exists(filename)]
 
     if not xr_ds_list:
         exit_with_error(f"No valid xarray datasets found in the provided filenames, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     #concat along time dimension
+    print("Concatenating xarray datasets at", time.strftime("%Y-%m-%d %H:%M:%S"))
     xds = xr.concat(xr_ds_list, dim="time")
     
     # rechunk the data to avoid memory issues
+    print("Rechunking data at", time.strftime("%Y-%m-%d %H:%M:%S"))
     xds = xds.chunk({'time': 1, 'y': 1024, 'x': 1024})
     
     # write to zarr
+    print("Writing to zarr at", time.strftime("%Y-%m-%d %H:%M:%S"))
     xds.to_zarr(planet_zarr_name, mode='w', consolidated=True)
-    print(f"PlanetScope data written to {planet_zarr_name}")
+    print(f"PlanetScope data written to {planet_zarr_name} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 except Exception as e:
     print(f"An error occurred: {e}")

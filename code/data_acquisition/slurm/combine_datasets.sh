@@ -2,11 +2,11 @@
 
 #SBATCH --time=00:30:00
 #SBATCH --job-name="Combine_Datasets"
-#SBATCH --nodes=1
+#SBATCH --nodes=4
 #SBATCH --tasks-per-node=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
-#SBATCH --mem-per-cpu=20000
+#SBATCH --ntasks=4
+#SBATCH --cpus-per-task=10
+#SBATCH --mem-per-cpu=2000
 #SBATCH --partition=paul
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de #please indicate your own email here
 #SBATCH --mail-type=ALL
