@@ -12,6 +12,7 @@ import re
 import random
 
 # data manipulation
+from array import array
 import yaml
 import duckdb
 import json
