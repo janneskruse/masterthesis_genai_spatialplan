@@ -10,6 +10,6 @@ landsat_query:
   collections: ["landsat-c2l2-st"]
 osm_query:
   image_size: 5500
-big_data_storage_path: "/work/zt75vipu-master/data"
+big_data_storage_path: "D:/master_thesis/data" #"/work/zt75vipu-thesis/data"
 regions: ["Dresden"] # , "Leipzig", "Hamburg"
   
