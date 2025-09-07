@@ -7,6 +7,9 @@ import time
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
+import traceback
+import re
+import random
 
 # data manipulation
 import yaml
@@ -44,6 +47,7 @@ p=os.popen('git rev-parse --show-toplevel')
 repo_dir = p.read().strip()
 p.close()
 
+config = {}
 with open(f"{repo_dir}/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
     
@@ -103,109 +107,150 @@ try:
 
     ######### Request the OpenStreetMap Data ########
     filename_all_features=f"{osm_region_folder}/osm_gdf.parquet"
-    
-    if not os.path.exists(filename_all_features):
-        # Define the tag to query
-        tags = {
-            "building": True,
-            "waterway": True,
-            # "natural": True,
-            "natural": ["water", "wood", "grassland", "wetland", "scrub", "heath", "moor", "bay", "beach", "sand", "mud"],
-            "highway": True,
-            "boundary": ["protected_area"],
-            "landuse": True,
-            "leisure": ["park", "garden", "playground", "pitch", "sports_centre"],
-            "place": ["square"],
-            "amenity": ["fountain", "school", "university", "college", "hospital", "kindergarten", "place_of_worship", "parking"],
-            "aeroway": True,
-            "railway": True,
-        }
 
-        # Suppress logs for the Overpass API requests
-        def suppress_overpass_logs():
-            logging.getLogger("urllib3").setLevel(logging.CRITICAL)
-            logging.getLogger("requests").setLevel(logging.CRITICAL)
+    # Define the tag to query
+    tags = {
+        "building": True,
+        "waterway": True,
+        # "natural": True,
+        "natural": ["water", "wood", "grassland", "wetland", "scrub", "heath", "moor", "bay", "beach", "sand", "mud"],
+        "highway": True,
+        "boundary": ["protected_area"],
+        "landuse": True,
+        "leisure": ["park", "garden", "playground", "pitch", "sports_centre"],
+        "place": ["square"],
+        "amenity": ["fountain", "school", "university", "college", "hospital", "kindergarten", "place_of_worship", "parking"],
+        "aeroway": True,
+        "railway": True,
+    }
 
-        def restore_logs():
-            # Restore the default logging level
-            logging.getLogger("urllib3").setLevel(logging.NOTSET)
-            logging.getLogger("requests").setLevel(logging.NOTSET)
+    # Suppress logs for the Overpass API requests
+    def suppress_overpass_logs():
+        logging.getLogger("urllib3").setLevel(logging.CRITICAL)
+        logging.getLogger("requests").setLevel(logging.CRITICAL)
+        logging.getLogger("osm2geojson").setLevel(logging.WARNING)
 
-        # Create Overpass query for tags
-        def create_query(bbox, tags):
-            query_parts = []
-            
+    def restore_logs():
+        # Restore the default logging level
+        logging.getLogger("urllib3").setLevel(logging.NOTSET)
+        logging.getLogger("requests").setLevel(logging.NOTSET)
+        logging.getLogger("osm2geojson").setLevel(logging.NOTSET)
+        
+    # threading parameters
+    max_concurrent = 6      # parallel requests to Overpass API
+
+    # Create Overpass query for tags
+    def create_query(bbox, tags):
+        query_parts = []
+        
+        south, west, north, east = bbox[1], bbox[0], bbox[3], bbox[2]
+
+        for tag, value in tags.items():
             osm_graph_type = "wr"  # nwr, node, way, etc.
             
-            for tag, value in tags.items():
+            if tag in {"building","highway","railway","waterway"}:
+                osm_graph_type = "way"
                 
+            if value is True:
                 # If true, use tag
-                if value is True:
-                    query_parts.append(f'{osm_graph_type}["{tag}"]({bbox[1]},{bbox[0]},{bbox[3]},{bbox[2]});')
-                
-                elif isinstance(value, list) and len(value) > 1:
-                    # If list, use a regex match for multiple possible values
-                    query_parts.append(f'{osm_graph_type}["{tag}"~"{ "|".join(value)}"]({bbox[1]},{bbox[0]},{bbox[3]},{bbox[2]});')
-                # If single string, use an exact match
+                query_parts.append(f'{osm_graph_type}["{tag}"]({south},{west},{north},{east});')
+            elif isinstance(value, list):
+                # If list, use a regex match for multiple possible values
+                vals = [str(v) for v in value]
+                if len(vals) == 1:
+                    v = vals[0]
+                    query_parts.append(f'{osm_graph_type}["{tag}"="{v}"]({south},{west},{north},{east});')
                 else:
-                    query_parts.append(f'{osm_graph_type}["{tag}"="{value}"]({bbox[1]},{bbox[0]},{bbox[3]},{bbox[2]});')
+                    pat = "|".join(re.escape(v) for v in vals)
+                    query_parts.append(f'{osm_graph_type}["{tag}"~"{pat}"]({south},{west},{north},{east});')
+            else:
+                # If single string, use an exact match
+                query_parts.append(f'{osm_graph_type}["{tag}"="{value}"]({south},{west},{north},{east});')
+
+                
+        #join to a single query
+        query = "("+"\n".join(query_parts) +");"
+        # members = "(._;>>;);"
+        # return query + members + "out body geom;"
+        return query
+
+
+    # Initialize the Overpass API
+    overpass_api = overpass.API(debug=False, timeout=900)
+
+    def fetch_overpass_data(bbox, tags, retries=10, delay=2):
+        
+        query = create_query(bbox, tags)
+        
+        for attempt in range(retries):
+            try:
+                suppress_overpass_logs()
+                response = overpass_api.Get(query, responseformat="geojson", verbosity='geom')
+                restore_logs()
+                
+                # print(f"Fetched {len(response['features'])} features for bbox {bbox}")
+                
+                gdf = gpd.GeoDataFrame.from_features(response['features']) 
+                
+                #drop nodes column
+                if 'nodes' in gdf.columns:
+                    gdf = gdf.drop(columns=['nodes'])
+
+                #create columns for tags
+                if 'tags' in gdf.columns:
+                    # new dataframe from tags
+                    expanded_tags = pd.json_normalize(gdf['tags'])
                     
-            #join to a single query
-            query = "("+"\n".join(query_parts) +");"
-            return query
+                    # Only keep columns with at least 50% data for tags
+                    threshold = len(expanded_tags) * 1/len(tags)*0.5
+                    columns_to_drop = [col for col in expanded_tags.columns if 
+                                    expanded_tags[col].count() < threshold and 
+                                    col not in ["natural", "water", "boundary", "landuse", "building", "highway", "waterway"]]
+                    expanded_tags = expanded_tags.drop(columns=columns_to_drop)
+                    gdf = gdf.drop(columns=['tags'])
+                    
+                    # concatenate with original dataframe
+                    gdf = pd.concat([gdf, expanded_tags], axis=1)
+                    
+                    # for duplicated column names, keep the first one
+                    gdf = gdf.loc[:,~gdf.columns.duplicated()]
 
-
-        # Initialize the Overpass API
-        overpass_api = overpass.API(debug=False, timeout=900)
-
-        def fetch_overpass_data(bbox, tags, retries=5, delay=2):
+                return gdf
             
-            query = create_query(bbox, tags)
+            except overpass.errors.ServerLoadError as e:
+                # server loaded, use return time to wait
+                sleep_s = (e.args[0] if e.args else 10) + random.uniform(0.5, 2.0)
+                print(f"ServerLoadError on attempt {attempt+1}. Retrying after delay.", sleep_s)
+                time.sleep(sleep_s)
+
+            except overpass.errors.MultipleRequestsError:
+                print(f"MultipleRequestsError on attempt {attempt+1}. Retrying after delay.")
+                # collided with another job, wait with jitter
+                time.sleep(2.0 + random.uniform(0.2, 1.5))
             
-            for attempt in range(retries):
-                try:
-                    suppress_overpass_logs()
-                    response = overpass_api.Get(query, responseformat="geojson", verbosity='geom')
-                    restore_logs()
-                    
-                    gdf = gpd.GeoDataFrame.from_features(response['features']) 
-                    
-                    #drop nodes column
-                    if 'nodes' in gdf.columns:
-                        gdf = gdf.drop(columns=['nodes'])
+            except Exception as e:
+                etype = type(e).__name__
+                args = getattr(e, "args", ())
+                resp = getattr(e, "response", None)
+                resp_info = ""
+                if resp is not None:
+                    try:
+                        resp_info = f" | HTTP {resp.status_code}: {resp.text[:500]}"
+                    except Exception:
+                        pass
+                print(f"Error fetching data for bbox {bbox}: {etype} args={args}{resp_info}")
+                print(traceback.format_exc())
+                time.sleep(delay)
+                
+        print(f"Failed to fetch data after {retries} attempts.")
+        return None
 
-                    #create columns for tags
-                    if 'tags' in gdf.columns:
-                        # new dataframe from tags
-                        expanded_tags = pd.json_normalize(gdf['tags'])
-                        
-                        # Only keep columns with at least 50% data for tags
-                        threshold = len(expanded_tags) * 1/len(tags)*0.5
-                        columns_to_drop = [col for col in expanded_tags.columns if 
-                                        expanded_tags[col].count() < threshold and 
-                                        col not in ["natural", "water", "boundary", "landuse", "building", "highway", "waterway"]]
-                        expanded_tags = expanded_tags.drop(columns=columns_to_drop)
-                        gdf = gdf.drop(columns=['tags'])
-                        
-                        # concatenate with original dataframe
-                        gdf = pd.concat([gdf, expanded_tags], axis=1)
-                        
-                        # for duplicated column names, keep the first one
-                        gdf = gdf.loc[:,~gdf.columns.duplicated()]
-
-                    return gdf
-                except Exception as e:
-                    # print(f"Error fetching data: {e}")
-                    time.sleep(delay)
-                    
-            print(f"Failed to fetch data after {retries} attempts.")
-            return None
-
+    if not os.path.exists(filename_all_features):
         ###Download for the whole region, separate by layers and convert features to xarray 
         # Multithreaded feature extraction for the grid
         def extract_features_grid(grid, tags):
             features = []
-            with ThreadPoolExecutor(max_workers=int(mp.cpu_count()/2)) as executor:
+            with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
                 futures = {executor.submit(fetch_overpass_data, row.geometry.bounds, tags): row for _, row in grid.iterrows()}
                 for future in tqdm(as_completed(futures), total=len(futures)):
                     try:
@@ -622,7 +667,7 @@ try:
     #### Get 3D buildings from Yangzi Che et al. and convert to xarray ds
     print("Retrieving 3D building heights from Yangzi Che et al. (2024)...")
     building_heights_zarr_name = f"{types_folder_path}/rasterized_building_heights.zarr"
-    
+
     if not os.path.exists(building_heights_zarr_name):
         # There is a global ML retrieved 3D building footprint dataset available from the Copernicus Global Land Service: 
         # 3D-GloBFP: the first global three-dimensional building footprint dataset
@@ -655,7 +700,7 @@ try:
 
         # query within bbox and sort by hilbert curve
         duckdb.sql(f"""
-            CREATE TEMP TABLE tmp_buildings AS
+            CREATE TEMP TABLE tmp_buildings_{region} AS
             SELECT
                 Height AS height,
                 ST_AsWKB(ST_GeomFromWKB("GEOMETRY")) AS geom                 
@@ -668,59 +713,79 @@ try:
         """)
 
         # fetch as arrow table and pandas dataframe
-        building_heights_table = duckdb.sql("SELECT * FROM tmp_buildings").arrow()
-        building_heights_df = duckdb.sql("SELECT * FROM tmp_buildings").df()
+        building_heights_table = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}").arrow()
+        building_heights_df = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}").df()
+        
+        # drop temp table
+        duckdb.sql(f"DROP TABLE tmp_buildings_{region}")
 
         ## Convert WKB to Shapely geometries
         # geometry to list
         wkb_list = building_heights_table['geom'].to_pylist()
 
         # collect coordinates
-        geom_offsets = [0]
-        ring_offsets = []
-        xs = []
-        ys = []
+        poly_ring_offsets = [0]   # number of rings per polygon
+        ring_coord_offsets = [0]  # number of coordinates per ring
+        xs_list = []
+        ys_list = []
+        
+        n_rings = 0
+        n_coords = 0
 
         for wkb_blob in wkb_list:
             geom = wkb.loads(wkb_blob)
             
-            if geom.geom_type == 'Polygon':
-                rings = [geom.exterior] + list(geom.interiors)
-            elif geom.geom_type == 'MultiPolygon':
-                rings = []
-                for poly in geom.geoms:
-                    rings.append(poly.exterior)
-                    rings.extend(poly.interiors)
+            if geom.is_empty:
+                # still advance poly offset (no rings added)
+                poly_ring_offsets.append(n_rings)
+                continue
+            
+            if geom.geom_type == "Polygon":
+                polys = [geom]
+            elif geom.geom_type == "MultiPolygon":
+                polys = list(geom.geoms)
             else:
-                continue  # skip non-polygonal types
+                # keep alignment
+                poly_ring_offsets.append(n_rings)
+                continue
 
-            # Add each ring
-            for ring in rings:
-                ring_coords = np.array(ring.coords)
-                xs.extend(ring_coords[:, 0])
-                ys.extend(ring_coords[:, 1])
-                ring_offsets.append(len(xs))
+            for poly in polys:
+                rings = [poly.exterior, *poly.interiors]
+                # Add each ring
+                for ring in rings:
+                    coords = np.asarray(ring.coords, dtype=np.float64)
+                    xs_list.extend(coords[:, 0].tolist())
+                    ys_list.extend(coords[:, 1].tolist())
+                    n_coords += len(coords)
+                    ring_coord_offsets.append(n_coords)
+                    n_rings += 1
 
-            geom_offsets.append(len(ring_offsets))
+            # append current ring count
+            poly_ring_offsets.append(n_rings)
+            
 
-        # Convert to numpy arrays
-        xs = np.array(xs)
-        ys = np.array(ys)
-        ring_offsets = np.array(ring_offsets, dtype=np.int32)
-        geom_offsets = np.array(geom_offsets[:-1], dtype=np.int32)
+        # convert to arrays
+        ring_offsets_buf  = array('i', poly_ring_offsets)     
+        coord_offsets_buf = array('i', ring_coord_offsets)    
+        xs_buf = array('d', xs_list)                          
+        ys_buf = array('d', ys_list)                          
 
-        # build geoarrow polygon array
         polygon_array = ga.polygon().from_geobuffers(
-            None,            # no validity bitmap
-            geom_offsets,    # polygon offset
-            ring_offsets,    # ring offset
-            xs,
-            ys
+            None,
+            ring_offsets_buf,   # polygon ring offsets
+            coord_offsets_buf,  # ring coordinate offsets
+            xs_buf,
+            ys_buf
         )
-        gdf= ga.to_geopandas(polygon_array)
 
-        building_heights_gdf = gpd.GeoDataFrame(building_heights_df, geometry=gdf.geometry, crs="EPSG:4326")
-        building_heights_gdf = building_heights_gdf.drop(columns=['geom'])
+        gdf = ga.to_geopandas(polygon_array)
+
+        building_heights_gdf = gpd.GeoDataFrame(
+            building_heights_df.reset_index(drop=True),
+            geometry=gdf.geometry,
+            crs="EPSG:4326"
+        ).drop(columns=['geom'])
+
 
         # convert to xarray raster dataarray
         building_heights_xr = building_heights_gdf.to_raster.to_xr_dataarray(
