@@ -286,8 +286,10 @@ try:
         merged_gdf : GeoDataFrame
             Merged rows that together cover the full bbox_gdf
         '''
+        if df.empty:
+            return gpd.GeoDataFrame(columns=df.columns, crs=df.crs)
+        
         merged_gdf = gpd.GeoDataFrame()
-        # bbox_geom = bbox_gdf.unary_union  # the target coverage geometry (the full bbox)
         bbox_geom = bbox_gdf.union_all()
 
         while not df.empty:
@@ -296,7 +298,6 @@ try:
             merged_gdf = pd.concat([merged_gdf, gpd.GeoDataFrame([row], crs=df.crs)], ignore_index=True)
 
             # Update the merged geometry
-            # merged_geom = merged_gdf.unary_union
             merged_geom = merged_gdf.union_all()
 
             if merged_geom.covers(bbox_geom):
@@ -316,7 +317,7 @@ try:
                 break
 
         # Final check
-        if not merged_gdf.unary_union.covers(bbox_geom):
+        if not merged_gdf.union_all().covers(bbox_geom):
             raise ValueError("Failed to fully cover the target bbox with available geometries.")
 
         return merged_gdf
@@ -340,7 +341,10 @@ try:
         #print(time_stamp, time_stamp_flat_month, previous_month_time_stamp_flat, next_month_time_stamp_flat)
 
         # filter planet_bydate_gdf by id of time_stamp_flat_month, previous_month_time_stamp_flat, next_month_time_stamp_flat
-        planet_bydate_gdf_filtered=planet_bydate_gdf[planet_bydate_gdf['id'].str.contains(time_stamp_flat_month) | planet_bydate_gdf['id'].str.contains(previous_month_time_stamp_flat) | planet_bydate_gdf['id'].str.contains(next_month_time_stamp_flat)]
+        planet_bydate_gdf_filtered= planet_bydate_gdf[
+            planet_bydate_gdf['id'].str.contains(time_stamp_flat_month) | 
+            planet_bydate_gdf['id'].str.contains(previous_month_time_stamp_flat) | 
+            planet_bydate_gdf['id'].str.contains(next_month_time_stamp_flat)].copy()
 
         #create date id
         planet_bydate_gdf_filtered['date_id']=planet_bydate_gdf_filtered['id'].str[0:8]
@@ -348,10 +352,10 @@ try:
         planet_bydate_gdf_filtered_clipped = planet_bydate_gdf_filtered.clip(bbox_gdf)
         
         #get the nearest ids for time_stamp_flat
-        planet_bydate_gdf_filtered_clipped['date_id_dt'] = pd.to_datetime(planet_bydate_gdf_filtered_clipped['date_id'])
-        planet_bydate_gdf_filtered_clipped['time_stamp_dt'] = pd.to_datetime(time_stamp)
-        planet_bydate_gdf_filtered_clipped['time_diff'] = (planet_bydate_gdf_filtered_clipped['date_id_dt'] - planet_bydate_gdf_filtered_clipped['time_stamp_dt']).dt.days
-        planet_bydate_gdf_filtered_clipped['time_diff'] = planet_bydate_gdf_filtered_clipped['time_diff'].abs()
+        planet_bydate_gdf_filtered_clipped.loc[:, 'date_id_dt'] = pd.to_datetime(planet_bydate_gdf_filtered_clipped['date_id'])
+        planet_bydate_gdf_filtered_clipped.loc[:, 'time_stamp_dt'] = pd.to_datetime(time_stamp)
+        planet_bydate_gdf_filtered_clipped.loc[:, 'time_diff'] = (planet_bydate_gdf_filtered_clipped['date_id_dt'] - planet_bydate_gdf_filtered_clipped['time_stamp_dt']).dt.days
+        planet_bydate_gdf_filtered_clipped.loc[:, 'time_diff'] = planet_bydate_gdf_filtered_clipped['time_diff'].abs()
 
         #sort the dataframe by diff
         planet_bydate_gdf_filtered_clipped.sort_values('time_diff', inplace=True)
@@ -367,8 +371,8 @@ try:
     filenames= []
     folderpath=f"{planet_region_folder}/planet_tmp"
     os.makedirs(folderpath, exist_ok=True)
-    for i, df in planet_scope_cover_df_list:
-        filename=f"{folderpath}/planet_scope_cover_{i.replace('-','')}.parquet"
+    for time_id, df in planet_scope_cover_df_list:
+        filename=f"{folderpath}/planet_scope_cover_{time_id.replace('-','')}.parquet"
         filenames.append(filename)
         df.to_parquet(filename)
         print(f"Saved: {filename}")
