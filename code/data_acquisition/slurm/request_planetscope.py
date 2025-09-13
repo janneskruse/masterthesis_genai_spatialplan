@@ -31,6 +31,8 @@ import rioxarray as rxr
 from skimage.exposure import match_histograms
 from rioxarray.merge import merge_arrays
 from shapely.geometry import box, shape
+import utm
+from pyproj import CRS
 
 # visualization
 from tqdm import tqdm
@@ -294,7 +296,7 @@ try:
 
         while not df.empty:
             row = df.iloc[0]
-            df = df.iloc[1:]
+            df = df.iloc[1:] # exclude the first row
             merged_gdf = pd.concat([merged_gdf, gpd.GeoDataFrame([row], crs=df.crs)], ignore_index=True)
 
             # Update the merged geometry
@@ -303,9 +305,18 @@ try:
             if merged_geom.covers(bbox_geom):
                 # Success: fully covered the bbox
                 break
+            
+            inter_area = merged_geom.intersection(bbox_geom).area
+            bbox_area = bbox_geom.area if bbox_geom is not None else 0
+            cover_frac = inter_area / bbox_area if bbox_area > 0 else 0
+            
+            if cover_frac >= 1:
+                break
 
             # Find the nearest geometry to the current merged geometry
             distances = df.distance(merged_geom)
+            if distances.empty:
+                break
             nearest_idx = distances.idxmin()
 
             if distances[nearest_idx] < max_distance:
@@ -316,8 +327,14 @@ try:
                 # If no nearby geometry is available, stop (optional - could also continue and allow gaps)
                 break
 
+        inter_area = merged_geom.intersection(bbox_geom).area
+        bbox_area = bbox_geom.area if bbox_geom is not None else 0
+        cover_frac = inter_area / bbox_area if bbox_area > 0 else 0
+
+        print(f"Coverage fraction of the first date's merged geometries over the bbox: {cover_frac:.2%}")
+
         # Final check
-        if not merged_gdf.union_all().covers(bbox_geom):
+        if not merged_gdf.union_all().covers(bbox_geom) and cover_frac < 1:
             raise ValueError("Failed to fully cover the target bbox with available geometries.")
 
         return merged_gdf
@@ -338,7 +355,6 @@ try:
         next_month=str(month+1 if month !=12 else 1).zfill(2)
         next_month_year=time_stamp_flat_month[:-2] if month != 12 else str(int(time_stamp_flat_month[:-2])+1)
         next_month_time_stamp_flat=f"{next_month_year}{next_month}"
-        #print(time_stamp, time_stamp_flat_month, previous_month_time_stamp_flat, next_month_time_stamp_flat)
 
         # filter planet_bydate_gdf by id of time_stamp_flat_month, previous_month_time_stamp_flat, next_month_time_stamp_flat
         planet_bydate_gdf_filtered= planet_bydate_gdf[
@@ -364,6 +380,16 @@ try:
         
         return planet_scenes_cover_df
 
+
+    # reproject gdfs to utm zone
+    easting, northing, zone_number, zone_letter = utm.from_latlon(bbox_gdf.geometry.centroid.y.values[0], bbox_gdf.geometry.centroid.x.values[0])
+    is_south = zone_letter < 'N'  # True for southern hemisphere
+    utm_crs = CRS.from_dict({'proj': 'utm', 'zone': int(zone_number), 'south': is_south})
+    print(f"UTM CRS: {utm_crs.to_authority()} with zone {zone_number}{zone_letter}")
+
+    planet_bydate_gdf = planet_bydate_gdf.to_crs(utm_crs)
+    bbox_gdf = bbox_gdf.to_crs(utm_crs)
+
     # Run for all timestamps
     planet_scope_cover_df_list=[(date_value,getPlanetscopeScenesCoverForDate(date_id)) for date_id, date_value in time_ids]
 
@@ -374,6 +400,10 @@ try:
     for time_id, df in planet_scope_cover_df_list:
         filename=f"{folderpath}/planet_scope_cover_{time_id.replace('-','')}.parquet"
         filenames.append(filename)
+        
+        # reproject to original crs
+        df = df.to_crs("EPSG:4326")
+        
         df.to_parquet(filename)
         print(f"Saved: {filename}")
 

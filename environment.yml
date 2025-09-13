@@ -30,6 +30,7 @@ dependencies:
     - scikit-image
     - fiona
     - shapely
+    - utm
     - leafmap
     - ipyleaflet
     - jupyter
