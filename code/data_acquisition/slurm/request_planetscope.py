@@ -391,21 +391,50 @@ try:
     bbox_gdf = bbox_gdf.to_crs(utm_crs)
 
     # Run for all timestamps
-    planet_scope_cover_df_list=[(date_value,getPlanetscopeScenesCoverForDate(date_id)) for date_id, date_value in time_ids]
+    # planet_scope_cover_df_list=[(date_value,getPlanetscopeScenesCoverForDate(date_id)) for date_id, date_value in time_ids]
 
-    # Save fully covered scene meta as geoparquet
-    filenames= []
-    folderpath=f"{planet_region_folder}/planet_tmp"
+    # # Save fully covered scene meta as geoparquet
+    # filenames= []
+    # folderpath=f"{planet_region_folder}/planet_tmp"
+    # os.makedirs(folderpath, exist_ok=True)
+    # for time_id, df in planet_scope_cover_df_list:
+    #     filename=f"{folderpath}/planet_scope_cover_{time_id.replace('-','')}.parquet"
+    #     filenames.append(filename)
+        
+    #     # reproject to original crs
+    #     df = df.to_crs("EPSG:4326")
+        
+    #     df.to_parquet(filename)
+    #     print(f"Saved: {filename}")
+
+    folderpath = f"{planet_region_folder}/planet_tmp"
     os.makedirs(folderpath, exist_ok=True)
-    for time_id, df in planet_scope_cover_df_list:
-        filename=f"{folderpath}/planet_scope_cover_{time_id.replace('-','')}.parquet"
+
+    filenames = []
+    planet_scope_cover_df_list = []
+
+    for time_id, date_value in time_ids:
+        filename = f"{folderpath}/planet_scope_cover_{date_value.replace('-','')}.parquet"
         filenames.append(filename)
-        
-        # reproject to original crs
-        df = df.to_crs("EPSG:4326")
-        
-        df.to_parquet(filename)
-        print(f"Saved: {filename}")
+
+        if os.path.exists(filename):
+            print(f"Loading existing cover file: {filename}")
+            try:
+                df = gpd.read_parquet(filename)
+            except Exception as e:
+                print(f"Failed to read {filename} ({e}), recomputing...")
+                df = getPlanetscopeScenesCoverForDate(time_id)
+                df = df.to_crs("EPSG:4326")
+                df.to_parquet(filename)
+                print(f"Saved: {filename}")
+        else:
+            print(f"No existing file for {date_value}, computing cover...")
+            df = getPlanetscopeScenesCoverForDate(time_id)
+            df = df.to_crs("EPSG:4326")
+            df.to_parquet(filename)
+            print(f"Saved: {filename}")
+
+        planet_scope_cover_df_list.append((date_value, df))
 
     ######### Order items for download #########
     # orders_base_url="https://api.planet.com/compute/ops/orders/v2"
