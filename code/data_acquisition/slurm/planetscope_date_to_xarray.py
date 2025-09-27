@@ -22,6 +22,8 @@ import xarray as xr
 import rioxarray as rxr
 from skimage.exposure import match_histograms
 from rioxarray.merge import merge_arrays
+import utm
+from pyproj import CRS
 
 ##### Function to exit on error ######
 def exit_with_error(message):
@@ -130,6 +132,35 @@ try:
     bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
     coordinates=json.loads(bbox_gdf.geometry.to_json())["features"][0]["geometry"]["coordinates"]
 
+    # reproject gdfs to utm zone
+    easting, northing, zone_number, zone_letter = utm.from_latlon(bbox_gdf.geometry.centroid.y.values[0], bbox_gdf.geometry.centroid.x.values[0])
+    is_south = zone_letter < 'N'  # True for southern hemisphere
+    utm_crs = CRS.from_dict({'proj': 'utm', 'zone': int(zone_number), 'south': is_south})
+    print(f"UTM CRS: {utm_crs.to_authority()} with zone {zone_number}{zone_letter}")
+    bbox_gdf = bbox_gdf.to_crs(utm_crs)
+
+    ###### Prepare reference dataset ##########
+    def create_reference_da_from_bounds(bounds, res, crs="EPSG:4326"):
+        """
+        Create an empty DataArray template covering bounds = (minx, miny, maxx, maxy)
+        with resolution res (units of CRS) and CRS string.
+        """
+        minx, miny, maxx, maxy = bounds
+        # x from left to right, y from top to bottom (descending)
+        xs = np.arange(minx + res / 2, maxx, res)
+        ys = np.arange(maxy - res / 2, miny, -res)
+        arr = np.zeros((ys.size, xs.size), dtype="int16")
+        da = xr.DataArray(arr, coords={"y": ys, "x": xs}, dims=("y", "x"))
+        da = da.rio.write_crs(crs)
+        return da
+
+    utm_bounds_gdf = bbox_gdf.to_crs(utm_crs)
+    bounds = utm_bounds_gdf.total_bounds  # minx, miny, maxx, maxy
+    res_m = 3.0
+    ref = create_reference_da_from_bounds(bounds, res_m, crs=utm_crs.to_string())
+    ref = ref.rio.reproject("EPSG:4326")
+
+
     def readPlanetScopetoXarrayDS(filepath:str):
         """
         Read PlanetScope tif files to xarray dataset and attach metadata.
@@ -139,6 +170,7 @@ try:
         """
         # Open with chunking for memory efficiency
         xda=rxr.open_rasterio(filepath, chunks={'x': 1024, 'y': 1024})
+        xda = xda.astype("int16")
         xda = xda.rio.reproject("EPSG:4326")
 
         #clip to bbox
@@ -177,6 +209,9 @@ try:
         xds=xda.to_dataset()
         xds["meta_planetscope_sr_4band"] = xr.DataArray([image_description], dims=["time"])
         
+        # apply scale factor
+        xda = xda * xda.scale_factor + xda.offset
+    
         return xds
 
     def extract_quality_score(xds):
@@ -189,27 +224,7 @@ try:
             return 1 / ((1 + aot) * (1 + zenith))
         except:
             return 0  # fallback
-
-    #read all files
-    xds_list=[readPlanetScopetoXarrayDS(file) for file in collection_files]
-
-    # Sort by quality
-    xds_list.sort(key=extract_quality_score, reverse=True)
-
-    dataarrays = [
-        ds["planetscope_sr_4band"].squeeze("time").transpose("channel", "y", "x")
-        for ds in xds_list
-    ]
-
-    # set crs for all dataarrays
-    # for da in dataarrays:
-    #     da.rio.write_crs("EPSG:32633", inplace=True)
-
-    # as float for rio merge later
-    dataarrays = [
-        da.astype("float32") for da in dataarrays
-    ]
-
+    
     def safe_histogram_match(source, reference):
         matched_bands = []
         for b in range(source.shape[0]):
@@ -238,27 +253,73 @@ try:
             attrs=source.attrs,
         ).rio.write_crs(source.rio.crs)
 
+    #read all files
+    # xds_list=[readPlanetScopetoXarrayDS(file) for file in collection_files]
+    xds_list = []
+    for file in collection_files:
+        try:
+            xds = readPlanetScopetoXarrayDS(file)
+            if xds is not None:
+                xds_list.append(xds)
+        except Exception as e:
+            print(f"    Failed to read/convert {file}: {e} -- skipping this file")
+
+    if not xds_list:
+        print(f"No valid xarray datasets for date {scene_date} -> skipping")
+        exit_with_error(f"No valid xarray datasets for date {scene_date}, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Sort by quality
+    xds_list.sort(key=extract_quality_score, reverse=True)
+
+    dataarrays = [
+        ds["planetscope_sr_4band"].squeeze("time").transpose("channel", "y", "x")
+        for ds in xds_list
+    ]
+
+    # set crs for all dataarrays
+    # for da in dataarrays:
+    #     da.rio.write_crs("EPSG:32633", inplace=True)
+
+    # as float for rio merge later
+    dataarrays = [
+        da.astype("float32") for da in dataarrays
+    ]
+
     reference = dataarrays[0]
     matched_dataarrays = [reference]
 
-    # Apply to all except the reference scene
-    for da in dataarrays[1:]:
-        matched_dataarrays.append(safe_histogram_match(da, reference))
+    print(f"Merging {len(dataarrays)} tiles...")
+    if len(dataarrays) > 1:
+        for da in dataarrays[1:]:
+            try:
+                matched_dataarrays.append(safe_histogram_match(da, reference))
+            except Exception as e:
+                print(f"    Histogram matching failed for one tile: {e} -- using original tile")
+                matched_dataarrays.append(da)
 
-
-    merged = merge_arrays(
-        matched_dataarrays,
-        method="first",
-        nodata=np.nan,
-        res=None,
-    )
+        merged = merge_arrays(
+            matched_dataarrays,
+            method="first",
+            nodata=np.nan,
+            res=None,
+        )
+    else:
+        # single tile -> no merge needed
+        merged = reference
 
     # back to int
-    merged = (merged * 1).astype("int16")
+    # merged = (merged * 1).astype("int16")
+    
+    # resample to reference dataset
+    merged = merged.rio.reproject_match(ref)
+    
+    # drop nan coords
+    merged = merged.dropna("x", how="all").dropna("y", how="all")
 
     # Add time dimension and rechunk
     scene_date_np=np.datetime64(pd.to_datetime(scene_date))
     merged = merged.expand_dims(time=[scene_date_np])
+    merged = merged.rio.write_nodata(np.nan)
     merged=merged.chunk({'y': 1024, 'x': 1024, 'time': 1, 'channel': 4})
 
     # Derive NDVI dataarray from the planetscope data
@@ -269,7 +330,7 @@ try:
     merged["ndvi"] = (merged.planetscope_sr_4band.isel(channel=3) - merged.planetscope_sr_4band.isel(channel=2)) / (merged.planetscope_sr_4band.isel(channel=3) + merged.planetscope_sr_4band.isel(channel=2))
 
     # this also applies all the transformations (mean() etc. and therefore might take some time)
-    merged.to_zarr(planet_date_zarr_name, mode='w')
+    merged.to_zarr(planet_date_zarr_name, mode='w', consolidated=True)
 
     # merged=xr.open_zarr(f"{planet_region_folder}/planet_scope_{scene_date}.zarr")
 

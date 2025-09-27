@@ -266,6 +266,15 @@ try:
 
     planet_bydate_gdf=gpd.GeoDataFrame(planet_bydate_df, geometry=[shape(geom) for geom in planet_bydate_df["geometry"]], crs="EPSG:4326")
 
+    # reproject gdfs to utm zone
+    easting, northing, zone_number, zone_letter = utm.from_latlon(bbox_gdf.geometry.centroid.y.values[0], bbox_gdf.geometry.centroid.x.values[0])
+    is_south = zone_letter < 'N'  # True for southern hemisphere
+    utm_crs = CRS.from_dict({'proj': 'utm', 'zone': int(zone_number), 'south': is_south})
+    print(f"UTM CRS: {utm_crs.to_authority()} with zone {zone_number}{zone_letter}")
+
+    planet_bydate_gdf = planet_bydate_gdf.to_crs(utm_crs)
+    bbox_gdf = bbox_gdf.to_crs(utm_crs)
+
     # Save scene metadata as geoparquet
     meta_filename=f"{planet_region_folder}/planet_ge{min_temperature}_{start_year}_{end_year}_meta.parquet"
     planet_bydate_gdf.to_parquet(meta_filename)
@@ -379,16 +388,6 @@ try:
         planet_scenes_cover_df=mergeNearestRows(planet_bydate_gdf_filtered_clipped, bbox_gdf)
         
         return planet_scenes_cover_df
-
-
-    # reproject gdfs to utm zone
-    easting, northing, zone_number, zone_letter = utm.from_latlon(bbox_gdf.geometry.centroid.y.values[0], bbox_gdf.geometry.centroid.x.values[0])
-    is_south = zone_letter < 'N'  # True for southern hemisphere
-    utm_crs = CRS.from_dict({'proj': 'utm', 'zone': int(zone_number), 'south': is_south})
-    print(f"UTM CRS: {utm_crs.to_authority()} with zone {zone_number}{zone_letter}")
-
-    planet_bydate_gdf = planet_bydate_gdf.to_crs(utm_crs)
-    bbox_gdf = bbox_gdf.to_crs(utm_crs)
 
     # Run for all timestamps
     # planet_scope_cover_df_list=[(date_value,getPlanetscopeScenesCoverForDate(date_id)) for date_id, date_value in time_ids]
