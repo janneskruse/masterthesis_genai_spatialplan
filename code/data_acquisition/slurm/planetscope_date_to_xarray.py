@@ -158,7 +158,7 @@ try:
     bounds = utm_bounds_gdf.total_bounds  # minx, miny, maxx, maxy
     res_m = 3.0
     ref = create_reference_da_from_bounds(bounds, res_m, crs=utm_crs.to_string())
-    ref = ref.rio.reproject("EPSG:4326")
+    # ref = ref.rio.reproject("EPSG:4326")
 
 
     def readPlanetScopetoXarrayDS(filepath:str):
@@ -171,7 +171,7 @@ try:
         # Open with chunking for memory efficiency
         xda=rxr.open_rasterio(filepath, chunks={'x': 1024, 'y': 1024})
         xda = xda.astype("int16")
-        xda = xda.rio.reproject("EPSG:4326")
+        # xda = xda.rio.reproject("EPSG:4326")
 
         #clip to bbox
         xda = xda.rio.clip([bbox_gdf.geometry.iloc[0]], bbox_gdf.crs)

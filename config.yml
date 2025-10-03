@@ -11,5 +11,5 @@ landsat_query:
 osm_query:
   image_size: 5500
 big_data_storage_path: "D:/master_thesis/data" #"/work/zt75vipu-thesis/data"
-regions: ["Dresden"] # , "Leipzig", "Hamburg"
+regions: ["Dresden", "Leipzig", "Hamburg"] # , "Leipzig", "Hamburg"
   
