@@ -26,6 +26,19 @@ To run the pipeline:
 4. Create the conda environment like indicated above and activate it.
 5. Submit the pipeline to the HPC cluster using the [`submit_pipeline.py`](./code/data_acquisition/slurm/submit_pipeline.py) script: `python submit_pipeline.py`. This script will automatically create jobs for all pipeline steps. To check the status, run `squeue -u <username>` on the HPC cluster.
 
+### Running the scripts standalone
+1. Run the osm_to_xarray script with the region as environment variable using: 
+```powershell
+$env:REGION = "your_region" 
+python ./code/data_acquisition/slurm/osm_to_xarray.py
+```
+2. Run the landsat_to_xarray script with the region as environment variable using: 
+```powershell
+$env:REGION = "your_region" 
+python ./code/data_acquisition/slurm/landsat_to_xarray.py
+```
+3. Run the planetscope_to_xarray notebook
+4. Lastly, use the combine_datasets notebook to combine all datasets to the final model input dataset.
 
 ### Copy from and to HPC
 - copy files from local to HPC: `scp <local_file_path> <username>@login01.sc.uni-leipzig.de:<remote_file_path>`
