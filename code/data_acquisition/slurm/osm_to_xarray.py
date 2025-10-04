@@ -138,7 +138,7 @@ try:
         logging.getLogger("osm2geojson").setLevel(logging.NOTSET)
         
     # threading parameters
-    max_concurrent = 6      # parallel requests to Overpass API
+    max_concurrent = 1 #6      # parallel requests to Overpass API
 
     # Create Overpass query for tags
     def create_query(bbox, tags):
