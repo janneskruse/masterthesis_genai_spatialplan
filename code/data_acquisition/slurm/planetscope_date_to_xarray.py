@@ -17,6 +17,7 @@ import yaml
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+from shapely.geometry import box
 import rasterio as rio # needed for xarray.rio to work
 import xarray as xr
 import rioxarray as rxr
@@ -225,27 +226,73 @@ try:
         except:
             return 0  # fallback
     
-    def safe_histogram_match(source, reference):
+    def histogram_match(source, reference):
+        """
+        Performs histogram matching between a source and a reference DataArray,
+        basing the matching on the overlapping area between them.
+        """
+        source_overlap = None
+        ref_overlap = None
+        
+        try:
+            # get geometry of both datasets
+            source_geom = box(*source.rio.bounds())
+            ref_geom = box(*reference.rio.bounds())
+
+            # calculate the intersection
+            overlap_geom = source_geom.intersection(ref_geom)
+
+            if not overlap_geom.is_empty:
+                # clip source and reference to overlap area
+                source_overlap = source.rio.clip([overlap_geom], source.rio.crs, drop=False, invert=False)
+                ref_overlap = reference.rio.clip([overlap_geom], source.rio.crs, drop=False, invert=False)
+            else:
+                print("No geometric overlap found. Falling back to full image histogram matching.")
+
+        except Exception as e:
+            print(f"Could not create overlap area: {e}. Falling back to full image histogram matching.")
+
+        # use the full images as fallback
+        if source_overlap is None or ref_overlap is None:
+            source_overlap = source
+            ref_overlap = reference
+
         matched_bands = []
         for b in range(source.shape[0]):
-            src = source[b].values
-            ref = reference[b].values
+            src_band = source[b].values
+            src_overlap_band = source_overlap[b].values
+            ref_overlap_band = ref_overlap[b].values
 
-            # Mask out invalid (nan or 0)
-            valid_src = np.isfinite(src) & (src > 0)
-            valid_ref = np.isfinite(ref) & (ref > 0)
+            # mask out invalid values (nan or 0)
+            valid_src_mask = np.isfinite(src_overlap_band) & (src_overlap_band > 0)
+            valid_ref_mask = np.isfinite(ref_overlap_band) & (ref_overlap_band > 0)
 
-            # Only match on valid pixels
-            matched = np.full_like(src, np.nan, dtype="float32")
-            if valid_src.sum() > 0 and valid_ref.sum() > 0:
-                matched_valid = match_histograms(
-                    src[valid_src],
-                    ref[valid_ref],
-                )
-                matched[valid_src] = matched_valid.astype("float32")
+            matched_band = src_band.copy().astype("float32")
+            
+            # only match if valid pixels in the overlap
+            if np.any(valid_src_mask) and np.any(valid_ref_mask):
+                match_ref = ref_overlap_band[valid_ref_mask]
 
-            matched_bands.append(matched)
-
+                # full source band values
+                full_src_valid_mask = np.isfinite(src_band) & (src_band > 0)
+                
+                if full_src_valid_mask.any():
+                    # perform histogram matching
+                    matched_valid_pixels = match_histograms(
+                        src_band[full_src_valid_mask],
+                        match_ref,
+                    )
+                    matched_band[full_src_valid_mask] = matched_valid_pixels
+            
+            # set nodata values to nan
+            matched_band[~np.isfinite(src_band) | (src_band == 0)] = np.nan
+            matched_bands.append(matched_band)
+        
+        # clean up resources
+        source.close()
+        source_overlap.close()
+        ref_overlap.close()
+            
         return xr.DataArray(
             np.stack(matched_bands),
             dims=source.dims,
@@ -292,7 +339,7 @@ try:
     if len(dataarrays) > 1:
         for da in dataarrays[1:]:
             try:
-                matched_dataarrays.append(safe_histogram_match(da, reference))
+                matched_dataarrays.append(histogram_match(da, reference))
             except Exception as e:
                 print(f"    Histogram matching failed for one tile: {e} -- using original tile")
                 matched_dataarrays.append(da)
