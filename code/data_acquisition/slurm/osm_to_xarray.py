@@ -206,7 +206,7 @@ try:
                     threshold = len(expanded_tags) * 1/len(tags)*0.5
                     columns_to_drop = [col for col in expanded_tags.columns if 
                                     expanded_tags[col].count() < threshold and 
-                                    col not in ["natural", "water", "boundary", "landuse", "building", "highway", "waterway"]]
+                                    col not in ["natural", "water", "boundary", "landuse", "building", "highway", "waterway", "leisure"]]
                     expanded_tags = expanded_tags.drop(columns=columns_to_drop)
                     gdf = gdf.drop(columns=['tags'])
                     
@@ -818,8 +818,7 @@ try:
     
     if not os.path.exists(landuse_zarr_name):
         # everything that is not streets or buildings
-        landuse_gdf = osm_gdf[~osm_gdf["building"].notnull() & ~osm_gdf["highway"].notnull() & ~osm_gdf["railway"].notnull() & ~osm_gdf["water"].isin(["lake", "river", "canal"]) & ~osm_gdf["waterway"].isin(["river", "stream", "canal"])] 
-        landuse_gdf = landuse_gdf[landuse_gdf.geometry.is_valid]
+        landuse_gdf = osm_gdf[~osm_gdf["building"].notnull() & ~osm_gdf["highway"].notnull() & ~osm_gdf["railway"].notnull() & ~osm_gdf["water"].isin(["lake", "river", "canal"]) & ~osm_gdf["waterway"].isin(["river", "stream", "canal"])]
 
         # # reduce columns
         # landuse_gdf = landuse_gdf[["id", "geometry", "landuse", "boundary", "natural", "water", "waterway", "leisure", "railway", "amenity"]]
@@ -860,6 +859,9 @@ try:
 
         # convert back to WGS84
         landuse_gdf = landuse_gdf.to_crs(epsg=4326)
+        
+        # remove empty geometries
+        landuse_gdf = landuse_gdf[~landuse_gdf.geometry.is_empty]
 
         #drop columns
         columns_to_drop = ['landuse', 'water', 'boundary', 'natural', 'waterway', 'leisure', 'railway', 'amenity']
