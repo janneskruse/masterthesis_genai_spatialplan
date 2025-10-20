@@ -1,96 +1,300 @@
-import glob
+# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main
+# import relevant libraries
 import os
-import torchvision
-from PIL import Image
-from tqdm import tqdm
-from utils.diffusion_utils import load_latents
+import yaml
+import numpy as np
+import torch
+import xarray as xr
 from torch.utils.data.dataset import Dataset
+from utils.diffusion_utils import load_latents
+from utils.read_yaml import get_nested
 
+###### setup config variables #######
+repo_name = 'masterthesis_genai_spatialplan'
+if not repo_name in os.getcwd():
+    os.chdir(repo_name)
 
-class MnistDataset(Dataset):
-    r"""
-    Nothing special here. Just a simple dataset class for mnist images.
-    Created a dataset class rather using torchvision to allow
-    replacement with any other image dataset
+p=os.popen('git rev-parse --show-toplevel')
+repo_dir = p.read().strip()
+p.close()
+
+with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
+    config = yaml.safe_load(stream)
+    
+with open(f"{repo_dir}/config.yml", 'r') as stream:
+    data_config = yaml.safe_load(stream)
+
+big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
+
+# Dataset class
+class UrbanInpaintingDataset(Dataset):
+    """
+    Dataset for urban layout inpainting with multiple conditioning types:
+    - Spatial context (surrounding areas via inpainting mask)
+    - OSM features (buildings, streets, water, etc.)
+    - Environmental data (NDVI, LST)
+    - Satellite imagery
     """
     
-    def __init__(self, split, im_path, im_size, im_channels,
-                 use_latents=False, latent_path=None, condition_config=None):
-        r"""
-        Init method for initializing the dataset properties
-        :param split: train/test to locate the image files
-        :param im_path: root folder of images
-        :param im_ext: image extension. assumes all
-        images would be this type.
+    def __init__(self, split, use_latents=False, 
+                 latent_path=None):
         """
+        :param split: 'train' or 'test'
+        :param zarr_path: path to the zarr dataset
+        :param patch_size: size of patches to extract
+        :param stride: stride for patch extraction
+        :param min_valid_percent: minimum percentage of valid pixels in a patch
+        :param im_channels: number of image channels
+        :param use_latents: whether to use pre-computed latents from autoencoder
+        :param latent_path: path to latent files
+        :param condition_config: dict with conditioning configuration
+        """
+        
+        # if not config, raise error
+        dataset_config = config.get('dataset_params', None)
+        if dataset_config is None:
+            raise ValueError("Dataset configuration not found in config file")
+        
+        im_res = dataset_config.get('res', 3)  # in meters
+        pixel_size = dataset_config.get('pixel_size', 650)  # in pixels
+        patch_size = int(pixel_size/im_res)  # compute patch size in pixels
+        im_channels = dataset_config.get('im_channels', 3)
+        min_valid_percent = dataset_config.get('min_valid_percent', 90)
+        
         self.split = split
-        self.im_size = im_size
+        self.patch_size = patch_size
+        self.stride_overlap = dataset_config.get('stride_overlap', 0.5)
+        self.stride = int(patch_size * self.stride_overlap)  # compute stride based on overlap
         self.im_channels = im_channels
-        
-        # Should we use latents or not
-        self.latent_maps = None
-        self.use_latents = False
-        
-        # Conditioning for the dataset
-        self.condition_types = [] if condition_config is None else condition_config['condition_types']
+        self.min_valid_percent = min_valid_percent
 
-        self.images, self.labels = self.load_images(im_path)
         
-        # Whether to load images and call vae or to load latents
+        ldm_config = config.get('ldm_params', None)
+        if ldm_config is None:
+            raise ValueError("LDM configuration not found in config file")
+        
+        condition_config = get_nested(config, ['ldm_params', 'condition_config'])
+        if condition_config is None:
+            raise ValueError("Conditioning configuration not found in config file")
+        
+        # Conditioning configuration
+        self.condition_types = [] if condition_config is None else condition_config['condition_types']
+        self.hole_config = condition_config.get('hole_config', {
+            'type': 'random_square',
+            'size_px': 64
+        })
+        self.osm_layers = get_nested(condition_config, ['osm_layers'], ['buildings', 'streets', 'water'])
+        self.environmental_layers = get_nested(condition_config, ['environmental_layers'], ['ndvi', 'landsat_surface_temp_b10_masked'])
+
+
+        # Latent configuration
+        self.latent_maps = use_latents
+        self.use_latents = latent_path
+        
+        # Load xarray dataset
+        regions = dataset_config.get('regions', ['Leipzig'])
+        
+        region = regions[0]  # for now, use first region --> to'do: extend to multiple regions
+        processed_data_path = f"{big_data_storage_path}/processed/{region.lower()}"
+        zarr_name = dataset_config.get('zarr_name', 'input_data.zarr')
+        zarr_path = os.path.join(processed_data_path, zarr_name)
+        
+        print(f"Loading zarr dataset from {zarr_path}...")
+        self.merged_xs = xr.open_zarr(zarr_path, consolidated=True)
+        
+        # Load patches
+        self.patches = self._load_patches()
+        
+        # Load latents if specified
         if use_latents and latent_path is not None:
             latent_maps = load_latents(latent_path)
-            if len(latent_maps) == len(self.images):
+            if len(latent_maps) == len(self.patches):
                 self.use_latents = True
                 self.latent_maps = latent_maps
-                print('Found {} latents'.format(len(self.latent_maps)))
+                print(f'Found {len(self.latent_maps)} latents')
             else:
-                print('Latents not found')
-        
-    def load_images(self, im_path):
-        r"""
-        Gets all images from the path specified
-        and stacks them all up
-        :param im_path:
-        :return:
+                print('Latents not found or size mismatch')
+    
+    def _load_patches(self):
         """
-        assert os.path.exists(im_path), "images path {} does not exist".format(im_path)
-        ims = []
-        labels = []
-        for d_name in tqdm(os.listdir(im_path)):
-            fnames = glob.glob(os.path.join(im_path, d_name, '*.{}'.format('png')))
-            fnames += glob.glob(os.path.join(im_path, d_name, '*.{}'.format('jpg')))
-            fnames += glob.glob(os.path.join(im_path, d_name, '*.{}'.format('jpeg')))
-            for fname in fnames:
-                ims.append(fname)
-                if 'class' in self.condition_types:
-                    labels.append(int(d_name))
-        print('Found {} images for split {}'.format(len(ims), self.split))
-        return ims, labels
+        Pre-compute valid patch locations from the dataset
+        """
+        # Get valid dates with planetscope data
+        valid_planet_dates = (
+            self.merged_xs['planetscope_sr_4band']
+            .notnull()
+            .sum(dim=['x', 'y']) > 0
+        ).any(dim='channel').compute()
+        
+        valid_dates = self.merged_xs['time'].where(valid_planet_dates, drop=True).values
+        
+        if len(valid_dates) == 0:
+            raise ValueError("No valid dates found in dataset")
+        
+        # For now, use first valid date (can be extended to use multiple dates)
+        self.selected_date = valid_dates[0]
+        print(f"Using date: {self.selected_date}")
+        
+        # Select data for this date
+        date_data = self.merged_xs.sel(time=self.selected_date)
+        
+        # Get satellite image and compute validity mask
+        self.img_da = date_data['planetscope_sr_4band'].sel(channel=['blue', 'green', 'red'])
+        valid_mask = (~self.img_da.isnull()).all(dim='channel').values
+        
+        # Store all layers we need
+        self.data_layers = {
+            'satellite': self.img_da.values,  # (3, H, W)
+            'buildings': date_data['buildings'].values if 'buildings' in date_data else None,
+        }
+        
+        # Add optional layers based on what's available
+        for layer in self.osm_layers:
+            if layer in date_data:
+                self.data_layers[layer] = date_data[layer].values
+        
+        # Add environmental data if available
+        for layer in self.environmental_layers:
+            if layer in date_data:
+                # layer_data = date_data[layer].sel(time=self.selected_date, method='nearest')
+                # self.data_layers[layer] = layer_data.values
+                self.data_layers[layer] = date_data[layer].values
+        
+        # Compute valid patches based on min valid percent of data
+        H, W = valid_mask.shape
+        min_valid_pixels = int((self.patch_size ** 2) * (self.min_valid_percent / 100))
+        
+        patches = []
+        for y in range(0, H - self.patch_size + 1, self.stride):
+            for x in range(0, W - self.patch_size + 1, self.stride):
+                valid_count = valid_mask[y:y+self.patch_size, x:x+self.patch_size].sum()
+                if valid_count >= min_valid_pixels:
+                    patches.append((y, x))
+        
+        print(f'Found {len(patches)} valid patches for split {self.split}')
+        return patches
+    
+    def _create_inpainting_mask(self, H, W):
+        """
+        Create inpainting hole mask
+        """
+        hole_type = self.hole_config['type']
+        hole_size = self.hole_config['size_px']
+        
+        if hole_type == 'random_square':
+            y0 = np.random.randint(0, max(1, H - hole_size))
+            x0 = np.random.randint(0, max(1, W - hole_size))
+            mask = np.zeros((H, W), dtype=np.float32)
+            mask[y0:y0+hole_size, x0:x0+hole_size] = 1.0
+        elif hole_type == 'center_square':
+            y0 = (H - hole_size) // 2
+            x0 = (W - hole_size) // 2
+            mask = np.zeros((H, W), dtype=np.float32)
+            mask[y0:y0+hole_size, x0:x0+hole_size] = 1.0
+        else:
+            raise NotImplementedError(f"Hole type {hole_type} not implemented")
+        
+        return mask
+    
+    def _normalize_layer(self, data, layer_name):
+        """
+        Normalize data layer to [-1, 1] range
+        """
+        # Handle NaN values
+        data = np.nan_to_num(data, nan=0.0)
+        
+        # Different normalization strategies per layer type
+        if layer_name in ['satellite']:
+            # Clip to reasonable range and normalize
+            data = np.clip(data, 0, 1)  # ensure in [0, 1]
+            data = data* 2.0 - 1.0
+        elif layer_name in ['ndvi']:
+            # (NDVI is already in [-1, 1] range typically)
+            data = np.clip(data, -1, 1)
+        elif layer_name in ['landsat_surface_temp_b10_masked']:
+            # Temperature - normalize to reasonable range
+            data = np.clip(data, 250, 350)  # Kelvin
+            data = ((data - 250) / 100.0) * 2.0 - 1.0
+        else:
+            # Binary or categorical layers
+            if data.max() <= 1.0:
+                data = data * 2.0 - 1.0 # normalize to [-1, 1]
+            else:
+                # Normalize to [0, 1] then to [-1, 1]
+                data = (data - data.min()) / (data.max() - data.min() + 1e-6)
+                data = data * 2.0 - 1.0
+        
+        return data
     
     def __len__(self):
-        return len(self.images)
+        return len(self.patches)
     
     def __getitem__(self, index):
-        ######## Set Conditioning Info ########
-        cond_inputs = {}
-        if 'class' in self.condition_types:
-            cond_inputs['class'] = self.labels[index]
-        #######################################
+        y, x = self.patches[index]
+        ps = self.patch_size
         
+        # Extract satellite image patch (main input)
+        img_patch = self.data_layers['satellite'][:, y:y+ps, x:x+ps].astype(np.float32)
+        img_patch = self._normalize_layer(img_patch, 'satellite')
+        
+        # Create inpainting mask
+        inpaint_mask = self._create_inpainting_mask(ps, ps)
+        
+        # Prepare conditioning inputs
+        cond_inputs = {}
+        
+        if 'inpainting' in self.condition_types:
+            # Masked image for inpainting context
+            masked_image = img_patch * (1.0 - inpaint_mask)
+            cond_inputs['masked_image'] = torch.from_numpy(masked_image).float()
+            cond_inputs['mask'] = torch.from_numpy(inpaint_mask).unsqueeze(0).float()
+        
+        if 'osm_features' in self.condition_types:
+            # Stack OSM layers as control signal
+            osm_layers = []
+            for layer_name in self.osm_layers:
+                if layer_name in self.data_layers and self.data_layers[layer_name] is not None:
+                    layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
+                    layer_patch = self._normalize_layer(layer_patch, layer_name)
+                    osm_layers.append(layer_patch)
+            
+            if osm_layers:
+                osm_features = np.stack(osm_layers, axis=0).astype(np.float32)
+                cond_inputs['osm_features'] = torch.from_numpy(osm_features).float()
+        
+        if 'environmental' in self.condition_types:
+            # Environmental data (NDVI, LST)
+            env_layers = []
+            for layer_name in self.environmental_layers:
+                if layer_name in self.data_layers and self.data_layers[layer_name] is not None:
+                    layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
+                    layer_patch = self._normalize_layer(layer_patch, layer_name)
+                    env_layers.append(layer_patch)
+            
+            if env_layers:
+                env_features = np.stack(env_layers, axis=0).astype(np.float32)
+                cond_inputs['environmental'] = torch.from_numpy(env_features).float()
+        
+        if 'temperature_threshold' in self.condition_types:
+            # Temperature optimization target (scalar or spatially varying)
+            if 'landsat_surface_temp_b10_masked' in self.data_layers and self.data_layers['landsat_surface_temp_b10_masked'] is not None:
+                lst_patch = self.data_layers['landsat_surface_temp_b10_masked'][y:y+ps, x:x+ps]
+                # Store as target for optimization
+                cond_inputs['temperature_target'] = torch.from_numpy(lst_patch).float()
+        
+        # Convert image to tensor
+        im_tensor = torch.from_numpy(img_patch).float()
+        
+        # Return based on whether using latents
         if self.use_latents:
-            latent = self.latent_maps[self.images[index]]
+            # Placeholder - implement latent loading logic
+            latent = self.latent_maps[f'patch_{index}']
             if len(self.condition_types) == 0:
                 return latent
             else:
                 return latent, cond_inputs
         else:
-            im = Image.open(self.images[index])
-            im_tensor = torchvision.transforms.ToTensor()(im)
-            
-            # Convert input to -1 to 1 range.
-            im_tensor = (2 * im_tensor) - 1
             if len(self.condition_types) == 0:
                 return im_tensor
             else:
                 return im_tensor, cond_inputs
-            
