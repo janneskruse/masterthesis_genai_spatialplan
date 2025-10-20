@@ -9,23 +9,6 @@ from torch.utils.data.dataset import Dataset
 from utils.diffusion_utils import load_latents
 from utils.read_yaml import get_nested
 
-###### setup config variables #######
-repo_name = 'masterthesis_genai_spatialplan'
-if not repo_name in os.getcwd():
-    os.chdir(repo_name)
-
-p=os.popen('git rev-parse --show-toplevel')
-repo_dir = p.read().strip()
-p.close()
-
-with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
-    config = yaml.safe_load(stream)
-    
-with open(f"{repo_dir}/config.yml", 'r') as stream:
-    data_config = yaml.safe_load(stream)
-
-big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
-
 # Dataset class
 class UrbanInpaintingDataset(Dataset):
     """
@@ -49,6 +32,23 @@ class UrbanInpaintingDataset(Dataset):
         :param latent_path: path to latent files
         :param condition_config: dict with conditioning configuration
         """
+        
+        ###### setup config variables #######
+        repo_name = 'masterthesis_genai_spatialplan'
+        if not repo_name in os.getcwd():
+            os.chdir(repo_name)
+
+        p=os.popen('git rev-parse --show-toplevel')
+        repo_dir = p.read().strip()
+        p.close()
+
+        with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
+            config = yaml.safe_load(stream)
+            
+        with open(f"{repo_dir}/config.yml", 'r') as stream:
+            data_config = yaml.safe_load(stream)
+
+        big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
         
         # if not config, raise error
         dataset_config = config.get('dataset_params', None)

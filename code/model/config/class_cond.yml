@@ -1,8 +1,8 @@
 dataset_params:
-  regions: ['Leipzig'] # list of regions to include: 'Dresden', 'Leipzig', Hamburg', 'Stuttgart'
+  regions: ['Stuttgart'] # ['Leipzig'] # list of regions to include: 'Dresden', 'Leipzig', Hamburg', 'Stuttgart'
   zarr_name: "input_config_ge25_cc10_2019_2024_clipped.zarr"
   res: 3 # resolution in meters
-  patch_size_m: 650 # patch size in meters
+  patch_size_m: 800 # patch size in meters
   im_channels: 3  # RGB satellite
   min_valid_percent: 90 # minimum percent of valid pixels in a patch
   stride_overlap: 2 # 50% overlap between patches --> 4 for 25% overlap, etc.
@@ -32,7 +32,7 @@ ldm_params: # latent diffusion model parameters
     # Inpainting hole configuration
     hole_config:
       type: 'random_square'  # or 'center_square'
-      size_px: 64
+      size_px: 80
 
     # OSM feature layers to use
     osm_layers: ['buildings', 'streets', 'water']  # can add: 'landuse', 'buildings_heights', 'streets_service', 'streets_surface'
