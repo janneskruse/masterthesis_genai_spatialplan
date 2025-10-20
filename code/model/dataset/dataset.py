@@ -63,8 +63,8 @@ class UrbanInpaintingDataset(Dataset):
         
         self.split = split
         self.patch_size = patch_size
-        self.stride_overlap = dataset_config.get('stride_overlap', 0.5)
-        self.stride = int(patch_size * self.stride_overlap)  # compute stride based on overlap
+        self.stride_overlap = dataset_config.get('stride_overlap', 2)
+        self.stride = int(patch_size // self.stride_overlap)  # compute stride based on overlap
         self.im_channels = im_channels
         self.min_valid_percent = min_valid_percent
 
@@ -142,6 +142,10 @@ class UrbanInpaintingDataset(Dataset):
         # Get satellite image and compute validity mask
         self.img_da = date_data['planetscope_sr_4band'].sel(channel=['blue', 'green', 'red'])
         valid_mask = (~self.img_da.isnull()).all(dim='channel').values
+        
+        if self.img_da.max() > 20:  # reflectance scaled
+            self.data_layers['satellite'] = (self.data_layers['satellite'] / 10000.0).astype(np.float32)
+
         
         # Store all layers we need
         self.data_layers = {
@@ -283,13 +287,33 @@ class UrbanInpaintingDataset(Dataset):
                 # Store as target for optimization
                 cond_inputs['temperature_target'] = torch.from_numpy(lst_patch).float()
         
+        
+        # put spatial conditions together into one image tensor
+        spatial = []
+
+        # inpainting context
+        if 'inpainting' in self.condition_types:
+            spatial.append(cond_inputs.pop('masked_image'))
+            spatial.append(cond_inputs.pop('mask'))            # [1,H,W]
+
+        # OSM
+        if 'osm_features' in self.condition_types and 'osm_features' in cond_inputs:
+            spatial.append(cond_inputs.pop('osm_features'))    # [C_osm,H,W]
+
+        # environmental
+        if 'environmental' in self.condition_types and 'environmental' in cond_inputs:
+            spatial.append(cond_inputs.pop('environmental'))   # [C_env,H,W]
+
+        if spatial:
+            cond_inputs['image'] = torch.cat(spatial, dim=0)   # [C_total,H,W]
+        
         # Convert image to tensor
         im_tensor = torch.from_numpy(img_patch).float()
         
         # Return based on whether using latents
         if self.use_latents:
             # Placeholder - implement latent loading logic
-            latent = self.latent_maps[f'patch_{index}']
+            latent = self.latent_maps[index]
             if len(self.condition_types) == 0:
                 return latent
             else:

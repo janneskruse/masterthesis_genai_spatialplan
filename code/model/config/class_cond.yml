@@ -5,7 +5,7 @@ dataset_params:
   patch_size_m: 650 # patch size in meters
   im_channels: 3  # RGB satellite
   min_valid_percent: 90 # minimum percent of valid pixels in a patch
-  stride_overlap: 0.5 # 50% overlap between patches
+  stride_overlap: 2 # 50% overlap between patches --> 4 for 25% overlap, etc.
   
 diffusion_params:
   num_timesteps: 1000
