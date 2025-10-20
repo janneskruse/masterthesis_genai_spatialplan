@@ -2,8 +2,8 @@
 import torch
 from einops import einsum
 import torch.nn as nn
-from models.blocks import get_time_embedding
-from models.blocks import DownBlock, MidBlock, UpBlockUnet
+from diffusion_blocks.blocks import get_time_embedding
+from diffusion_blocks.blocks import DownBlock, MidBlock, UpBlockUnet
 from utils.config_utils import *
 
 
