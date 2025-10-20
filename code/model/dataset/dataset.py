@@ -78,7 +78,7 @@ class UrbanInpaintingDataset(Dataset):
             raise ValueError("Conditioning configuration not found in config file")
         
         # Conditioning configuration
-        self.condition_types = [] if condition_config is None else condition_config['condition_types']
+        self.condition_types = condition_config.get('condition_types', [])
         self.hole_config = condition_config.get('hole_config', {
             'type': 'random_square',
             'size_px': 64
