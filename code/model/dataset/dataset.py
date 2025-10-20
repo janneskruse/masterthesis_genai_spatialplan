@@ -88,8 +88,9 @@ class UrbanInpaintingDataset(Dataset):
 
 
         # Latent configuration
-        self.latent_maps = use_latents
-        self.use_latents = latent_path
+        self.latent_maps = None
+        self.latent_path = latent_path
+        self.use_latents = bool(use_latents)
         
         # Load xarray dataset
         regions = dataset_config.get('regions', ['Leipzig'])
@@ -106,8 +107,8 @@ class UrbanInpaintingDataset(Dataset):
         self.patches = self._load_patches()
         
         # Load latents if specified
-        if use_latents and latent_path is not None:
-            latent_maps = load_latents(latent_path)
+        if self.use_latents and self.latent_path is not None:
+            latent_maps = load_latents(self.latent_path)
             if len(latent_maps) == len(self.patches):
                 self.use_latents = True
                 self.latent_maps = latent_maps
