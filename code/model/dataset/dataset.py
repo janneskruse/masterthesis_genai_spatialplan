@@ -234,6 +234,52 @@ class UrbanInpaintingDataset(Dataset):
     def __len__(self):
         return len(self.patches)
     
+    def _to_chw(self, arr):
+        """Accepts xarray or numpy. Returns float32 [C,H,W]."""
+        # get a small window first, then materialize:
+        if hasattr(arr, "values"):   # xarray.DataArray or dask-backed
+            arr = arr.values
+        arr = np.asarray(arr)
+
+        if arr.ndim == 2:
+            # [H,W] -> [1,H,W]
+            arr = arr[None, ...]
+        elif arr.ndim == 3:
+            # assume either [C,H,W] (planetscope) or [H,W,C] --> safe check
+            H, W = arr.shape[-2], arr.shape[-1]
+            if arr.shape[0] not in (1,3) and arr.shape[-1] in (1,3) and arr.shape[-2] == H:
+                # looks like HWC -> CHW
+                arr = arr.transpose(2,0,1)
+            # else: already CHW
+        else:
+            raise ValueError(f"Unexpected shape {arr.shape}, need 2D or 3D")
+
+        return arr.astype(np.float32, copy=False)
+
+    def _append_spatial(self, stack, names, arr, base_name, channel_names=None):
+        """Adds array to the stack and records channel names.
+        
+        Args:
+            stack: list to append tensors to
+            names: list to append channel names to
+            arr: numpy array to add
+            base_name: base name for the layer
+            channel_names: optional list of specific channel names (e.g., ['blue', 'green', 'red'])
+        """
+        arr = self._to_chw(arr)
+        stack.append(torch.from_numpy(arr).float())
+        
+        if arr.shape[0] == 1:
+            names.append(base_name)
+        else:
+            if channel_names is not None and len(channel_names) == arr.shape[0]:
+                # Use provided channel names
+                names.extend([f"{base_name}:{ch}" for ch in channel_names])
+            else:
+                # Fall back to numeric indices
+                names.extend([f"{base_name}:{i}" for i in range(arr.shape[0])])
+
+    
     def __getitem__(self, index):
         y, x, region = self.patches[index]
         ps = self.patch_size
@@ -244,7 +290,8 @@ class UrbanInpaintingDataset(Dataset):
             x=slice(x, x+ps)
         ).values.astype(np.float32)
         
-        # Normalize image
+        # convert to CHW and normalize
+        img_patch = self._to_chw(img_patch)
         img_patch = self._normalize_layer(img_patch, 'satellite')
         
         # Create inpainting mask
@@ -257,7 +304,7 @@ class UrbanInpaintingDataset(Dataset):
             # Masked image for inpainting context
             masked_image = img_patch * (1.0 - inpaint_mask)
             cond_inputs['masked_image'] = torch.from_numpy(masked_image).float()
-            cond_inputs['mask'] = torch.from_numpy(inpaint_mask).unsqueeze(0).float()
+            cond_inputs['mask'] = torch.from_numpy(self._to_chw(inpaint_mask)).float()  # [1,H,W]
         
         if 'osm_features' in self.condition_types:
             # Stack OSM layers as control signal
@@ -270,10 +317,11 @@ class UrbanInpaintingDataset(Dataset):
                         x=slice(x, x+ps)
                     ).values
                     layer_patch = self._normalize_layer(layer_patch, layer_name)
+                    layer_patch = self._to_chw(layer_patch)
                     osm_layers.append(layer_patch)
             
             if osm_layers:
-                osm_features = np.stack(osm_layers, axis=0).astype(np.float32)
+                osm_features = np.concatenate(osm_layers, axis=0)
                 cond_inputs['osm_features'] = torch.from_numpy(osm_features).float()
         
         if 'environmental' in self.condition_types:
@@ -287,10 +335,12 @@ class UrbanInpaintingDataset(Dataset):
                         x=slice(x, x+ps)
                     ).values
                     layer_patch = self._normalize_layer(layer_patch, layer_name)
+                    layer_patch = self._to_chw(layer_patch)
                     env_layers.append(layer_patch)
             
             if env_layers:
-                env_features = np.stack(env_layers, axis=0).astype(np.float32)
+                # env_features = np.stack(env_layers, axis=0).astype(np.float32)
+                env_features = np.concatenate(env_layers, axis=0)
                 cond_inputs['environmental'] = torch.from_numpy(env_features).float()
         
         if 'temperature_threshold' in self.condition_types:
@@ -301,34 +351,44 @@ class UrbanInpaintingDataset(Dataset):
                     y=slice(y, y+ps),
                     x=slice(x, x+ps)
                 ).values
+                lst_patch = self._normalize_layer(lst_patch, 'landsat_surface_temp_b10_masked')
+                lst_patch = self._to_chw(lst_patch)
                 # Store as target for optimization
                 cond_inputs['temperature_target'] = torch.from_numpy(lst_patch).float()
         
         
         # put spatial conditions together into one image tensor
         spatial = []
+        spatial_names = []
 
         # inpainting context
         if 'inpainting' in self.condition_types:
-            spatial.append(cond_inputs.pop('masked_image'))
-            spatial.append(cond_inputs.pop('mask'))            # [1,H,W]
+            # RGB channels for masked image
+            rgb_names = ['blue', 'green', 'red']
+            self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
+            self._append_spatial(spatial, spatial_names, inpaint_mask, 'inpaint_mask')
 
         # OSM
         if 'osm_features' in self.condition_types and 'osm_features' in cond_inputs:
-            spatial.append(cond_inputs.pop('osm_features'))    # [C_osm,H,W]
+            osm_data = cond_inputs.pop('osm_features').numpy()
+            # Use actual OSM layer names
+            self._append_spatial(spatial, spatial_names, osm_data, 'osm', channel_names=self.osm_layers)
 
         # environmental
         if 'environmental' in self.condition_types and 'environmental' in cond_inputs:
-            spatial.append(cond_inputs.pop('environmental'))   # [C_env,H,W]
+            env_data = cond_inputs.pop('environmental').numpy()
+            # Use actual environmental layer names
+            self._append_spatial(spatial, spatial_names, env_data, 'env', channel_names=self.environmental_layers)
 
         if spatial:
             cond_inputs['image'] = torch.cat(spatial, dim=0)   # [C_total,H,W]
 
+
         # Add meta information
-        cond_inputs['meta'] = {'y': y, 'x': x, 'time': str(self.selected_date), 'region': region}
+        cond_inputs['meta'] = {'y': y, 'x': x, 'time': str(self.selected_date), 'region': region, 'spatial_names': spatial_names}
 
         
-        # Convert image to tensor
+        # Convert target image to tensor
         im_tensor = torch.from_numpy(img_patch).float()
         
         # Return based on whether using latents
