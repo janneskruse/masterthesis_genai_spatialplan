@@ -56,7 +56,7 @@ class UrbanInpaintingDataset(Dataset):
             raise ValueError("Dataset configuration not found in config file")
         
         im_res = dataset_config.get('res', 3)  # in meters
-        pixel_size = dataset_config.get('pixel_size', 650)  # in pixels
+        pixel_size = dataset_config.get('patch_size_m', 650)  # in pixels
         patch_size = int(pixel_size/im_res)  # compute patch size in pixels
         im_channels = dataset_config.get('im_channels', 3)
         min_valid_percent = dataset_config.get('min_valid_percent', 90)

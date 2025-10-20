@@ -2,7 +2,7 @@ dataset_params:
   regions: ['Leipzig'] # list of regions to include: 'Dresden', 'Leipzig', Hamburg', 'Stuttgart'
   zarr_name: "input_config_ge25_cc10_2019_2024_clipped.zarr"
   res: 3 # resolution in meters
-  pixel_size: 650 # number of yx pixels per sample
+  patch_size_m: 650 # patch size in meters
   im_channels: 3  # RGB satellite
   min_valid_percent: 90 # minimum percent of valid pixels in a patch
   stride_overlap: 0.5 # 50% overlap between patches
