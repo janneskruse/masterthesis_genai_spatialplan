@@ -104,7 +104,7 @@ class UrbanInpaintingDataset(Dataset):
         self.merged_xs = xr.open_zarr(zarr_path, consolidated=True)
         
         # Load patches
-        self.patches = self._load_patches()
+        self.patches = self._load_patches(region=region)
         
         # Load latents if specified
         if self.use_latents and self.latent_path is not None:
@@ -116,7 +116,7 @@ class UrbanInpaintingDataset(Dataset):
             else:
                 print('Latents not found or size mismatch')
     
-    def _load_patches(self):
+    def _load_patches(self, region='Leipzig'):
         """
         Pre-compute valid patch locations from the dataset
         """
@@ -141,7 +141,7 @@ class UrbanInpaintingDataset(Dataset):
         
         # Get satellite image and compute validity mask
         self.img_da = date_data['planetscope_sr_4band'].sel(channel=['blue', 'green', 'red'])
-        valid_mask = (~self.img_da.isnull()).all(dim='channel').values
+        valid_mask = (~self.img_da.isnull()).all(dim='channel').compute()
         
         if self.img_da.max() > 20:  # reflectance scaled
             self.data_layers['satellite'] = (self.data_layers['satellite'] / 10000.0).astype(np.float32)
@@ -149,21 +149,21 @@ class UrbanInpaintingDataset(Dataset):
         
         # Store all layers we need
         self.data_layers = {
-            'satellite': self.img_da.values,  # (3, H, W)
+            'satellite': self.img_da,  # (3, H, W)
             'buildings': date_data['buildings'].values if 'buildings' in date_data else None,
         }
         
         # Add optional layers based on what's available
         for layer in self.osm_layers:
             if layer in date_data:
-                self.data_layers[layer] = date_data[layer].values
+                self.data_layers[layer] = date_data[layer]
         
         # Add environmental data if available
         for layer in self.environmental_layers:
             if layer in date_data:
                 # layer_data = date_data[layer].sel(time=self.selected_date, method='nearest')
                 # self.data_layers[layer] = layer_data.values
-                self.data_layers[layer] = date_data[layer].values
+                self.data_layers[layer] = date_data[layer]
         
         # Compute valid patches based on min valid percent of data
         H, W = valid_mask.shape
@@ -174,9 +174,9 @@ class UrbanInpaintingDataset(Dataset):
             for x in range(0, W - self.patch_size + 1, self.stride):
                 valid_count = valid_mask[y:y+self.patch_size, x:x+self.patch_size].sum()
                 if valid_count >= min_valid_pixels:
-                    patches.append((y, x))
-        
-        print(f'Found {len(patches)} valid patches for split {self.split}')
+                    patches.append((y, x, region))
+                    
+        print(f"Found {len(patches)} valid patches for region {region} with split {self.split} and min valid percent {self.min_valid_percent}%")
         return patches
     
     def _create_inpainting_mask(self, H, W):
@@ -235,11 +235,16 @@ class UrbanInpaintingDataset(Dataset):
         return len(self.patches)
     
     def __getitem__(self, index):
-        y, x = self.patches[index]
+        y, x, region = self.patches[index]
         ps = self.patch_size
         
         # Extract satellite image patch (main input)
-        img_patch = self.data_layers['satellite'][:, y:y+ps, x:x+ps].astype(np.float32)
+        img_patch = img_patch = self.data_layers['satellite'].isel(
+            y=slice(y, y+ps), 
+            x=slice(x, x+ps)
+        ).values.astype(np.float32)
+        
+        # Normalize image
         img_patch = self._normalize_layer(img_patch, 'satellite')
         
         # Create inpainting mask
@@ -259,7 +264,11 @@ class UrbanInpaintingDataset(Dataset):
             osm_layers = []
             for layer_name in self.osm_layers:
                 if layer_name in self.data_layers and self.data_layers[layer_name] is not None:
-                    layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
+                    # layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
+                    layer_patch = self.data_layers[layer_name].isel(
+                        y=slice(y, y+ps),
+                        x=slice(x, x+ps)
+                    ).values
                     layer_patch = self._normalize_layer(layer_patch, layer_name)
                     osm_layers.append(layer_patch)
             
@@ -272,7 +281,11 @@ class UrbanInpaintingDataset(Dataset):
             env_layers = []
             for layer_name in self.environmental_layers:
                 if layer_name in self.data_layers and self.data_layers[layer_name] is not None:
-                    layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
+                    # layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
+                    layer_patch = self.data_layers[layer_name].isel(
+                        y=slice(y, y+ps),
+                        x=slice(x, x+ps)
+                    ).values
                     layer_patch = self._normalize_layer(layer_patch, layer_name)
                     env_layers.append(layer_patch)
             
@@ -283,7 +296,11 @@ class UrbanInpaintingDataset(Dataset):
         if 'temperature_threshold' in self.condition_types:
             # Temperature optimization target (scalar or spatially varying)
             if 'landsat_surface_temp_b10_masked' in self.data_layers and self.data_layers['landsat_surface_temp_b10_masked'] is not None:
-                lst_patch = self.data_layers['landsat_surface_temp_b10_masked'][y:y+ps, x:x+ps]
+                # lst_patch = self.data_layers['landsat_surface_temp_b10_masked'][y:y+ps, x:x+ps]
+                lst_patch = self.data_layers['landsat_surface_temp_b10_masked'].isel(
+                    y=slice(y, y+ps),
+                    x=slice(x, x+ps)
+                ).values
                 # Store as target for optimization
                 cond_inputs['temperature_target'] = torch.from_numpy(lst_patch).float()
         
@@ -306,6 +323,10 @@ class UrbanInpaintingDataset(Dataset):
 
         if spatial:
             cond_inputs['image'] = torch.cat(spatial, dim=0)   # [C_total,H,W]
+
+        # Add meta information
+        cond_inputs['meta'] = {'y': y, 'x': x, 'time': str(self.selected_date), 'region': region}
+
         
         # Convert image to tensor
         im_tensor = torch.from_numpy(img_patch).float()
