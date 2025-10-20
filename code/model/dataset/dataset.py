@@ -95,7 +95,8 @@ class UrbanInpaintingDataset(Dataset):
         # Load xarray dataset
         regions = dataset_config.get('regions', ['Leipzig'])
         
-        region = regions[0]  # for now, use first region --> to'do: extend to multiple regions
+        region = regions[0]  # for now, use first region --> to do: extend to multiple regions
+        ## to do: implement train regions and eval region(s) split to select based on self.split
         processed_data_path = f"{big_data_storage_path}/processed/{region.lower()}"
         zarr_name = dataset_config.get('zarr_name', 'input_data.zarr')
         zarr_path = os.path.join(processed_data_path, zarr_name)
