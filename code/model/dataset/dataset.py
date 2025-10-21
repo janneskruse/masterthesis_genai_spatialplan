@@ -144,6 +144,10 @@ class UrbanInpaintingDataset(Dataset):
         self.img_da = date_data['planetscope_sr_4band'].sel(channel=['blue', 'green', 'red'])
         valid_mask = (~self.img_da.isnull()).all(dim='channel').compute()
         
+        # close dataset for io efficiency
+        # self.merged_xs.close()
+        
+        
         if self.img_da.max() > 20:  # reflectance scaled
             self.data_layers['satellite'] = (self.data_layers['satellite'] / 10000.0).astype(np.float32)
 

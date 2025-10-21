@@ -99,7 +99,7 @@ class VAE(nn.Module):
         mean, logvar = torch.chunk(out, 2, dim=1)
         std = torch.exp(0.5 * logvar)
         sample = mean + std * torch.randn(mean.shape).to(device=x.device)
-        return sample, out
+        return sample, mean, logvar
     
     def decode(self, z):
         out = z
@@ -116,7 +116,7 @@ class VAE(nn.Module):
         return out
 
     def forward(self, x):
-        z, encoder_output = self.encode(x)
+        z, mean, logvar = self.encode(x)
         out = self.decode(z)
-        return out, encoder_output
+        return out, z, mean, logvar
 
