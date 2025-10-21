@@ -190,7 +190,7 @@ def train_vae():
                 # Discriminator on fake images
                 disc_fake = discriminator(im_recon.detach())
                 
-                # Discriminator loss (hinge loss)
+                # Discriminator loss (hinge loss) --> prevents discriminator from being too "strong"
                 disc_loss = torch.mean(torch.relu(1.0 - disc_real)) + torch.mean(torch.relu(1.0 + disc_fake))
                 
                 disc_loss.backward()
