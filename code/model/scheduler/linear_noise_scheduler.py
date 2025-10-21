@@ -74,3 +74,36 @@ class LinearNoiseScheduler:
             # sigma = variance ** 0.5
             # z = torch.randn(xt.shape).to(xt.device)
             return mean + sigma * z, x0
+    
+    def sample_prev_timestep_inpainting(self, xt, noise_pred, t, x_context, mask):
+        r"""
+        Sample previous timestep for inpainting.
+        Clamps known regions to context after each denoising step.
+        
+        :param xt: current timestep sample [B, C, H, W]
+        :param noise_pred: model noise prediction
+        :param t: current timestep we are at
+        :param x_context: known context latent (masked region) [B, C, H, W]
+        :param mask: inpainting mask [B, 1, H, W], 1=regenerate, 0=keep
+        :return: (xt-1, x0_pred)
+        """
+        # Standard denoising step
+        xt_minus_1, x0 = self.sample_prev_timestep(xt, noise_pred, t)
+        
+        # Clamp known pixels: keep context where mask==0
+        # xt_minus_1 = mask * xt_minus_1 + (1 - mask) * x_context
+        
+        # Better: also add appropriate noise to context for current timestep
+        if t > 0:
+            # Add noise to context according to timestep t-1
+            t_context = t - 1 if isinstance(t, int) else t - 1
+            noise_context = torch.randn_like(x_context)
+            x_context_noisy = self.add_noise(x_context, noise_context, 
+                                            torch.full((x_context.shape[0],), t_context).to(x_context.device))
+            # Blend: regenerate masked region, keep (noisy) context elsewhere
+            xt_minus_1 = mask * xt_minus_1 + (1 - mask) * x_context_noisy
+        else:
+            # Final step: use clean context
+            xt_minus_1 = mask * xt_minus_1 + (1 - mask) * x_context
+        
+        return xt_minus_1, x0
