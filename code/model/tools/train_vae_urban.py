@@ -228,7 +228,7 @@ def train_vae():
                     grid = make_grid(comparison, nrow=8, padding=2, pad_value=1.0)
                     
                     save_path = os.path.join(
-                        train_config['task_name'],
+                        out_dir,
                         'vae_samples',
                         f'recon_step_{global_step}.png'
                     )
@@ -244,7 +244,7 @@ def train_vae():
         
         # Save checkpoint
         checkpoint_path = os.path.join(
-            train_config['task_name'],
+            out_dir,
             train_config.get('vqvae_autoencoder_ckpt_name', 'vqvae_urban_ckpt.pth')
         )
         torch.save(model.state_dict(), checkpoint_path)
@@ -252,7 +252,7 @@ def train_vae():
         # Save periodic checkpoint
         if (epoch_idx + 1) % 10 == 0:
             periodic_path = os.path.join(
-                train_config['task_name'],
+                out_dir,
                 f'vqvae_urban_epoch_{epoch_idx + 1}.pth'
             )
             torch.save(model.state_dict(), periodic_path)
@@ -265,7 +265,7 @@ def train_vae():
         print("="*50)
         
         model.eval()
-        latent_dir = os.path.join(train_config['task_name'], 'vqvae_latents')
+        latent_dir = os.path.join(out_dir, 'vqvae_latents')
         
         with torch.no_grad():
             for idx, data in enumerate(tqdm(data_loader, desc='Encoding latents')):
