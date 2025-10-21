@@ -25,3 +25,6 @@ code/data_acquisition/slurm/*.out
 code/data_acquisition/slurm/*.err
 code/data_acquisition/slurm/*.txt
 code/data_acquisition/slurm/outputs/*
+
+# model overview
+code/model/checklist
