@@ -58,6 +58,9 @@ class UrbanInpaintingDataset(Dataset):
         im_res = dataset_config.get('res', 3)  # in meters
         pixel_size = dataset_config.get('patch_size_m', 650)  # in pixels
         patch_size = int(pixel_size/im_res)  # compute patch size in pixels
+        patch_size = patch_size - (patch_size % 8) # make patch size divisible by 8
+        print(f"Using patch size: {patch_size} pixels ({patch_size*im_res} m at {im_res} m resolution)")
+
         im_channels = dataset_config.get('im_channels', 3)
         min_valid_percent = dataset_config.get('min_valid_percent', 90)
         
