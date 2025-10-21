@@ -128,7 +128,7 @@ def train_vae():
     
     ########## Training Loop #############
     print("\n" + "="*50)
-    print("Starting Training")
+    print(f"Starting Training with {num_epochs} epochs")
     print("="*50)
     
     global_step = 0
