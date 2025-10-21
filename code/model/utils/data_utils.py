@@ -1,3 +1,5 @@
+import torch
+
 def collate_fn(batch):
     """
     Custom collate function to make sure conditioning inputs are properly batched.
