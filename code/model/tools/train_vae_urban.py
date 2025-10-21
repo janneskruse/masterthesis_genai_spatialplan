@@ -245,7 +245,7 @@ def train_vae():
         # Save checkpoint
         checkpoint_path = os.path.join(
             out_dir,
-            train_config.get('vqvae_autoencoder_ckpt_name', 'vqvae_urban_ckpt.pth')
+            train_config.get('autoencoder_ckpt_name', 'vae_urban_ckpt.pth')
         )
         torch.save(model.state_dict(), checkpoint_path)
         
