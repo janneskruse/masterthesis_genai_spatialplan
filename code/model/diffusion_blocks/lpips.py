@@ -8,6 +8,7 @@ from torch.autograd import Variable
 import numpy as np
 import torch.nn
 import torchvision
+from torchvision.models import VGG16_Weights
 
 # Taken from https://github.com/richzhang/PerceptualSimilarity/blob/master/lpips/lpips.py
 
@@ -19,10 +20,10 @@ def spatial_average(in_tens, keepdim=True):
 
 
 class vgg16(torch.nn.Module):
-    def __init__(self, requires_grad=False, pretrained=True):
+    def __init__(self, requires_grad=False):
         super(vgg16, self).__init__()
         # Load pretrained vgg model from torchvision
-        vgg_pretrained_features = torchvision.models.vgg16(pretrained=pretrained).features
+        vgg_pretrained_features = torchvision.models.vgg16(weights=VGG16_Weights.DEFAULT).features
         self.slice1 = torch.nn.Sequential()
         self.slice2 = torch.nn.Sequential()
         self.slice3 = torch.nn.Sequential()
@@ -74,7 +75,7 @@ class LPIPS(nn.Module):
         # Instantiate vgg model
         self.chns = [64, 128, 256, 512, 512]
         self.L = len(self.chns)
-        self.net = vgg16(pretrained=True, requires_grad=False)
+        self.net = vgg16(requires_grad=False)
         
         # Add 1x1 convolutional Layers
         self.lin0 = NetLinLayer(self.chns[0], use_dropout=use_dropout)
