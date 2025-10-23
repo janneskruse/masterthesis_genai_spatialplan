@@ -28,7 +28,8 @@ To run the pipeline:
 2. Create a new workspace under your username on the HPC cluster. You can do this by running `ws_allocate <name> <duration>` in the HPC shell, e.g. `ws_allocate master 30` to create a workspace named `<username>-master` for 30 days.
 3. Make sure to download and convert the respective building height dataset like done and explained in the notebook [osm_to_xarray.ipynb](./code/data_acquisition/osm_to_xarray.ipynb). For Germany there already is a parquet file containing the building height data [here](https://www.dropbox.com/scl/fi/g1krcq2zj5wb6letsf65m/building_heights_germany.parquet?rlkey=a8pmpqtlu9wowttvfxgcb5rjp&st=twctw6j3&dl=0) that you can download and save to [data/che_etal/Germany_Hungary_Iceland](./data/che_etal/Germany_Hungary_Iceland) for the pipeline to work on all German regions.
 4. Create the conda environment like indicated above and activate it: `conda activate genaiSpatialplan`.
-5. Submit the pipeline to the HPC cluster using the [`submit_pipeline.py`](./code/data_acquisition/slurm/submit_pipeline.py) script: `python submit_pipeline.py`. This script will automatically create jobs for all pipeline steps. To check the status, run `squeue -u <username>` on the HPC cluster.
+5. Download the Corine Landcover dataset from https://land.copernicus.eu/en/products/corine-land-cover/clc2018 and save it to the [data/corine](./data/corine) folder. Unfortunately, this dataset cannot be downloaded automatically due to the required user agreement, so you have to do this step manually. You will have to create an account at EU Copernicus and agree to the terms of use. After downloading, unzip the dataset and rename it to `Corine_Landcover_<year>` (rename the folder with DATA, Legend etc. - not the .tif file).
+6. Submit the pipeline to the HPC cluster using the [`submit_pipeline.py`](./code/data_acquisition/slurm/submit_pipeline.py) script: `python submit_pipeline.py`. This script will automatically create jobs for all pipeline steps. To check the status, run `squeue -u <username>` on the HPC cluster.
 
 ### Running the scripts standalone
 1. Create the conda environment like indicated above and activate it: `conda activate genaiSpatialplan`
@@ -43,7 +44,8 @@ $env:REGION = "your_region"
 python ./code/data_acquisition/slurm/landsat_to_xarray.py
 ```
 4. Run the planetscope_to_xarray notebook
-5. Lastly, use the combine_datasets notebook to combine all datasets to the final model input dataset.
+5. Download the Corine Landcover dataset from https://land.copernicus.eu/en/products/corine-land-cover/clc2018 and save it to the [data/corine](./data/corine) folder. Unfortunately, this dataset cannot be downloaded automatically due to the required user agreement, so you have to do this step manually. You will have to create an account at EU Copernicus and agree to the terms of use. After downloading, unzip the dataset and rename it to `Corine_Landcover_<year>` (rename the folder with DATA, Legend etc. - not the .tif file).
+6. Lastly, use the combine_datasets notebook to combine all datasets to the final model input dataset.
 
 
 ## Model
@@ -85,7 +87,8 @@ Steps:
 
 
 ## Special thanks
-Special thanks to the following repositories:
+Special thanks to the following repositories and pages:
 - https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main?tab=MIT-1-ov-file for building a great latent diffusion base. Several parts of this codebase are adapted from there.
 - https://github.com/usuyama/pytorch-unet for a great starting point in understanding and implementing UNet architectures in PyTorch.
 - https://gitlab.com/smart-quart/modulbaukasten for the learnings on working with OSM . (personally worked on this project as a student assistant)
+- https://docs.digitalearthafrica.org/en/latest/sandbox/notebooks/Frequently_used_code/Rasterise_vectorise.html for vectorizing rasters.
