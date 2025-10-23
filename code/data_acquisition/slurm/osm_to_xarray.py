@@ -28,6 +28,8 @@ from rasterio.features import rasterize
 from shapely.geometry import Polygon
 from shapely import wkb
 import geoarrow.pyarrow as ga
+import utm
+from pyproj import CRS
 
 # visualization
 from tqdm import tqdm
@@ -73,7 +75,7 @@ osm_zarr_name = f"{osm_region_folder}/osm_rasterized.zarr"
 print("Processing region:", region, "at", time.strftime("%Y-%m-%d %H:%M:%S"), "to produce zarr file:", osm_zarr_name)
 # exit(0)  # Exit early for testing purposes
 
-######## Try except Planet data processing ########
+######## Try except OSM data processing ########
 try:
     if os.path.exists(osm_zarr_name):
         print(f"OSM data already exists at {osm_zarr_name}, skipping processing.")
@@ -85,6 +87,12 @@ try:
     bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
     bbox = bbox_gdf.total_bounds
     coordinates=json.loads(bbox_gdf.geometry.to_json())["features"][0]["geometry"]["coordinates"]
+    
+    # Define UTM CRS for the region (e.g. 33N)
+    easting, northing, zone_number, zone_letter = utm.from_latlon(bbox_gdf.geometry.centroid.y.values[0], bbox_gdf.geometry.centroid.x.values[0])
+    is_south = zone_letter < 'N'  # True for southern hemisphere
+    utm_crs = CRS.from_dict({'proj': 'utm', 'zone': int(zone_number), 'south': is_south})
+    print(f"UTM CRS: {utm_crs.to_authority()} with zone {zone_number}{zone_letter}")
 
     # Create a grid for multithreading
     # xmin, ymin, xmax, ymax = gdf.total_bounds
@@ -486,7 +494,7 @@ try:
         streets_gdf['buffer_width'] = streets_gdf['highway'].apply(lambda x: widths.get(x, 5.5))  # Default to 5.5 if not found
 
         #convert to projected coordinates (UTM 33N)
-        streets_gdf = streets_gdf.to_crs(epsg=32633)
+        streets_gdf = streets_gdf.to_crs(utm_crs)
 
         # Create the buffer polygons with the appropriate width
         streets_gdf["geometry"] = streets_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)
@@ -552,6 +560,88 @@ try:
         streets_xr = xr.open_zarr(streets_zarr_name, consolidated=True)
 
 
+    #### Retrieve street blocks by inverting street lines and convert to xarray ds #####
+    street_blocks_zarr_name = f"{types_folder_path}/rasterized_street_blocks.zarr"
+
+    if not os.path.exists(street_blocks_zarr_name):
+        
+        streets_gdf = osm_gdf[osm_gdf["highway"].notnull()]
+        streets_gdf = streets_gdf[~streets_gdf["highway"].isin(['cycleway', 'path', 'pedestrian', 'service', 'footway', 'construction',  'track', 'steps', 'bridleway', 'corridor', 'elevator', 'platform'])]
+        
+        # create a dict for highway classifications and their corresponding widths
+        widths = {
+            'motorway': 24,
+            'motorway_link': 16,
+            'trunk': 24,
+            'trunk_link': 16,
+            'primary': 15,
+            'primary_link': 12,
+            'secondary': 12,
+            'secondary_link': 11,
+            'tertiary': 11,
+            'tertiary_link': 11,
+            'residential': 5.5,
+            'living_street': 5.5,
+            'pedestrian': 2,
+            'road': 11,	
+            'service': 5.5,
+            'minor_service': 5.5,
+            'footway': 2,
+            'cycleway': 2,
+            'path': 2,
+            'steps': 2,
+        }
+
+        # Apply the width classification
+        streets_gdf['buffer_width'] = streets_gdf['highway'].apply(lambda x: widths.get(x, 5.5))  # Default to 5.5 if not found
+
+        #convert to projected coordinates (e.g. UTM 33N)
+        streets_gdf = streets_gdf.to_crs(utm_crs)
+
+        # Create the buffer polygons with the appropriate width
+        streets_gdf["geometry"] = streets_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)
+
+        # convert back to WGS84
+        streets_gdf = streets_gdf.to_crs(epsg=4326)
+
+        # create xarray raster dataarrays
+        streets_main_xr = streets_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_size=image_size,
+            x_coords=lon,
+            y_coords=lat,
+            name="streets_main",
+            long_name="Main Streets OSM",
+            description="Rasterized streets from OSM data",
+            mapping_col=None,
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
+
+        # invert streets to get street blocks
+        street_blocks_xr = xr.where(streets_main_xr==0, 1, 0)
+
+        # set attributes
+        street_blocks_xr.name = "street_blocks"
+        street_blocks_xr.attrs.update({
+            "long_name": "Street Blocks OSM",
+            "description": "Rasterized street blocks from OSM data",
+            "units": "1",
+            "spatial_ref": "EPSG:4326",
+            "crs": "EPSG:4326",
+        })
+        
+
+        # write to zarr
+        print("Writing street blocks to zarr...")
+        street_blocks_xr.to_zarr(street_blocks_zarr_name, mode="w", consolidated=True, compute=True)
+    else:
+        print(f"Street blocks data already exists at {street_blocks_zarr_name}, skipping processing.")
+        street_blocks_xr = xr.open_zarr(street_blocks_zarr_name, consolidated=True)
+
+
     #### Retrieve water bodies and convert to xarray ds #####
     print("Retrieving water bodies from OSM data...")
     water_zarr_name = f"{types_folder_path}/rasterized_water.zarr"
@@ -574,7 +664,7 @@ try:
         water_gdf['buffer_width'] = water_gdf['waterway'].apply(lambda x: waterway_buffer.get(x, 5))  # Default to 5 if not 
 
         # convert to projected coordinates (UTM 33N)
-        water_gdf = water_gdf.to_crs(epsg=32633)
+        water_gdf = water_gdf.to_crs(utm_crs)
 
         # Create the buffer polygons with an appropriate width
         water_gdf["geometry"] = water_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)
@@ -852,7 +942,7 @@ try:
         landuse_gdf['buffer_width'] = landuse_gdf['railway'].apply(lambda x: 0.5 if x == "rail" else 0)  # Default to 0 if not found
 
         # convert to projected coordinates (UTM 33N)
-        landuse_gdf = landuse_gdf.to_crs(epsg=32633)
+        landuse_gdf = landuse_gdf.to_crs(utm_crs)
 
         # Create the buffer polygons with the appropriate width
         landuse_gdf["geometry"] = landuse_gdf.apply(lambda row: row['geometry'].buffer(row['buffer_width']), axis=1)

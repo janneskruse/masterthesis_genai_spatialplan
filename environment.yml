@@ -12,6 +12,7 @@ dependencies:
     - numpy
     - pandas
     - geopandas
+    - dask-geopandas
     - polars
     - lonboard
     - pyarrow
