@@ -985,10 +985,11 @@ try:
     print("Merging all datasets into a single xarray dataset...")
     building_heights_xr = xr.open_zarr(f"{types_folder_path}/rasterized_building_heights.zarr", consolidated=True, decode_times=False)
     streets_xr = xr.open_zarr(f"{types_folder_path}/rasterized_streets.zarr", consolidated=True, decode_times=False)
+    street_blocks_xr = xr.open_zarr(f"{types_folder_path}/rasterized_street_blocks.zarr", consolidated=True, decode_times=False)
     buildings_xr = xr.open_zarr(f"{types_folder_path}/rasterized_buildings.zarr", consolidated=True, decode_times=False)
     landuse_xr = xr.open_zarr(f"{types_folder_path}/rasterized_landuse.zarr", consolidated=True, decode_times=False)
     water_xr = xr.open_zarr(f"{types_folder_path}/rasterized_water.zarr", consolidated=True, decode_times=False)
-    merged_xr = xr.merge([streets_xr, buildings_xr, building_heights_xr, landuse_xr, water_xr])
+    merged_xr = xr.merge([streets_xr, street_blocks_xr, buildings_xr, building_heights_xr, landuse_xr, water_xr])
 
     #### Save as xarray dataset #####
     # add spatial ref coords
