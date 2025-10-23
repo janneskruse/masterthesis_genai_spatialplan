@@ -628,9 +628,6 @@ try:
         street_blocks_xr.attrs.update({
             "long_name": "Street Blocks OSM",
             "description": "Rasterized street blocks from OSM data",
-            "units": "1",
-            "spatial_ref": "EPSG:4326",
-            "crs": "EPSG:4326",
         })
         
 
@@ -989,7 +986,17 @@ try:
     buildings_xr = xr.open_zarr(f"{types_folder_path}/rasterized_buildings.zarr", consolidated=True, decode_times=False)
     landuse_xr = xr.open_zarr(f"{types_folder_path}/rasterized_landuse.zarr", consolidated=True, decode_times=False)
     water_xr = xr.open_zarr(f"{types_folder_path}/rasterized_water.zarr", consolidated=True, decode_times=False)
-    merged_xr = xr.merge([streets_xr, street_blocks_xr, buildings_xr, building_heights_xr, landuse_xr, water_xr])
+    # merged_xr = xr.merge([streets_xr, street_blocks_xr, buildings_xr, building_heights_xr, landuse_xr, water_xr])
+
+    # Remove spatial_ref coordinate if present, keep only as attribute
+    datasets = [streets_xr, street_blocks_xr, buildings_xr, building_heights_xr, landuse_xr, water_xr]
+    cleaned_datasets = []
+    for ds in datasets:
+        if 'spatial_ref' in ds.coords:
+            ds = ds.drop_vars('spatial_ref')
+        cleaned_datasets.append(ds)
+
+    merged_xr = xr.merge(cleaned_datasets)
 
     #### Save as xarray dataset #####
     # add spatial ref coords
