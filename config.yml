@@ -4,11 +4,15 @@ temperature_day_filter:
   years: 
     start: 2019
     end: 2024
-  max_dates_per_year: 1 # to avoid too many scenes for planet scope
+  max_dates_per_year: 1 # to avoid too many scenes for planet scope (you can also tweak max_scenes_per_region)
 landsat_query:
   max_cloud_coverage: 10
   collections: ["landsat-c2l2-st"]
 osm_query:
   image_size: 5500
+planetscope_query:
+  max_cloud_coverage: 10
+  asset_names: ["ortho_analytic_4b_sr", "ortho_udm2"]
+  max_scenes_per_region: 1
 big_data_storage_path: "D:/master_thesis/data" #"/work/zt75vipu-thesis/data"
 regions: ["Dresden", "Leipzig", "Hamburg", "Stuttgart"] # , "Leipzig", "Hamburg"  

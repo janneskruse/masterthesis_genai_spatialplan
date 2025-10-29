@@ -83,6 +83,12 @@ big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-mast
 planet_region_folder = f"{big_data_storage_path}/planet_scope/{region.lower()}"
 os.makedirs(planet_region_folder, exist_ok=True)
 
+# get planet config settings
+planet_query_config = config.get("planetscope_query", {})
+cloud_cover_limit = planet_query_config.get("max_cloud_coverage", 0.1) #max 10% cloud cover
+asset_names = planet_query_config.get("asset_names", ["ortho_analytic_4b_sr", "ortho_udm2"])
+max_scenes_per_region = planet_query_config.get("max_scenes_per_region", 1)
+
 ##### get the landsat zarr file name ######
 try:
     if "LANDSAT_ZARR_NAME" in os.environ:
@@ -249,7 +255,6 @@ try:
 
     # planet scope ("PSScene")
     item_types=["PSScene"]
-    cloud_cover_limit=0.1 #max 10% cloud cover
 
     #thread collect for all time ranges
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -491,7 +496,7 @@ try:
 
     ######### Request download for all scenes #########
     ### Request download for all files in collection ##
-    def process_asset(url):
+    def process_asset(url, asset="ortho_analytic_4b_sr"):
         retries = 0
         max_retries = 20
 
@@ -521,14 +526,14 @@ try:
                 print(f"Failed to decode JSON from {url}. Response text: {response.text}")
                 return None
 
-            analytic_sr = assets.get("ortho_analytic_4b_sr")
-            if not analytic_sr:
-                print(f"No 'ortho_analytic_4b_sr' asset found in {url}")
+            asset_data = assets.get(asset)
+            if not asset_data:
+                print(f"No '{asset}' asset found in {url}")
                 return None
 
-            if "location" not in analytic_sr:
+            if "location" not in asset_data:
                 # Activate the asset
-                activate_url = analytic_sr["_links"]["activate"]
+                activate_url = asset_data["_links"]["activate"]
                 activate_response = requests.get(activate_url, auth=planet_api_key)
 
                 if not activate_response.ok:
@@ -536,7 +541,7 @@ try:
                     return None
 
                 # Poll until location appears
-                self_url = analytic_sr["_links"]["_self"]
+                self_url = asset_data["_links"]["_self"]
                 max_activation_retries = 60
                 retry_count = 0
 
@@ -554,25 +559,28 @@ try:
                 return None
 
             else:
-                return analytic_sr["location"]
+                return asset_data["location"]
 
         print(f"Asset {url} failed after {max_retries} retries.")
         return None
 
-    def download_file(download_url, collection_id, folder_path):
+    def download_file(download_url, collection_id, folder_path, id):
         
-        # Generate a short hash of the URL to make the filename unique
+        # # Generate a short hash of the URL to make the filename unique
         url_hash = hashlib.md5(download_url.encode()).hexdigest()[:8]
         
-        filename = f"{folder_path}/psscene_{collection_id}_{url_hash}.tif"
+        # filename = f"{folder_path}/psscene_{collection_id}_{url_hash}.tif"
+        filename = f"{folder_path}/psscene_{collection_id}_{id}.tif"
+        
         # print(f"Downloading {filename} into folder {folder_path}...")
         if not os.path.exists(filename):
+            print(f"Downloading {filename} into folder {folder_path}...")
             with requests.get(download_url, auth=planet_api_key, stream=True) as response:
                 response.raise_for_status()
                 total_size = int(response.headers.get('content-length', 0))
                 
                 with open(filename, 'wb') as f, tqdm(
-                    desc=f"Downloading {collection_id}_{url_hash}.tif",
+                    desc=f"Downloading {collection_id}_{url_hash} to {filename}",
                     total=total_size,
                     unit='B',
                     unit_scale=True,
@@ -581,11 +589,15 @@ try:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
                         bar.update(len(chunk))
+                
+            # print(f"Downloaded {filename} successfully.")
+            return True
         else:
-            print(f"File {collection_id}_{url_hash}.tif already exists, skipping download.")
+            print(f"File {filename} already exists, skipping download.")
+            return False
 
 
-    def requestPlanetItemDownload(collection_gdf_file:str):
+    def requestPlanetItemDownload(collection_gdf_file:str, asset_names:list=["ortho_analytic_4b_sr", "ortho_udm2"]):
         """
         Request Planet item download for each item in the GeoDataFrame.
         
@@ -596,38 +608,71 @@ try:
         collection=gpd.read_parquet(collection_gdf_file)
         collection_ids=collection.id.to_list()
 
-        # get download urls
-        download_urls=[]
-        lock = threading.Lock()
-        
-        urls = pd.DataFrame(collection["_links"].to_list()).assets
-
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(process_asset, url): url for url in urls}
-
-            for future in as_completed(futures):
-                download_url = future.result()
-                if download_url:
-                    with lock:
-                        download_urls.append(download_url)
-
-        print(f"Collected {len(download_urls)} download URLs.")
-        
         scene_date=collection.date_id.iloc[0]
         scene_date=scene_date.replace("-","")
         scene_folderpath=f"{folderpath}/psscene_{scene_date}"
         os.makedirs(scene_folderpath, exist_ok=True)
         
-        # if already lebgth of files in scene_folderpath is equal to length of download_urls, skip download
-        if len(os.listdir(scene_folderpath)) == len(download_urls):
-            print(f"All files for {collection_gdf_file} already downloaded, skipping download.")
-            return
+        # rename download_url to download_url_ortho_analytic_4b_sr for backwards compatibility
+        collection = collection.rename(columns={"download_url": "download_url_ortho_analytic_4b_sr"})
 
-        # download files
-        for i, url in enumerate(download_urls):
-            download_file(url, collection_ids[i], scene_folderpath)
+        # check if download_url column exists
+        for asset_name in asset_names:
+            if not f'download_url_{asset_name}' in collection.columns or collection[f'download_url_{asset_name}'].isnull().any():
 
-        print(f"Downloaded {len(download_urls)} files for {collection_gdf_file}")
+                # get download urls
+                download_urls=[]
+                
+                # check the rows with missing download urls
+                if f'download_url_{asset_name}' in collection.columns:
+                    missing_rows = collection[collection[f'download_url_{asset_name}'].isnull()]
+                    #update download urls with existing ones
+                    download_urls = collection.loc[collection[f'download_url_{asset_name}'].notnull(), f'download_url_{asset_name}'].to_list()
+                else:
+                    missing_rows = collection
+
+                lock = threading.Lock()
+                
+                urls = pd.DataFrame(missing_rows["_links"].to_list()).assets
+
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    futures = {executor.submit(process_asset, url, asset_name): url for url in urls}
+
+                    for future in as_completed(futures):
+                        try:
+                            download_url = future.result()
+                        except Exception as e:
+                            print(f"Asset worker raised an exception for {futures[future]}: {e}")
+                            continue
+
+                        if download_url:
+                            with lock:
+                                download_urls.append(download_url)
+                                
+                # check if doubled download urls
+                if len(set(download_urls)) < len(download_urls):
+                    print(f"Warning: Duplicate download URLs found for {collection_gdf_file}.")
+                    # drop duplicates
+                    download_urls = list(set(download_urls))
+                
+                # save to parquet
+                collection[f'download_url_{asset_name}'] = pd.Series(download_urls)
+                collection.to_parquet(collection_gdf_file)
+            else:
+                print(f"Download URLs for {collection_gdf_file} already exist, skipping activation request.")
+                download_urls = collection[f'download_url_{asset_name}'].to_list()
+
+            print(f"Collected {len(download_urls)} download URLs.")
+
+            # download files
+            downloaded_files = 0
+            for i, url in enumerate(download_urls):
+                if download_file(url, collection_ids[i], scene_folderpath, f"{asset_name}_{i}"):
+                    downloaded_files += 1
+
+            print(f"Downloaded {downloaded_files} files for {collection_gdf_file}")
+
+        print(f"Completed downloads for {collection_gdf_file}")
         return
     
     
@@ -646,14 +691,14 @@ try:
             return f"Skipped: {filename}"
         
         try:
-            requestPlanetItemDownload(filename)
+            requestPlanetItemDownload(filename, asset_names=asset_names)
             return f"Completed: {filename}"
         except Exception as e:
             return f"Error processing {filename}: {e}"
 
         
     with ProcessPoolExecutor(max_workers=min(len(filenames), 4)) as executor:
-        futures = {executor.submit(process_filename_wrapper, filename): filename for filename in filenames}
+        futures = {executor.submit(process_filename_wrapper, filename): filename for filename in filenames[0:max_scenes_per_region]}
         
         for future in as_completed(futures):
             result = future.result()
