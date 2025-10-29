@@ -20,7 +20,7 @@ The data acquisition and processing scripts and notebooks are located in the [co
 4. Combining all datasets and clipping rural areas to create the final model input dataset
 
 ### Running the pipeline
-There is a pipeline for the data acquisition and processing to acquire the model input dataset. The pipeline can be configured to choose different regions and different temperature settings using the [config.yml](./config.yml) file. The pipeline is designed to be run on an HPC cluster using SLURM job scheduling. If you don't have access to an HPC cluster, you can also run the individual scripts and notebooks standalone as described below.
+There is a pipeline for the data acquisition and processing to acquire the model input dataset. The pipeline can be configured to choose different regions and different temperature settings using the [code/data_acquisition/config.yml](./code/data_acquisition/config.yml) file. The pipeline is designed to be run on an HPC cluster using SLURM job scheduling. If you don't have access to an HPC cluster, you can also run the individual scripts and notebooks standalone as described below.
 
 To run the pipeline:
 
@@ -46,6 +46,8 @@ python ./code/data_acquisition/slurm/landsat_to_xarray.py
 4. Run the planetscope_to_xarray notebook
 5. Download the Corine Landcover dataset from https://land.copernicus.eu/en/products/corine-land-cover/clc2018 and save it to the [data/corine](./data/corine) folder. Unfortunately, this dataset cannot be downloaded automatically due to the required user agreement, so you have to do this step manually. You will have to create an account at EU Copernicus and agree to the terms of use. After downloading, unzip the dataset and rename it to `Corine_Landcover_<year>` (rename the folder with DATA, Legend etc. - not the .tif file).
 6. Lastly, use the combine_datasets notebook to combine all datasets to the final model input dataset.
+
+| Note, that also here, you can tweak the settings in the [code/data_acquisition/config.yml](./code/data_acquisition/config.yml) file before running the scripts and notebooks.
 
 
 ## Model

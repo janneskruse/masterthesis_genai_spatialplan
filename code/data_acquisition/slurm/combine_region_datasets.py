@@ -32,7 +32,7 @@ p.close()
 # import helper functions
 # sys.path.append(f"{repo_dir}/code/helpers")
 
-with open(f"{repo_dir}/config.yml", 'r') as stream:
+with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
 
 ####### Get the region to process #######

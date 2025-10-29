@@ -78,7 +78,7 @@ try:
     bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
 
     ####### Get/Define the config parameters ########
-    config_vars = get_landsat_config_vars(os.path.join(repo_dir, "config.yml"), region)
+    config_vars = get_landsat_config_vars(os.path.join(repo_dir, "code/data_acquisition/config.yml"), region)
     
     big_data_storage_path = config_vars["big_data_storage_path"]
     landsat_region_folder = config_vars["landsat_region_folder"]

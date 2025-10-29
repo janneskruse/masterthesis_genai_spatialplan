@@ -71,7 +71,7 @@ fi
 # Find the repository root directory to locate the config file
 SCRIPT_DIR=$( cd -- "--" "$(dirname -- "$SCRIPT_PATH")" &> /dev/null && pwd )
 REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
-CONFIG_FILE="$REPO_ROOT/config.yml"
+CONFIG_FILE="$REPO_ROOT/code/data_acquisition/config.yml"
 
 # Load the config variables
 regions=($(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "regions" | tr ',' ' '))

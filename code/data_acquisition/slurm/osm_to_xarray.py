@@ -51,7 +51,7 @@ repo_dir = p.read().strip()
 p.close()
 
 config = {}
-with open(f"{repo_dir}/config.yml", 'r') as stream:
+with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
     
     

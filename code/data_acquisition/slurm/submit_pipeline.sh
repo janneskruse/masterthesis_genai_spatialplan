@@ -18,7 +18,7 @@ source activate genaiSpatialplan
 # Find the repository root directory to locate the config file
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
-CONFIG_FILE="$REPO_ROOT/config.yml"
+CONFIG_FILE="$REPO_ROOT/code/data_acquisition/config.yml"
 
 # Load vars from config.yaml
 big_data_storage_path=$(python ${REPO_ROOT}/code/helpers/read_yaml.py "$CONFIG_FILE" "big_data_storage_path")

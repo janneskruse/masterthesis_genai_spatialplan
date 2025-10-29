@@ -41,7 +41,7 @@ p=os.popen('git rev-parse --show-toplevel')
 repo_dir = p.read().strip()
 p.close()
 
-with open(f"{repo_dir}/config.yml", 'r') as stream:
+with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
 
 # Load .env file

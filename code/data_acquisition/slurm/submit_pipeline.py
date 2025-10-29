@@ -15,7 +15,7 @@ sys.path.append(f"{repo_dir}/code/helpers")
 from submit_job import submit_job_with_dependency, check_existing_job
 from get_region_filenames import get_region_filenames
 
-with open(f"{repo_dir}/config.yml", 'r') as stream:
+with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
 
 def main():
@@ -40,7 +40,7 @@ def main():
         print("Input file does not exist, proceeding with data acquisition.")
     
     # Get region filenames
-    region_filenames_json = get_region_filenames(config_path=f"{repo_dir}/config.yml")
+    region_filenames_json = get_region_filenames(config_path=f"{repo_dir}/code/data_acquisition/config.yml")
     print("Region filenames JSON loaded successfully: ", region_filenames_json)
     
     # Get list of regions from the JSON

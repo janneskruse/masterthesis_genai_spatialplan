@@ -35,7 +35,7 @@ def train_vae():
     with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
         config = yaml.safe_load(stream)
         
-    with open(f"{repo_dir}/config.yml", 'r') as stream:
+    with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
         data_config = yaml.safe_load(stream)
 
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")

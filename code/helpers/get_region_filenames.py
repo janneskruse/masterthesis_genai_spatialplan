@@ -12,7 +12,7 @@ def get_region_filenames(config_path):
         p=os.popen('git rev-parse --show-toplevel')
         repo_dir = p.read().strip()
         p.close()
-        config_path = f"{repo_dir}/config.yml"
+        config_path = f"{repo_dir}/code/data_acquisition/config.yml"
 
     with open(config_path, 'r') as stream:
         config = yaml.safe_load(stream)
