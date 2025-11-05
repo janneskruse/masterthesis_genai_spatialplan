@@ -28,3 +28,6 @@ code/data_acquisition/slurm/outputs/*
 
 # model overview
 code/model/checklist
+
+# github
+.github
