@@ -11,7 +11,7 @@ landsat_query:
 osm_query:
   image_size: 5500
 planetscope_query:
-  max_cloud_coverage: 10
+  max_cloud_coverage: 0.1
   asset_names: ["ortho_analytic_4b_sr", "ortho_udm2"]
   max_scenes_per_region: 1
   quality_bands: ["cloud", "shadow", "snow"] # ["clear", "cloud", "shadow", "snow"] # note, that clear contains haze, cloud and heavy_haze but can be a bit off
