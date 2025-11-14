@@ -74,9 +74,11 @@ The HPC cluster of the University of Leipzig can be used to run the training and
 Steps:
 1. create a new workspace on the HPC cluster: `ws_allocate <name> <duration>`, e.g. `ws_allocate genai_spatial 30`
 2. Set a reminder email before a workspace expires with `ws_send_ical <workspace~name> "<your~email>", e.g. `ws_send_ical <username>-genai_spatial "<your_email>@example.com"`
-3. Convert dataset to zip
-4. Copy the local dataset to the HPC cluster using `scp` command. e.g for model_input_dataset.zarr `scp model_input_dataset.zarr.zip <username>@login01.sc.uni-leipzig.de:/work/<username>-genai_spatial`
-5. Unzip the dataset on the HPC cluster using `unzip model_input_dataset.zarr.zip`
+3. Either: 
+- Convert dataset to zip
+- Copy the local dataset to the HPC cluster using `scp` command. e.g for model_input_dataset.zarr `scp model_input_dataset.zarr.zip <username>@login01.sc.uni-leipzig.de:/work/<username>-genai_spatial`
+- Unzip the dataset on the HPC cluster using `unzip model_input_dataset.zarr.zip`
+4. Or copy recursively using `scp -r model_input_dataset.zarr <username>@login01.sc.uni-leipzig.de:/work/<username>-genai_spatial`
 
 
 ### connect to a jupyter hub server on the HPC cluster
