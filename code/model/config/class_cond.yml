@@ -1,5 +1,6 @@
 dataset_params:
-  regions: ['Stuttgart'] # ['Leipzig'] # list of regions to include: 'Dresden', 'Leipzig', Hamburg', 'Stuttgart'
+  train_regions: ['Dresden', 'Hamburg', Stuttgart'] # ['Leipzig'] # list of regions to include: 'Dresden', 'Leipzig', Hamburg', 'Stuttgart'
+  eval_regions: ['Leipzig'] # ['Dresden'] # regions for evaluation  
   zarr_name: "input_config_ge25_cc10_2019_2024_clipped.zarr"
   res: 3 # resolution in meters
   patch_size_m: 800 # patch size in meters

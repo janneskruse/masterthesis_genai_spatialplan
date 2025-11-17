@@ -96,9 +96,10 @@ class UrbanInpaintingDataset(Dataset):
         self.use_latents = bool(use_latents)
         
         # Load xarray dataset
-        regions = dataset_config.get('regions', ['Leipzig'])
+        train_regions = dataset_config.get('train_regions', ['Dresden', 'Hamburg', 'Stuttgart'])
+        eval_regions = dataset_config.get('eval_regions', ['Leipzig'])
         
-        region = regions[0]  # for now, use first region --> to do: extend to multiple regions
+        region = train_regions[0]  # for now, use first region --> to do: extend to multiple regions
         ## to do: implement train regions and eval region(s) split to select based on self.split
         processed_data_path = f"{big_data_storage_path}/processed/{region.lower()}"
         zarr_name = dataset_config.get('zarr_name', 'input_data.zarr')
