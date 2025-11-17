@@ -59,6 +59,20 @@ def train_vae():
     os.makedirs(os.path.join(out_dir, 'vae_samples'), exist_ok=True)
     os.makedirs(os.path.join(out_dir, 'vqvae_latents'), exist_ok=True)
     
+    
+    # Multi-GPU setup
+    batch_size = train_config['autoencoder_batch_size']
+    if device.type == 'cuda':
+        original_batch_size = batch_size
+        num_gpus = torch.cuda.device_count()
+        print(f"✓ Available GPUs: {num_gpus}")
+        
+        # Adjust batch size for multi-GPU
+        if num_gpus > 1:
+            batch_size = batch_size * num_gpus
+            print(f"✓ Scaling batch size: {original_batch_size} → {batch_size}")
+    
+    
     ########## Load Dataset #############
     print("\n" + "="*50)
     print("Loading Urban Dataset")
@@ -77,7 +91,7 @@ def train_vae():
     
     data_loader = DataLoader(
         urban_dataset,
-        batch_size=train_config['autoencoder_batch_size'],
+        batch_size=batch_size,
         shuffle=True,
         num_workers=4,
         pin_memory=True,
@@ -125,7 +139,7 @@ def train_vae():
     
     print(f"\n✓ Training for {num_epochs} epochs")
     print(f"✓ Learning rate: {train_config['autoencoder_lr']}")
-    print(f"✓ Batch size: {train_config['autoencoder_batch_size']}")
+    print(f"✓ Batch size: {batch_size}")
     print(f"✓ KL weight: {kl_weight}")
     print(f"✓ Perceptual weight: {perceptual_weight}")
     print(f"✓ Discriminator weight: {disc_weight} (starting epoch {disc_start_epoch})")
@@ -283,7 +297,7 @@ def train_vae():
                 
                 # Save each latent
                 for i in range(z.shape[0]):
-                    global_idx = idx * train_config['autoencoder_batch_size'] + i
+                    global_idx = idx * batch_size + i
                     latent_path = os.path.join(latent_dir, f'latent_{global_idx}.pt')
                     torch.save(z[i].cpu(), latent_path)
         

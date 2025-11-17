@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --gpus=a30:1
+#SBATCH --gpus=a30:2
 #SBATCH --mem=64G
 #SBATCH --partition=paula
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de
