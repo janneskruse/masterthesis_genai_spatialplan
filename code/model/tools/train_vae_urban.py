@@ -17,6 +17,10 @@ from diffusion_blocks.vae import VAE
 from diffusion_blocks.discriminator import Discriminator
 from diffusion_blocks.lpips import LPIPS
 from utils.data_utils import collate_fn
+from utils.load_cuda import load_cuda
+
+# Load CUDA
+load_cuda()
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
