@@ -184,6 +184,9 @@ class UrbanInpaintingDataset(Dataset):
                     # layer_data = date_data[layer].sel(time=self.selected_date, method='nearest')
                     # data_layers[layer] = layer_data.values
                     data_layers[layer] = date_data[layer]
+                    
+            # Store data layers for region
+            self.data_layers_per_region[region] = data_layers
         
             # Compute valid patches based on min valid percent of data
             H, W = valid_mask.shape
@@ -410,7 +413,13 @@ class UrbanInpaintingDataset(Dataset):
 
 
         # Add meta information
-        cond_inputs['meta'] = {'y': y, 'x': x, 'time': str(self.selected_date), 'region': region, 'spatial_names': spatial_names}
+        cond_inputs['meta'] = {
+            'y': y, 
+            'x': x, 
+            'time': str(data_layers['date']), 
+            'region': region, 
+            'spatial_names': spatial_names
+        }
 
         
         # Convert target image to tensor
