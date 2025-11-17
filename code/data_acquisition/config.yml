@@ -16,5 +16,5 @@ planetscope_query:
   max_scenes_per_region: 1
   quality_bands: ["cloud", "shadow", "snow"] # ["clear", "cloud", "shadow", "snow"] # note, that clear contains haze, cloud and heavy_haze but can be a bit off
   confidence_threshold: 50  # Confidence threshold for UDM2 quality band
-big_data_storage_path: "D:/master_thesis/data" #"/work/zt75vipu-thesis/data"
+big_data_storage_path: "/work/zt75vipu-thesis/data" #"D:/master_thesis/data" #"/work/zt75vipu-thesis/data"
 regions: ["Dresden", "Leipzig", "Hamburg", "Stuttgart"] # , "Leipzig", "Hamburg"  
