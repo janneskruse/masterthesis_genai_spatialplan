@@ -99,17 +99,23 @@ class UrbanInpaintingDataset(Dataset):
         train_regions = dataset_config.get('train_regions', ['Dresden', 'Hamburg', 'Stuttgart'])
         eval_regions = dataset_config.get('eval_regions', ['Leipzig'])
         
-        region = train_regions[0]  # for now, use first region --> to do: extend to multiple regions
-        ## to do: implement train regions and eval region(s) split to select based on self.split
-        processed_data_path = f"{big_data_storage_path}/processed/{region.lower()}"
+        # Select regions based on split
+        self.regions = train_regions if self.split == 'train' else eval_regions
+        processed_data_path = big_data_storage_path + "/processed"
         zarr_name = dataset_config.get('zarr_name', 'input_data.zarr')
-        zarr_path = os.path.join(processed_data_path, zarr_name)
         
-        print(f"Loading zarr dataset from {zarr_path}...")
-        self.merged_xs = xr.open_zarr(zarr_path, consolidated=True)
+        # Store datasets and data layers per region
+        self.datasets = {}
+        self.data_layers_per_region = {}
+        
+        # Load datasets for all regions
+        for region in self.regions:
+            region_zarr_path = os.path.join(processed_data_path, region.lower(), zarr_name)
+            print(f"Loading zarr dataset from {region_zarr_path}...")
+            self.datasets[region] = xr.open_zarr(region_zarr_path, consolidated=True)
         
         # Load patches
-        self.patches = self._load_patches(region=region)
+        self.patches = self._load_patches()
         
         # Load latents if specified
         if self.use_latents and self.latent_path is not None:
@@ -121,72 +127,80 @@ class UrbanInpaintingDataset(Dataset):
             else:
                 print('Latents not found or size mismatch')
     
-    def _load_patches(self, region='Leipzig'):
+    def _load_patches(self):
         """
         Pre-compute valid patch locations from the dataset
         """
-        # Get valid dates with planetscope data
-        valid_planet_dates = (
-            self.merged_xs['planetscope_sr_4band']
-            .notnull()
-            .sum(dim=['x', 'y']) > 0
-        ).any(dim='channel').compute()
         
-        valid_dates = self.merged_xs['time'].where(valid_planet_dates, drop=True).values
+        all_patches = []
         
-        if len(valid_dates) == 0:
-            raise ValueError("No valid dates found in dataset")
+        for region in self.regions:
+            print(f"\nProcessing region: {region}")
+            merged_xs = self.datasets[region]
         
-        # For now, use first valid date (can be extended to use multiple dates)
-        self.selected_date = valid_dates[0]
-        print(f"Using date: {self.selected_date}")
+            # Get valid dates with planetscope data
+            valid_planet_dates = (
+                merged_xs['planetscope_sr_4band']
+                .notnull()
+                .sum(dim=['x', 'y']) > 0
+            ).any(dim='channel').compute()
         
-        # Select data for this date
-        date_data = self.merged_xs.sel(time=self.selected_date)
+            valid_dates = merged_xs['time'].where(valid_planet_dates, drop=True).values
         
-        # Get satellite image and compute validity mask
-        self.img_da = date_data['planetscope_sr_4band'].sel(channel=['blue', 'green', 'red'])
-        valid_mask = (~self.img_da.isnull()).all(dim='channel').compute()
+            if len(valid_dates) == 0:
+                print(f"No valid dates found for region {region}")
+                continue
         
-        # close dataset for io efficiency
-        # self.merged_xs.close()
+            # For now, first valid date (can be extended to use multiple dates)
+            selected_date = valid_dates[0]
+            print(f"Using date: {selected_date} for region {region}")
+            
+            # Select data for this date
+            date_data = merged_xs.sel(time=selected_date)
+            
+            # Get satellite image and compute validity mask
+            img_da = date_data['planetscope_sr_4band'].sel(channel=['blue', 'green', 'red'])
+            valid_mask = (~img_da.isnull()).all(dim='channel').compute()
+            
+            # Handle reflectance scaling
+            if img_da.max() > 20:
+                img_da = (img_da / 10000.0).astype(np.float32)
+            
+            # Store data layers for this region
+            data_layers = {
+                'satellite': img_da,
+                'valid_mask': valid_mask,
+                'date': selected_date
+            }
         
+            # Add optional layers
+            for layer in self.osm_layers:
+                if layer in date_data:
+                    data_layers[layer] = date_data[layer]
         
-        if self.img_da.max() > 20:  # reflectance scaled
-            self.data_layers['satellite'] = (self.data_layers['satellite'] / 10000.0).astype(np.float32)
-
+            # Add environmental data if available
+            for layer in self.environmental_layers:
+                if layer in date_data:
+                    # layer_data = date_data[layer].sel(time=self.selected_date, method='nearest')
+                    # data_layers[layer] = layer_data.values
+                    data_layers[layer] = date_data[layer]
         
-        # Store all layers we need
-        self.data_layers = {
-            'satellite': self.img_da,  # (3, H, W)
-            'buildings': date_data['buildings'].values if 'buildings' in date_data else None,
-        }
+            # Compute valid patches based on min valid percent of data
+            H, W = valid_mask.shape
+            min_valid_pixels = int((self.patch_size ** 2) * (self.min_valid_percent / 100))
         
-        # Add optional layers based on what's available
-        for layer in self.osm_layers:
-            if layer in date_data:
-                self.data_layers[layer] = date_data[layer]
-        
-        # Add environmental data if available
-        for layer in self.environmental_layers:
-            if layer in date_data:
-                # layer_data = date_data[layer].sel(time=self.selected_date, method='nearest')
-                # self.data_layers[layer] = layer_data.values
-                self.data_layers[layer] = date_data[layer]
-        
-        # Compute valid patches based on min valid percent of data
-        H, W = valid_mask.shape
-        min_valid_pixels = int((self.patch_size ** 2) * (self.min_valid_percent / 100))
-        
-        patches = []
-        for y in range(0, H - self.patch_size + 1, self.stride):
-            for x in range(0, W - self.patch_size + 1, self.stride):
-                valid_count = valid_mask[y:y+self.patch_size, x:x+self.patch_size].sum()
-                if valid_count >= min_valid_pixels:
-                    patches.append((y, x, region))
+            region_patches = []
+            for y in range(0, H - self.patch_size + 1, self.stride):
+                for x in range(0, W - self.patch_size + 1, self.stride):
+                    valid_count = valid_mask[y:y+self.patch_size, x:x+self.patch_size].sum()
+                    if valid_count >= min_valid_pixels:
+                        region_patches.append((y, x, region))
+            
+            print(f"Found {len(region_patches)} valid patches for region {region}")
+            all_patches.extend(region_patches)
                     
-        print(f"Found {len(patches)} valid patches for region {region} with split {self.split} and min valid percent {self.min_valid_percent}%")
-        return patches
+        print(f"\nTotal patches across all {self.split} regions: {len(all_patches)}")
+        return all_patches
     
     def _create_inpainting_mask(self, H, W):
         """
@@ -293,8 +307,10 @@ class UrbanInpaintingDataset(Dataset):
         y, x, region = self.patches[index]
         ps = self.patch_size
         
+        data_layers = self.data_layers_per_region[region]
+        
         # Extract satellite image patch (main input)
-        img_patch = img_patch = self.data_layers['satellite'].isel(
+        img_patch = img_patch = data_layers['satellite'].isel(
             y=slice(y, y+ps), 
             x=slice(x, x+ps)
         ).values.astype(np.float32)
@@ -319,9 +335,9 @@ class UrbanInpaintingDataset(Dataset):
             # Stack OSM layers as control signal
             osm_layers = []
             for layer_name in self.osm_layers:
-                if layer_name in self.data_layers and self.data_layers[layer_name] is not None:
+                if layer_name in data_layers and data_layers[layer_name] is not None:
                     # layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
-                    layer_patch = self.data_layers[layer_name].isel(
+                    layer_patch = data_layers[layer_name].isel(
                         y=slice(y, y+ps),
                         x=slice(x, x+ps)
                     ).values
@@ -337,9 +353,9 @@ class UrbanInpaintingDataset(Dataset):
             # Environmental data (NDVI, LST)
             env_layers = []
             for layer_name in self.environmental_layers:
-                if layer_name in self.data_layers and self.data_layers[layer_name] is not None:
+                if layer_name in data_layers and data_layers[layer_name] is not None:
                     # layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
-                    layer_patch = self.data_layers[layer_name].isel(
+                    layer_patch = data_layers[layer_name].isel(
                         y=slice(y, y+ps),
                         x=slice(x, x+ps)
                     ).values
@@ -354,9 +370,9 @@ class UrbanInpaintingDataset(Dataset):
         
         if 'temperature_threshold' in self.condition_types:
             # Temperature optimization target (scalar or spatially varying)
-            if 'landsat_surface_temp_b10_masked' in self.data_layers and self.data_layers['landsat_surface_temp_b10_masked'] is not None:
+            if 'landsat_surface_temp_b10_masked' in data_layers and data_layers['landsat_surface_temp_b10_masked'] is not None:
                 # lst_patch = self.data_layers['landsat_surface_temp_b10_masked'][y:y+ps, x:x+ps]
-                lst_patch = self.data_layers['landsat_surface_temp_b10_masked'].isel(
+                lst_patch = data_layers['landsat_surface_temp_b10_masked'].isel(
                     y=slice(y, y+ps),
                     x=slice(x, x+ps)
                 ).values
