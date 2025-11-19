@@ -93,7 +93,7 @@ def train_vae():
         urban_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=0, #4
         pin_memory=True,
         collate_fn=collate_fn
     )
