@@ -46,32 +46,46 @@ def setup_distributed():
         
         torch.cuda.set_device(local_rank) 
         
-                # Ensure IPv4 is used (critical for clusters without IPv6)
+        # Ensure IPv4 is used (critical for clusters without IPv6)
         master_addr = os.environ.get('MASTER_ADDR', 'localhost')
         master_port = os.environ.get('MASTER_PORT', '29500')
+ 
+        ipv4_addr = None
         
-        # Validate and force IPv4 format
+        # Strategy 1: Resolve hostname to IPv4
         try:
-            # Resolve to IPv4 only
-            ipv4_addr = socket.getaddrinfo(
+            addr_info = socket.getaddrinfo(
                 master_addr, 
                 None, 
-                socket.AF_INET,  # Force IPv4
+                socket.AF_INET,
                 socket.SOCK_STREAM
-            )[0][4][0]
-            os.environ['MASTER_ADDR'] = ipv4_addr
+            )
+            ipv4_addr = addr_info[0][4][0]
         except (socket.gaierror, IndexError):
-            # Fallback for localhost testing
-            os.environ['MASTER_ADDR'] = '127.0.0.1'
+            pass
         
+        # Strategy 2: If already IPv4, use it
+        if not ipv4_addr and master_addr.replace('.', '').isdigit():
+            ipv4_addr = master_addr
+        
+        # Strategy 3: Fallback
+        if not ipv4_addr:
+            ipv4_addr = '127.0.0.1'
+        
+        os.environ['MASTER_ADDR'] = ipv4_addr
         os.environ['MASTER_PORT'] = master_port
+        
+        if rank == 0:
+            print(f"✓ Resolved master address: {master_addr} → {ipv4_addr}:{master_port}")
+        
         
         dist.init_process_group(
             backend='nccl',
             init_method='env://', # reads MASTER_ADDR and MASTER_PORT from environment variables
             world_size=world_size,
             rank=rank,
-            device_id=local_rank
+            device_id=local_rank,
+            timeout=torch.distributed.timedelta(seconds=1800)
         )
     else:
         rank = 0
