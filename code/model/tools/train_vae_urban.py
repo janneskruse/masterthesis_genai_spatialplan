@@ -63,15 +63,16 @@ def train_vae():
     
     # Multi-GPU setup
     batch_size = train_config['autoencoder_batch_size']
+    num_gpus = 1
     if device.type == 'cuda':
-        original_batch_size = batch_size
+        # original_batch_size = batch_size
         num_gpus = torch.cuda.device_count()
         print(f"✓ Available GPUs: {num_gpus}")
         
-        # Adjust batch size for multi-GPU
-        if num_gpus > 1:
-            batch_size = batch_size * num_gpus
-            print(f"✓ Scaling batch size: {original_batch_size} → {batch_size}")
+        # # Adjust batch size for multi-GPU
+        # if num_gpus > 1:
+        #     batch_size = batch_size * num_gpus
+        #     print(f"✓ Scaling batch size: {original_batch_size} → {batch_size}")
     
     
     ########## Load Dataset #############
@@ -111,9 +112,9 @@ def train_vae():
     ).to(device)
     
     # wrap model for multi-GPU
-    if device.type == 'cuda' and num_gpus > 1:
-        print("✓ Wrapping model in DataParallel")
-        model = torch.nn.DataParallel(model)
+    # if device.type == 'cuda' and num_gpus > 1:
+    #     print("✓ Wrapping model in DataParallel")
+    #     model = torch.nn.DataParallel(model)
     
     model.train()
     
@@ -127,9 +128,9 @@ def train_vae():
     ).to(device)
     
     # wrap discriminator for multi-GPU
-    if device.type == 'cuda' and num_gpus > 1:
-        print("✓ Wrapping discriminator in DataParallel")
-        discriminator = torch.nn.DataParallel(discriminator)
+    # if device.type == 'cuda' and num_gpus > 1:
+    #     print("✓ Wrapping discriminator in DataParallel")
+    #     discriminator = torch.nn.DataParallel(discriminator)
     
     discriminator.train()
     
@@ -143,13 +144,14 @@ def train_vae():
     num_epochs = train_config['autoencoder_epochs']
     
     base_lr = train_config['autoencoder_lr']
-    if num_gpus > 1:
-        batch_size = train_config['autoencoder_batch_size'] * num_gpus
-        # Linear scaling rule: lr ∝ batch_size
-        adjusted_lr = base_lr * (batch_size / train_config['autoencoder_batch_size'])
-        print(f"✓ Adjusted learning rate: {base_lr} → {adjusted_lr}")
-    else:
-        adjusted_lr = base_lr
+    # if num_gpus > 1:
+    #     batch_size = train_config['autoencoder_batch_size'] * num_gpus
+    #     # Linear scaling rule: lr ∝ batch_size
+    #     adjusted_lr = base_lr * (batch_size / train_config['autoencoder_batch_size'])
+    #     print(f"✓ Adjusted learning rate: {base_lr} → {adjusted_lr}")
+    # else:
+    #     adjusted_lr = base_lr
+    adjusted_lr = base_lr
     
     optimizer_vae = Adam(model.parameters(), lr=adjusted_lr)
     optimizer_disc = Adam(discriminator.parameters(), lr=adjusted_lr)
