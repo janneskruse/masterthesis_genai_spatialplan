@@ -52,23 +52,24 @@ def setup_distributed():
  
         ipv4_addr = None
         
-        # Strategy 1: Resolve hostname to IPv4
-        try:
-            addr_info = socket.getaddrinfo(
-                master_addr, 
-                None, 
-                socket.AF_INET,
-                socket.SOCK_STREAM
-            )
-            ipv4_addr = addr_info[0][4][0]
-        except (socket.gaierror, IndexError):
-            pass
+        # Strategy 1: If already valid IPv4, use it
+        if master_addr.replace('.', '').replace(':', '').isdigit():
+            ipv4_addr = master_addr.split(':')[0]  # Remove port if present
         
-        # Strategy 2: If already IPv4, use it
-        if not ipv4_addr and master_addr.replace('.', '').isdigit():
-            ipv4_addr = master_addr
+        # Strategy 2: Resolve hostname to IPv4
+        if not ipv4_addr:
+            try:
+                addr_info = socket.getaddrinfo(
+                    master_addr, 
+                    None, 
+                    socket.AF_INET,
+                    socket.SOCK_STREAM
+                )
+                ipv4_addr = addr_info[0][4][0]
+            except (socket.gaierror, IndexError):
+                pass
         
-        # Strategy 3: Fallback
+        # Strategy 3: Fallback to loopback
         if not ipv4_addr:
             ipv4_addr = '127.0.0.1'
         

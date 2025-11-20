@@ -33,6 +33,11 @@ if [ -z "$MASTER_ADDR" ]; then
     MASTER_ADDR="127.0.0.1"  # Fallback for single node
 fi
 
+# log master address
+echo "Using MASTER_ADDR: $MASTER_ADDR"
+
+export MASTER_ADDR=$MASTER_ADDR
+export MASTER_PORT=29500
 export WORLD_SIZE=$SLURM_NTASKS
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
