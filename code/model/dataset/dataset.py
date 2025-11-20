@@ -108,6 +108,11 @@ class UrbanInpaintingDataset(Dataset):
         self.datasets = {}
         self.data_layers_per_region = {}
         
+        # store statistics
+        self.stats = {
+            "inpainting_mask": []
+        }
+        
         # Load datasets for all regions
         for region in self.regions:
             region_zarr_path = os.path.join(processed_data_path, region.lower(), zarr_name)
@@ -205,12 +210,22 @@ class UrbanInpaintingDataset(Dataset):
         print(f"\nTotal patches across all {self.split} regions: {len(all_patches)}")
         return all_patches
     
-    def _create_inpainting_mask(self, H, W, street_blocks_layer=None):
+    def _create_inpainting_mask(self, H, W, street_blocks_layer=None, patch_info=None):
         """
         Create inpainting hole mask
         """
         hole_type = self.hole_config['type']
         hole_size = self.hole_config['size_px']
+        
+        mask_info = {
+            'requested_type': hole_type,
+            'actual_type': None,
+            'coverage_percent': 0.0,
+            'fallback_reason': None
+        }
+        
+        if patch_info:
+            mask_info.update(patch_info)
         
         if hole_type == 'street_blocks' and street_blocks_layer is not None:
             # Create binary mask from street blocks
@@ -219,6 +234,8 @@ class UrbanInpaintingDataset(Dataset):
             if block_mask.sum() == 0:
                 # Fallback to random square if no street blocks
                 hole_type = 'random_square'
+                mask_info['fallback_reason'] = 'no_street_blocks'
+                mask_info['actual_type'] = 'random_square'
             else:
                 # Find connected pixels/street blocks
                 from scipy.ndimage import label
@@ -239,10 +256,15 @@ class UrbanInpaintingDataset(Dataset):
                 # Check if block covers more than 60% of image
                 coverage_percent = (block_mask.sum() / (H * W)) * 100
                 max_coverage_percent = self.hole_config.get('max_coverage_percent', 25)
+                mask_info['coverage_percent'] = coverage_percent
                 if coverage_percent > max_coverage_percent:
                     # Fallback to random square if block is too large
                     hole_type = 'random_square'
+                    mask_info['fallback_reason'] = 'block_too_large'
+                    mask_info['actual_type'] = 'random_square'
                 else:
+                    mask_info['actual_type'] = 'street_blocks'
+                    self.stats["inpainting_mask"].append(mask_info)
                     return block_mask
         if hole_type == 'random_square':
             y0 = np.random.randint(0, max(1, H - hole_size))
@@ -363,7 +385,14 @@ class UrbanInpaintingDataset(Dataset):
             ).values
         
         # Create inpainting mask
-        inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer=street_blocks_layer)
+        patch_info = {
+            'index': index,
+            'region': region,
+            'y': y,
+            'x': x,
+            'split': self.split
+        }
+        inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer=street_blocks_layer, patch_info=patch_info)
         
         # Prepare conditioning inputs
         cond_inputs = {}
@@ -478,3 +507,19 @@ class UrbanInpaintingDataset(Dataset):
                 return im_tensor
             else:
                 return im_tensor, cond_inputs
+    
+    def save_stats(self, save_path):
+        """
+        Save dataset statistics to CSV files
+        """
+        
+        save_path = f"{save_path}/{stat_name}_stats_{self.split}.csv"
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        
+        import pandas as pd
+        for stat_name, records in self.stats.items():
+            if records:
+                df = pd.DataFrame(records)
+                df.to_csv(save_path, index=False)
+                print(f"Saved {stat_name} stats to {save_path}")
+        

@@ -55,9 +55,10 @@ def train_vae():
     
     # Create output directories
     out_dir = f"{big_data_storage_path}/results/{train_config.get('task_name', 'urban_inpainting')}"
+    latent_dir = os.path.join(out_dir, 'vae_latents')
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(os.path.join(out_dir, 'vae_samples'), exist_ok=True)
-    os.makedirs(os.path.join(out_dir, 'vqvae_latents'), exist_ok=True)
+    os.makedirs(latent_dir, exist_ok=True)
     
     
     # Multi-GPU setup
@@ -271,7 +272,7 @@ def train_vae():
         if (epoch_idx + 1) % 10 == 0:
             periodic_path = os.path.join(
                 out_dir,
-                f'vqvae_urban_epoch_{epoch_idx + 1}.pth'
+                f'vae_urban_epoch_{epoch_idx + 1}.pth'
             )
             torch.save(model.state_dict(), periodic_path)
             print(f'✓ Saved checkpoint: {periodic_path}')
@@ -283,7 +284,6 @@ def train_vae():
         print("="*50)
         
         model.eval()
-        latent_dir = os.path.join(out_dir, 'vqvae_latents')
         
         with torch.no_grad():
             for idx, data in enumerate(tqdm(data_loader, desc='Encoding latents')):
@@ -302,6 +302,10 @@ def train_vae():
                     torch.save(z[i].cpu(), latent_path)
         
         print(f"✓ Saved {len(urban_dataset)} latents to {latent_dir}")
+    
+    # save statistics about inpainting masks
+    stats_path = urban_dataset.save_stats(f"{out_dir}/vae_stats")
+    print(f"✓ Saved dataset statistics to {stats_path}")
     
     print('\n' + "="*50)
     print('✓ VAE Training Complete!')
