@@ -37,7 +37,7 @@ load_cuda()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ########## Distributed Setup #############
-def setup_distributed():
+def setup_distributed(storage_path):
     """Initialize distributed training environment"""
     if 'SLURM_PROCID' in os.environ:
         rank = int(os.environ['SLURM_PROCID'])
@@ -46,45 +46,18 @@ def setup_distributed():
         
         torch.cuda.set_device(local_rank) 
         
-        # Ensure IPv4 is used (critical for clusters without IPv6)
-        master_addr = os.environ.get('MASTER_ADDR', 'localhost')
-        master_port = os.environ.get('MASTER_PORT', '29500')
- 
-        ipv4_addr = None
-        
-        # Strategy 1: If already valid IPv4, use it
-        if master_addr.replace('.', '').replace(':', '').isdigit():
-            ipv4_addr = master_addr.split(':')[0]  # Remove port if present
-        
-        # Strategy 2: Resolve hostname to IPv4
-        if not ipv4_addr:
-            try:
-                addr_info = socket.getaddrinfo(
-                    master_addr, 
-                    None, 
-                    socket.AF_INET,
-                    socket.SOCK_STREAM
-                )
-                ipv4_addr = addr_info[0][4][0]
-            except (socket.gaierror, IndexError):
-                pass
-        
-        # Strategy 3: Fallback to loopback
-        if not ipv4_addr:
-            ipv4_addr = '127.0.0.1'
-        
-        os.environ['MASTER_ADDR'] = ipv4_addr
-        os.environ['MASTER_PORT'] = master_port
-        
-        os.environ['GLOO_SOCKET_FAMILY'] = 'AF_INET'
-        
+        file_path = os.path.join(storage_path, 'ddp_tmp/dist_init_file')
+        if rank == 0 and os.path.exists(file_path):
+            os.remove(file_path)
+
         if rank == 0:
-            print(f"✓ Resolved master address: {master_addr} → {ipv4_addr}:{master_port}")
-        
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, 'w') as f:
+                f.write('1')
         
         dist.init_process_group(
             backend='nccl',
-            init_method=f'tcp://{ipv4_addr}:{master_port}', # reads MASTER_ADDR and MASTER_PORT from environment variables
+            init_method=f'file://{file_path}',
             world_size=world_size,
             rank=rank,
             device_id=local_rank,
