@@ -1,9 +1,17 @@
 # Training script for VAE on urban satellite imagery
+
+###### import libraries ######
+# system libraries
 import sys
 import os
 import yaml
+import socket
+
+# data and visualization
 import numpy as np
 from tqdm import tqdm
+
+# ML libraries
 import torch
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -15,6 +23,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# custom modules
 from dataset.dataset import UrbanInpaintingDataset
 from diffusion_blocks.vae import VAE
 from diffusion_blocks.discriminator import Discriminator
@@ -27,7 +36,7 @@ load_cuda()
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
+########## Distributed Setup #############
 def setup_distributed():
     """Initialize distributed training environment"""
     if 'SLURM_PROCID' in os.environ:
@@ -37,9 +46,29 @@ def setup_distributed():
         
         torch.cuda.set_device(local_rank) 
         
+                # Ensure IPv4 is used (critical for clusters without IPv6)
+        master_addr = os.environ.get('MASTER_ADDR', 'localhost')
+        master_port = os.environ.get('MASTER_PORT', '29500')
+        
+        # Validate and force IPv4 format
+        try:
+            # Resolve to IPv4 only
+            ipv4_addr = socket.getaddrinfo(
+                master_addr, 
+                None, 
+                socket.AF_INET,  # Force IPv4
+                socket.SOCK_STREAM
+            )[0][4][0]
+            os.environ['MASTER_ADDR'] = ipv4_addr
+        except (socket.gaierror, IndexError):
+            # Fallback for localhost testing
+            os.environ['MASTER_ADDR'] = '127.0.0.1'
+        
+        os.environ['MASTER_PORT'] = master_port
+        
         dist.init_process_group(
             backend='nccl',
-            init_method='env://',
+            init_method='env://', # reads MASTER_ADDR and MASTER_PORT from environment variables
             world_size=world_size,
             rank=rank,
             device_id=local_rank
@@ -59,6 +88,7 @@ def cleanup_distributed():
     if dist.is_initialized():
         dist.destroy_process_group()
 
+########## Main Training Function #############
 def train_vae():
 
     # Setup distributed

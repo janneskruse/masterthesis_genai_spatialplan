@@ -19,8 +19,15 @@ source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
 # Set distributed environment
-export MASTER_ADDR=$(hostname)
+export NCCL_SOCKET_IFNAME=^lo,docker0
+export NCCL_IB_DISABLE=1
+export NCCL_P2P_DISABLE=1
+export GLOO_SOCKET_IFNAME=eth0
+
+# Force IPv4
+export MASTER_ADDR=$(hostname -i | awk '{print $1}')
 export MASTER_PORT=29500
+
 export WORLD_SIZE=$SLURM_NTASKS
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
