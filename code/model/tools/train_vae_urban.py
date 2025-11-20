@@ -129,8 +129,18 @@ def train_vae():
     
     ########## Training Setup #############
     num_epochs = train_config['autoencoder_epochs']
-    optimizer_vae = Adam(model.parameters(), lr=train_config['autoencoder_lr'])
-    optimizer_disc = Adam(discriminator.parameters(), lr=train_config['autoencoder_lr'])
+    
+    base_lr = train_config['autoencoder_lr']
+    if num_gpus > 1:
+        batch_size = train_config['autoencoder_batch_size'] * num_gpus
+        # Linear scaling rule: lr ∝ batch_size
+        adjusted_lr = base_lr * (batch_size / train_config['autoencoder_batch_size'])
+        print(f"✓ Adjusted learning rate: {base_lr} → {adjusted_lr}")
+    else:
+        adjusted_lr = base_lr
+    
+    optimizer_vae = Adam(model.parameters(), lr=adjusted_lr)
+    optimizer_disc = Adam(discriminator.parameters(), lr=adjusted_lr)
     
     # Loss weights
     kl_weight = train_config.get('kl_weight', 0.000001)
