@@ -109,6 +109,12 @@ def train_vae():
         im_channels=dataset_config['im_channels'],
         model_config=autoencoder_config
     ).to(device)
+    
+    # wrap model for multi-GPU
+    if device.type == 'cuda' and num_gpus > 1:
+        print("✓ Wrapping model in DataParallel")
+        model = torch.nn.DataParallel(model)
+    
     model.train()
     
     print(f"✓ Created VAE with {sum(p.numel() for p in model.parameters())/1e6:.2f}M parameters")
@@ -119,6 +125,12 @@ def train_vae():
     discriminator = Discriminator(
         im_channels=dataset_config['im_channels']
     ).to(device)
+    
+    # wrap discriminator for multi-GPU
+    if device.type == 'cuda' and num_gpus > 1:
+        print("✓ Wrapping discriminator in DataParallel")
+        discriminator = torch.nn.DataParallel(discriminator)
+    
     discriminator.train()
     
     print(f"✓ Created Discriminator with {sum(p.numel() for p in discriminator.parameters())/1e6:.2f}M parameters")
