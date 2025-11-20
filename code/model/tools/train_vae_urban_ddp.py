@@ -35,11 +35,14 @@ def setup_distributed():
         world_size = int(os.environ['SLURM_NTASKS'])
         local_rank = int(os.environ.get('SLURM_LOCALID', rank % torch.cuda.device_count()))
         
+        torch.cuda.set_device(local_rank) 
+        
         dist.init_process_group(
             backend='nccl',
             init_method='env://',
             world_size=world_size,
-            rank=rank
+            rank=rank,
+            device_id=local_rank
         )
     else:
         rank = 0
