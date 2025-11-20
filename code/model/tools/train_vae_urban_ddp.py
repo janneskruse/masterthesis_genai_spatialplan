@@ -64,7 +64,12 @@ def train_vae():
     is_main = (rank == 0)
     
     if is_main:
-        print(f"✓ World size: {world_size} | Rank: {rank} | Local rank: {local_rank}")
+        print(f"\n{'='*50}")
+        print(f"Distributed Training Setup")
+        print(f"{'='*50}")
+        print(f"✓ World size: {world_size}")
+        print(f"✓ Rank: {rank}")
+        print(f"✓ Local rank: {local_rank}")
 
     ###### setup config variables #######
     repo_name = 'masterthesis_genai_spatialplan'
@@ -83,10 +88,11 @@ def train_vae():
 
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
-    print("="*50)
-    print("VAE Training Configuration")
-    print("="*50)
-    print(yaml.dump(config, default_flow_style=False))
+    if is_main:
+        print("="*50)
+        print("VAE Training Configuration")
+        print("="*50)
+        print(yaml.dump(config, default_flow_style=False))
     
     dataset_config = config['dataset_params']
     autoencoder_config = config['autoencoder_params']
@@ -95,19 +101,21 @@ def train_vae():
     # Create output directories
     out_dir = f"{big_data_storage_path}/results/{train_config.get('task_name', 'urban_inpainting')}"
     latent_dir = os.path.join(out_dir, 'vae_ddp_latents')
-    os.makedirs(out_dir, exist_ok=True)
     samples_dir = os.path.join(out_dir, 'vae_ddp_samples')
-    os.makedirs(samples_dir, exist_ok=True)
-    os.makedirs(latent_dir, exist_ok=True)
+    
+    if is_main:
+        os.makedirs(out_dir, exist_ok=True)
+        os.makedirs(samples_dir, exist_ok=True)
+        os.makedirs(latent_dir, exist_ok=True)
     
     
-    # Multi-GPU setup
     batch_size = train_config['autoencoder_batch_size']
     num_gpus = 1
     if device.type == 'cuda':
         # original_batch_size = batch_size
         num_gpus = torch.cuda.device_count()
-        print(f"✓ Available GPUs: {num_gpus}")
+        if is_main:
+            print(f"✓ Available GPUs: {num_gpus}")
         
         # # Adjust batch size for multi-GPU
         # if num_gpus > 1:
@@ -116,9 +124,10 @@ def train_vae():
     
     
     ########## Load Dataset #############
-    print("\n" + "="*50)
-    print("Loading Urban Dataset")
-    print("="*50)
+    if is_main:
+        print(f"\n{'='*50}")
+        print("Loading Urban Dataset")
+        print('='*50)
     
     # For VAE training, we don't use latents and don't need conditioning
     urban_dataset = UrbanInpaintingDataset(
@@ -127,9 +136,10 @@ def train_vae():
         latent_path=None
     )
     
-    print(f"✓ Loaded {len(urban_dataset)} training patches")
-    print(f"✓ Patch size: {urban_dataset.patch_size}x{urban_dataset.patch_size}")
-    print(f"✓ Image channels: {dataset_config['im_channels']}")
+    if is_main:
+        print(f"✓ Loaded {len(urban_dataset)} training patches")
+        print(f"✓ Patch size: {urban_dataset.patch_size}x{urban_dataset.patch_size}")
+        print(f"✓ Image channels: {dataset_config['im_channels']}")
     
     # Use DistributedSampler for multi-GPU
     sampler = DistributedSampler(
@@ -229,9 +239,10 @@ def train_vae():
         print(f"✓ Discriminator weight: {disc_weight} (starting epoch {disc_start_epoch})")
     
     ########## Training Loop #############
-    print("\n" + "="*50)
-    print(f"Starting Training with {num_epochs} epochs")
-    print("="*50)
+    if is_main:
+        print("\n" + "="*50)
+        print(f"Starting Training with {num_epochs} epochs")
+        print("="*50)
     
     global_step = 0
     
