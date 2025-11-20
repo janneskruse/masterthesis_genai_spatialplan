@@ -205,13 +205,45 @@ class UrbanInpaintingDataset(Dataset):
         print(f"\nTotal patches across all {self.split} regions: {len(all_patches)}")
         return all_patches
     
-    def _create_inpainting_mask(self, H, W):
+    def _create_inpainting_mask(self, H, W, street_blocks_layer=None):
         """
         Create inpainting hole mask
         """
         hole_type = self.hole_config['type']
         hole_size = self.hole_config['size_px']
         
+        if hole_type == 'street_blocks' and street_blocks_layer is not None:
+            # Create binary mask from street blocks
+            block_mask = (street_blocks_layer > 0).astype(np.float32)
+            
+            if block_mask.sum() == 0:
+                # Fallback to random square if no street blocks
+                hole_type = 'random_square'
+            else:
+                # Find connected pixels/street blocks
+                from scipy.ndimage import label
+                labeled_array, num_features = label(block_mask)
+                
+                # Select largest connected component
+                max_area = 0
+                best_mask = np.zeros_like(block_mask)
+                for i in range(1, num_features + 1):
+                    component = (labeled_array == i).astype(np.float32)
+                    area = component.sum()
+                    if area > max_area:
+                        max_area = area
+                        best_mask = component
+                
+                block_mask = best_mask
+                
+                # Check if block covers more than 60% of image
+                coverage_percent = (block_mask.sum() / (H * W)) * 100
+                max_coverage_percent = self.hole_config.get('max_coverage_percent', 25)
+                if coverage_percent > max_coverage_percent:
+                    # Fallback to random square if block is too large
+                    hole_type = 'random_square'
+                else:
+                    return block_mask
         if hole_type == 'random_square':
             y0 = np.random.randint(0, max(1, H - hole_size))
             x0 = np.random.randint(0, max(1, W - hole_size))
@@ -322,8 +354,16 @@ class UrbanInpaintingDataset(Dataset):
         img_patch = self._to_chw(img_patch)
         img_patch = self._normalize_layer(img_patch, 'satellite')
         
+        # street blocks mask
+        street_blocks_layer = None
+        if 'street_blocks' in data_layers and self.hole_config['type'] == 'street_blocks':
+            street_blocks_layer = data_layers['street_blocks'].isel(
+                y=slice(y, y+ps),
+                x=slice(x, x+ps)
+            ).values
+        
         # Create inpainting mask
-        inpaint_mask = self._create_inpainting_mask(ps, ps)
+        inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer=street_blocks_layer)
         
         # Prepare conditioning inputs
         cond_inputs = {}

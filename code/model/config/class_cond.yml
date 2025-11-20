@@ -32,13 +32,14 @@ ldm_params: # latent diffusion model parameters
     
     # Inpainting hole configuration
     hole_config:
-      type: 'random_square'  # or 'center_square'
+      type: 'street_blocks'  # 'random_square'  # or 'center_square' , 'street_blocks'
+      max_coverage_percent: 25  # Max % of image to mask for street blocks
       size_px: 80
       min_size_px: 40  # For variable mask sizes
       max_size_px: 120
 
     # OSM feature layers to use
-    osm_layers: ['buildings', 'streets', 'water']  # can add: 'landuse', 'buildings_heights', 'streets_service', 'streets_surface'
+    osm_layers: ['buildings', 'streets', 'street_blocks', 'water']  # can add: 'landuse', 'buildings_heights', 'streets_service', 'streets_surface'
     
     # Environmental layers to use
     environmental_layers: ['ndvi', 'landsat_surface_temp_b10_masked']
