@@ -80,20 +80,6 @@ def cleanup_distributed():
 
 ########## Main Training Function #############
 def train_vae():
-
-    # Setup distributed
-    rank, local_rank, world_size = setup_distributed()
-    device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
-    is_main = (rank == 0)
-    
-    if is_main:
-        print(f"\n{'='*50}")
-        print(f"Distributed Training Setup")
-        print(f"{'='*50}")
-        print(f"✓ World size: {world_size}")
-        print(f"✓ Rank: {rank}")
-        print(f"✓ Local rank: {local_rank}")
-
     ###### setup config variables #######
     repo_name = 'masterthesis_genai_spatialplan'
     if not repo_name in os.getcwd():
@@ -110,7 +96,20 @@ def train_vae():
         data_config = yaml.safe_load(stream)
 
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
+
+    # Setup distributed
+    rank, local_rank, world_size = setup_distributed(big_data_storage_path)
+    device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
+    is_main = (rank == 0)
     
+    if is_main:
+        print(f"\n{'='*50}")
+        print(f"Distributed Training Setup")
+        print(f"{'='*50}")
+        print(f"✓ World size: {world_size}")
+        print(f"✓ Rank: {rank}")
+        print(f"✓ Local rank: {local_rank}")
+        
     if is_main:
         print("="*50)
         print("VAE Training Configuration")
