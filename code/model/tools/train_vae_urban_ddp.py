@@ -76,13 +76,15 @@ def setup_distributed():
         os.environ['MASTER_ADDR'] = ipv4_addr
         os.environ['MASTER_PORT'] = master_port
         
+        os.environ['GLOO_SOCKET_FAMILY'] = 'AF_INET'
+        
         if rank == 0:
             print(f"✓ Resolved master address: {master_addr} → {ipv4_addr}:{master_port}")
         
         
         dist.init_process_group(
             backend='nccl',
-            init_method='env://', # reads MASTER_ADDR and MASTER_PORT from environment variables
+            init_method=f'tcp://{ipv4_addr}:{master_port}', # reads MASTER_ADDR and MASTER_PORT from environment variables
             world_size=world_size,
             rank=rank,
             device_id=local_rank,

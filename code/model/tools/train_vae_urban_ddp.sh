@@ -23,6 +23,7 @@ export NCCL_SOCKET_IFNAME=^lo,docker0
 export NCCL_IB_DISABLE=1
 export NCCL_P2P_DISABLE=1
 export GLOO_SOCKET_IFNAME=eth0
+export NCCL_PREFER_IPV4=1
 
 # Force IPv4 with multiple fallback strategies
 MASTER_ADDR=$(hostname -I | awk '{print $1}')  # -I instead of -i gets all addresses
@@ -38,6 +39,7 @@ echo "Using MASTER_ADDR: $MASTER_ADDR"
 
 export MASTER_ADDR=$MASTER_ADDR
 export MASTER_PORT=29500
+export GLOO_SOCKET_FAMILY=AF_INET # Force Gloo backend to use IPv4
 export WORLD_SIZE=$SLURM_NTASKS
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
