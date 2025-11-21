@@ -5,7 +5,7 @@
 import sys
 import os
 import yaml
-import socket
+import re
 
 # data and visualization
 import numpy as np
@@ -44,30 +44,35 @@ def setup_distributed():
         world_size = int(os.environ['SLURM_NTASKS'])
         local_rank = int(os.environ.get('SLURM_LOCALID', rank % torch.cuda.device_count()))
         
-        # Critical: Set device BEFORE any distributed operations
+        # Set device BEFORE any distributed operations
         torch.cuda.set_device(local_rank)
         
         # MASTER_ADDR and MASTER_PORT are set by the bash script
-        # Just read them from environment
         master_addr = os.environ['MASTER_ADDR']
         master_port = os.environ['MASTER_PORT']
         
+        # Verify IPv4 format
+        if not re.match(r'^\d+\.\d+\.\d+\.\d+$', master_addr):
+            raise ValueError(f"MASTER_ADDR must be IPv4 format, got: {master_addr}")
+        
         if rank == 0:
-            print(f"✓ Master node: {master_addr}:{master_port}")
+            print(f"✓ Master node: {master_addr}:{master_port} (IPv4)")
             print(f"✓ World size: {world_size}, Rank: {rank}, Local rank: {local_rank}")
         
-        # Initialize process group with env://
-        dist.init_process_group(
-            backend='nccl',
-            init_method='env://',
-            world_size=world_size,
-            rank=rank,
-            timeout=torch.distributed.timedelta(seconds=1800)  # 30 minutes
-        )
+        # Force IPv4 socket family
+        os.environ['NCCL_SOCKET_FAMILY'] = 'AF_INET'
+        os.environ['RANK'] = str(rank)
+        os.environ['WORLD_SIZE'] = str(world_size)
+        
+        # init
+        dist.init_process_group('nccl')
         
         # Verify initialization
         if rank == 0:
             print(f"✓ Distributed initialization successful")
+            print(f"✓ Backend: {dist.get_backend()}")
+            print(f"✓ World size from DDP: {dist.get_world_size()}")
+            print(f"✓ Rank from DDP: {dist.get_rank()}")
         
     else:
         rank = 0
