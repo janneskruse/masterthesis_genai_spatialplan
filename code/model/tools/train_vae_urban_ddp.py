@@ -71,7 +71,7 @@ def setup_distributed():
             init_method='env://',
             world_size=world_size,
             rank=rank,
-            timeout=torch.distributed.timedelta(seconds=3600)
+            timeout=torch.distributed.timedelta(seconds=100) # wait for 100 seconds
         )
         
         # Verify initialization
