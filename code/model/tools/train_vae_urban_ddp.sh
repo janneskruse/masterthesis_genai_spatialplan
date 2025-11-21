@@ -6,6 +6,7 @@
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
 #SBATCH --gpus=a30:4
+#SBATCH --gpus-per-task=1
 #SBATCH --mem=64G
 #SBATCH --partition=paula
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de
@@ -38,7 +39,7 @@ echo "Starting DDP training with $WORLD_SIZE GPUs"
 echo "=================================================="
 
 # Launch with srun and set CUDA_VISIBLE_DEVICES per process
-srun --gres=gpu:1 bash -c "
+srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
     python3 -u train_vae_urban_ddp.py
