@@ -18,8 +18,19 @@ mkdir -p log
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
+# Set MASTER_ADDR and MASTER_PORT for rank 0
+# SLURM will propagate these to all tasks via srun
+export MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n 1)
+export MASTER_PORT=29500
+
+# Distributed training configuration
 export WORLD_SIZE=$SLURM_NTASKS
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+# NCCL configuration (--> for debugging)
+export NCCL_DEBUG=INFO
+export NCCL_IB_DISABLE=1
+export NCCL_SOCKET_IFNAME=^lo,docker0
 
 echo "=================================================="
 echo "Starting DDP training with $WORLD_SIZE GPUs"

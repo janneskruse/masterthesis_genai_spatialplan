@@ -37,39 +37,51 @@ load_cuda()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ########## Distributed Setup #############
-def setup_distributed(storage_path):
-    """Initialize distributed training environment"""
+def setup_distributed():
+    """Initialize distributed training with SLURM environment variables"""
     if 'SLURM_PROCID' in os.environ:
         rank = int(os.environ['SLURM_PROCID'])
         world_size = int(os.environ['SLURM_NTASKS'])
         local_rank = int(os.environ.get('SLURM_LOCALID', rank % torch.cuda.device_count()))
         
-        torch.cuda.set_device(local_rank) 
+        # Critical: Set device BEFORE any distributed operations
+        torch.cuda.set_device(local_rank)
         
-        file_path = os.path.join(storage_path, 'ddp_tmp/dist_init_file')
-        if rank == 0 and os.path.exists(file_path):
-            os.remove(file_path)
-
+        # Use SLURM's task 0 as master
         if rank == 0:
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            with open(file_path, 'w') as f:
-                f.write('1')
+            # Master node: get its own IP
+            hostname = socket.gethostname()
+            master_addr = socket.gethostbyname(hostname)
+        else:
+            # Worker nodes: will get master address from environment
+            master_addr = None
         
+        # Broadcast master address to all ranks (if using MPI-style setup)
+        # For SLURM, we'll use environment variables set by the batch script
+        master_addr = os.environ.get('MASTER_ADDR', '127.0.0.1')
+        master_port = os.environ.get('MASTER_PORT', '29500')
+        
+        if rank == 0:
+            print(f"✓ Master node: {master_addr}:{master_port}")
+            print(f"✓ World size: {world_size}, Local rank: {local_rank}")
+        
+        # Initialize with env:// - this is the most reliable method for SLURM
         dist.init_process_group(
             backend='nccl',
-            init_method=f'file://{file_path}',
+            init_method='env://',
             world_size=world_size,
             rank=rank,
-            device_id=local_rank,
-            timeout=torch.distributed.timedelta(seconds=1800)
+            timeout=torch.distributed.timedelta(seconds=3600)
         )
+        
+        # Verify initialization
+        if rank == 0:
+            print(f"✓ Distributed initialization successful")
+        
     else:
         rank = 0
         local_rank = 0
         world_size = 1
-    
-    if world_size > 1:
-        torch.cuda.set_device(local_rank)
     
     return rank, local_rank, world_size
 
