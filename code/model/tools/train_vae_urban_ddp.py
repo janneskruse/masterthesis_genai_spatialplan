@@ -110,7 +110,7 @@ def train_vae():
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
 
     # Setup distributed
-    rank, local_rank, world_size = setup_distributed(big_data_storage_path)
+    rank, local_rank, world_size = setup_distributed()
     device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
     is_main = (rank == 0)
     
