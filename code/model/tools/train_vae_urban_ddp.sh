@@ -6,7 +6,6 @@
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
 #SBATCH --gpus=a30:4
-#SBATCH --gpus-per-task=1
 #SBATCH --mem=64G
 #SBATCH --partition=paula
 #SBATCH --mail-user=zt75vipu@studserv.uni-leipzig.de
