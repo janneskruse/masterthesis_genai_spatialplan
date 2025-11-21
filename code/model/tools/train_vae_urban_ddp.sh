@@ -18,26 +18,31 @@ mkdir -p log
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
-# Set MASTER_ADDR and MASTER_PORT for rank 0
-# SLURM will propagate these to all tasks via srun
-export MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n 1)
-export MASTER_PORT=29500
+# Get IPv4 address explicitly (this is the key fix!)
+export MASTER_ADDR=$(hostname -I | awk '{print $1}')
+export MASTER_PORT=$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')
 
 # Distributed training configuration
 export WORLD_SIZE=$SLURM_NTASKS
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-# NCCL configuration (--> for debugging)
+# NCCL configuration
 export NCCL_DEBUG=INFO
 export NCCL_IB_DISABLE=1
 export NCCL_SOCKET_IFNAME=^lo,docker0
 
 echo "=================================================="
+echo "Master Address: $MASTER_ADDR"
+echo "Master Port: $MASTER_PORT"
 echo "Starting DDP training with $WORLD_SIZE GPUs"
 echo "=================================================="
 
-# Launch with srun (handles process spawning)
-srun python3 -u train_vae_urban_ddp.py
+# Launch with srun and set CUDA_VISIBLE_DEVICES per process
+srun --gres=gpu:1 bash -c "
+    export MASTER_ADDR=$MASTER_ADDR
+    export MASTER_PORT=$MASTER_PORT
+    python3 -u train_vae_urban_ddp.py
+"
 
 echo "=================================================="
 echo "Job finished at: $(date)"

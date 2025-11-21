@@ -47,31 +47,22 @@ def setup_distributed():
         # Critical: Set device BEFORE any distributed operations
         torch.cuda.set_device(local_rank)
         
-        # Use SLURM's task 0 as master
-        if rank == 0:
-            # Master node: get its own IP
-            hostname = socket.gethostname()
-            master_addr = socket.gethostbyname(hostname)
-        else:
-            # Worker nodes: will get master address from environment
-            master_addr = None
-        
-        # Broadcast master address to all ranks (if using MPI-style setup)
-        # For SLURM, we'll use environment variables set by the batch script
-        master_addr = os.environ.get('MASTER_ADDR', '127.0.0.1')
-        master_port = os.environ.get('MASTER_PORT', '29500')
+        # MASTER_ADDR and MASTER_PORT are set by the bash script
+        # Just read them from environment
+        master_addr = os.environ['MASTER_ADDR']
+        master_port = os.environ['MASTER_PORT']
         
         if rank == 0:
             print(f"✓ Master node: {master_addr}:{master_port}")
-            print(f"✓ World size: {world_size}, Local rank: {local_rank}")
+            print(f"✓ World size: {world_size}, Rank: {rank}, Local rank: {local_rank}")
         
-        # Initialize with env:// - this is the most reliable method for SLURM
+        # Initialize process group with env://
         dist.init_process_group(
             backend='nccl',
             init_method='env://',
             world_size=world_size,
             rank=rank,
-            timeout=torch.distributed.timedelta(seconds=100) # wait for 100 seconds
+            timeout=torch.distributed.timedelta(seconds=1800)  # 30 minutes
         )
         
         # Verify initialization
