@@ -183,10 +183,11 @@ def train_vae():
     data_loader = DataLoader(
         urban_dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=(sampler is None),
         num_workers=0, #4
         pin_memory=True,
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        sampler=sampler
     )
     
     ########## Create Models #############
@@ -223,15 +224,19 @@ def train_vae():
         im_channels=dataset_config['im_channels']
     ).to(device)
     
-    if world_size > 1:
-        discriminator = DDP(
-            discriminator,
-            device_ids=[local_rank],
-            output_device=local_rank,
-            find_unused_parameters=False
-        )
-        if is_main:
-            print(f"✓ Wrapped discriminator in DistributedDataParallel")
+    # if world_size > 1:
+    #     discriminator = DDP(
+    #         discriminator,
+    #         device_ids=[local_rank],
+    #         output_device=local_rank,
+    #         find_unused_parameters=False
+    #     )
+    #     if is_main:
+    #         print(f"✓ Wrapped discriminator in DistributedDataParallel")
+    
+    # No wrap of the discriminator in DDP – each rank has its own copy
+    if is_main and world_size > 1:
+        print("✓ Using per-rank discriminator (no DDP wrapper)")
     
     if is_main:
         disc_params = sum(p.numel() for p in discriminator.parameters()) / 1e6
