@@ -299,6 +299,15 @@ def train_vae():
             im = im.float().to(device)
             
             ########## Train VAE ##########
+            
+            ############################
+            # 1) VAE / Generator step
+            ############################
+
+            # Freeze discriminator params for generator step
+            for p in discriminator.parameters():
+                p.requires_grad = False
+            
             optimizer_vae.zero_grad()
             
             # Forward pass
@@ -330,10 +339,17 @@ def train_vae():
             vae_loss.backward()
             optimizer_vae.step()
             
-            ########## Train Discriminator ##########
+            ############################
+            # 2) Discriminator step    #
+            ############################
             if epoch_idx >= disc_start_epoch:
+                # Unfreeze discriminator params
+                for p in discriminator.parameters():
+                    p.requires_grad = True
+                    
                 optimizer_disc.zero_grad()
                 
+                # Important: .detach() inputs so D doesn't backprop into VAE
                 # Discriminator on real images
                 disc_real = discriminator(im.detach())
                 
