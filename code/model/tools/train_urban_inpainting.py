@@ -1,23 +1,35 @@
 # Training script for urban inpainting latent diffusion model
+
+###### import libraries ######
+# system libraries
 import sys
 import os
 import yaml
-import numpy as np
 from tqdm import tqdm
+
+# data science libraries
+import numpy as np
 import torch
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from utils.data_utils import collate_fn
+import torch.nn.functional as torchF
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# local libraries
 from dataset.dataset import UrbanInpaintingDataset
 from diffusion_blocks.unet_cond_base import Unet
 from diffusion_blocks.vae import VAE
 from scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from utils.config_utils import get_config_value
-import torch.nn.functional as F
+from utils.data_utils import collate_fn
+from utils.load_cuda import load_cuda
+from helpers.load_configs import load_configs
+
+# Load CUDA
+load_cuda()
+
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -36,7 +48,7 @@ def compute_inpainting_loss(noise_pred, noise, mask_latent, mask_loss_weight=2.0
         Weighted MSE loss
     """
     # Basic MSE loss
-    loss = F.mse_loss(noise_pred, noise, reduction='none')
+    loss = torchF.mse_loss(noise_pred, noise, reduction='none')
     
     # Apply mask weighting: higher weight where mask==1
     mask_weight = 1.0 + (mask_loss_weight - 1.0) * mask_latent
@@ -48,19 +60,9 @@ def compute_inpainting_loss(noise_pred, noise, mask_latent, mask_loss_weight=2.0
 def train():
     
     ###### setup config variables #######
-    repo_name = 'masterthesis_genai_spatialplan'
-    if not repo_name in os.getcwd():
-        os.chdir(repo_name)
-
-    p=os.popen('git rev-parse --show-toplevel')
-    repo_dir = p.read().strip()
-    p.close()
-
-    with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
-        config = yaml.safe_load(stream)
-        
-    with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
-        data_config = yaml.safe_load(stream)
+    config = load_configs()
+    # repo_dir = config['repo_dir']
+    data_config = config['data_config']
 
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
         
@@ -229,7 +231,7 @@ def train():
                 if 'mask' in cond_input:
                     mask = cond_input['mask'].to(device)
                     # Downsample mask to latent resolution
-                    mask_latent = F.interpolate(
+                    mask_latent = torchF.interpolate(
                         mask,
                         size=im.shape[-2:],
                         mode='nearest'

@@ -18,6 +18,7 @@ from diffusion_blocks.discriminator import Discriminator
 from diffusion_blocks.lpips import LPIPS
 from utils.data_utils import collate_fn
 from utils.load_cuda import load_cuda
+from helpers.load_configs import load_configs
 
 # Load CUDA
 load_cuda()
@@ -28,19 +29,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 def train_vae():
 
     ###### setup config variables #######
-    repo_name = 'masterthesis_genai_spatialplan'
-    if not repo_name in os.getcwd():
-        os.chdir(repo_name)
-
-    p=os.popen('git rev-parse --show-toplevel')
-    repo_dir = p.read().strip()
-    p.close()
-
-    with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
-        config = yaml.safe_load(stream)
-        
-    with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
-        data_config = yaml.safe_load(stream)
+    config = load_configs()
+    # repo_dir = config['repo_dir']
+    data_config = config['data_config']
 
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
