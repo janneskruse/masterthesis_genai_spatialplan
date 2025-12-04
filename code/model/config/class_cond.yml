@@ -1,3 +1,4 @@
+cluster: True
 dataset_params:
   train_regions: ['Dresden', 'Hamburg', 'Stuttgart'] # ['Leipzig'] # list of regions to include: 'Dresden', 'Leipzig', Hamburg', 'Stuttgart'
   eval_regions: ['Leipzig'] # ['Dresden'] # regions for evaluation  
@@ -69,7 +70,8 @@ autoencoder_params:
 train_params:
   seed: 42
   task_name: 'urban_layout_inpainting'
-  autoencoder_ckpt_name: 'vae_urban_ckpt.pth'
+  autoencoder_ckpt_name: 'vae_urban_ddp_ckpt.pth' #'vae_urban_ckpt.pth'
+  latents_dir_name: 'vae_ddp_latents'
   ldm_batch_size: 4
   num_workers: 4
   autoencoder_batch_size: 2

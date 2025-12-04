@@ -3,11 +3,16 @@
 Quick start script for urban inpainting training pipeline.
 Runs all steps in sequence with error checking.
 """
-
+###### import libraries ######
+# Standard libraries
 import subprocess
 import sys
 import os
 import argparse
+
+# local imports
+from helpers.load_configs import load_configs
+from utils.config_utils import get_config_value
 
 
 def run_command(cmd, description):
@@ -64,6 +69,11 @@ def main():
     print("="*60)
     print()
     
+    config = load_configs()
+    data_config = config['data_config']
+    
+    cluster_run = get_config_value(config, 'cluster', default=False)
+    
     # Change to model directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
     model_dir = os.path.dirname(script_dir)
@@ -82,7 +92,10 @@ def main():
     
     # Step 2: Train VAE
     if not args.skip_vae and not args.sample_only:
-        cmd = f"python tools/train_vae_urban.py"
+        if cluster_run:
+            cmd = f"sbatch tools/train_vae_urban_ddp.sh"
+        else:
+            cmd = f"python tools/train_vae_urban.py"
         success = run_command(cmd, "VAE Training")
         if not success:
             print("\n⚠️  VAE training failed. Check error messages above.")
