@@ -38,18 +38,27 @@ You are an expert in Remote Sensing and generative Image Analysis using Python, 
 
 ## Import Structure
 ```python
-# Standard library
+###### import libraries ######
+# Standard libraries
 import os
 from pathlib import Path
 from typing import Optional, Union
 
 # Data handling
 import pandas as pd
+import numpy as np
 import geopandas as gpd
 import polars as pl
+import xarray as xr
 import duckdb
+import dask.dataframe as dd
 import pyarrow.parquet as pq
 from shapely.geometry import Point, Polygon
+
+# Data Science/ML
+import torch
+from torch import nn
+import torchvision.transforms as T
 
 # Visualization
 from tqdm.auto import tqdm
