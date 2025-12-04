@@ -97,7 +97,7 @@ train_params:
   cf_guidance_scale: 7.5  # Higher = more conditioning influence
   
   # file/folder names
-  task_name: 'urban_layout_inpainting'
+  task_name: 'urban_layout_inpainting_1'
   autoencoder_ckpt_name: 'vae_urban_ddp_ckpt.pth' #'vae_urban_ckpt.pth'
   latents_dir_name: 'vae_ddp_latents'
   ldm_ckpt_name: 'ddpm_urban_inpainting_ckpt.pth'
