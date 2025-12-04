@@ -18,6 +18,9 @@ def load_configs() -> Dict:
     parser.add_argument('--config', type=str, default='code/model/config/diffusion_1.yml', help='Path to the experiment config file')
     parser.add_argument('--data_config', type=str, default='code/data_acquisition/config.yml', help='Path to the data config file')
     args = parser.parse_args()
+    
+    print(f"Loading config from: {args.config}")
+    print(f"Loading data config from: {args.data_config}")
 
     if os.path.exists('/.dockerenv'):
         # Running in Docker - use /app as repo_dir
