@@ -4,7 +4,7 @@ Version: 0.1.0
 Summary: Generative AI for Spatial Planning using Satellite images
 Author: Jannes Kruse
 License: MIT
-Requires-Python: >=3.10
+Requires-Python: >=3.9
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Provides-Extra: dev

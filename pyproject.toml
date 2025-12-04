@@ -7,7 +7,7 @@ name = "masterthesis_genai_spatialplan"
 version = "0.1.0"
 description = "Generative AI for Spatial Planning using Satellite images"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
     {name = "Jannes Kruse"}
