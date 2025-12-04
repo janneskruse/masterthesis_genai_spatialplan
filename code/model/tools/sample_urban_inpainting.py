@@ -20,9 +20,6 @@ import torchvision
 from torchvision.utils import make_grid, save_image
 import torch.nn.functional as F
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # Local libraries
 from diffusion_blocks.unet_cond_base import Unet
 from diffusion_blocks.vae import VAE

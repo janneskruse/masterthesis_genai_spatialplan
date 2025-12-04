@@ -16,9 +16,6 @@ from torchvision.utils import make_grid
 # Visualization
 import matplotlib.pyplot as plt
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # Local libraries
 from dataset.dataset import UrbanInpaintingDataset
 from helpers.load_configs import load_configs

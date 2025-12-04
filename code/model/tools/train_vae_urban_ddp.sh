@@ -21,6 +21,10 @@ mkdir -p log
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
+# Install package in editable mode for proper imports
+cd /home/sc.uni-leipzig.de/${USER}/masterthesis_genai_spatialplan
+pip install -e . --quiet
+
 # Get IPv4 address explicitly (this is the key fix!)
 export MASTER_ADDR=$(hostname -I | awk '{print $1}')
 export MASTER_PORT=$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')

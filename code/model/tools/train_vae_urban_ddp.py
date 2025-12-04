@@ -20,9 +20,6 @@ import torch.distributed as dist
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # custom modules
 from dataset.dataset import UrbanInpaintingDataset
 from diffusion_blocks.vae import VAE

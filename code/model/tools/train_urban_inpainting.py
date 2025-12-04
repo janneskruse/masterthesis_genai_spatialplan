@@ -14,9 +14,6 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 import torch.nn.functional as torchF
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # local libraries
 from dataset.dataset import UrbanInpaintingDataset
 from diffusion_blocks.unet_cond_base import Unet

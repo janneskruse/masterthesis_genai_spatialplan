@@ -9,9 +9,6 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image, make_grid
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from dataset.dataset import UrbanInpaintingDataset
 from diffusion_blocks.vae import VAE
 from diffusion_blocks.discriminator import Discriminator
