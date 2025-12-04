@@ -1,5 +1,6 @@
 import os
 from typing import Dict
+import argparse
 # from pathlib import Path
 import yaml
 # import json
@@ -12,6 +13,11 @@ def load_configs() -> Dict:
             os.chdir(repo_name)
         except FileNotFoundError:
             pass
+        
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, default='code/model/config/diffusion_1.yml', help='Path to the experiment config file')
+    parser.add_argument('--data_config', type=str, default='code/data_acquisition/config.yml', help='Path to the data config file')
+    args = parser.parse_args()
 
     if os.path.exists('/.dockerenv'):
         # Running in Docker - use /app as repo_dir
@@ -21,11 +27,11 @@ def load_configs() -> Dict:
         repo_dir = p.read().strip()
         p.close()
     
-    with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
+    with open(f"{repo_dir}/{args.config}", 'r') as stream:
         config = yaml.safe_load(stream)
         # config = json.loads(json.dumps(config))  # Convert None to null
         
-    with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
+    with open(f"{repo_dir}/{args.data_config}", 'r') as stream:
         data_config = yaml.safe_load(stream)        
     
     config['repo_dir'] = repo_dir

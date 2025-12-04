@@ -13,6 +13,9 @@
 #SBATCH -o log/%x.out-%j
 #SBATCH -e log/%x.err-%j
 
+# Default config if not provided
+CONFIG_PATH=${1:-code/model/config/diffusion_1.yml}
+
 mkdir -p log
 
 source /home/sc.uni-leipzig.de/${USER}/.bashrc
@@ -41,7 +44,7 @@ echo "=================================================="
 srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    python3 -u train_vae_urban_ddp.py 
+    python3 -u train_vae_urban_ddp.py --config $CONFIG_PATH
 "
 
 echo "=================================================="

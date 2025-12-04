@@ -46,7 +46,7 @@ python tools/sample_urban_inpainting.py --num_samples 8
 ## ⚙️ Key Configuration Settings
 
 ```yaml
-# In config/class_cond.yml
+# In config/diffusion_1.yml
 
 # Dataset
 dataset_params:

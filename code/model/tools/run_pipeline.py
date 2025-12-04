@@ -37,6 +37,12 @@ def run_command(cmd, description):
 def main():
     parser = argparse.ArgumentParser(description='Urban inpainting training pipeline')
     parser.add_argument(
+        '--config',
+        type=str,
+        default='code/model/config/diffusion_1.yml',
+        help='Path to config file'
+    )
+    parser.add_argument(
         '--skip-validation',
         action='store_true',
         help='Skip dataset validation'
@@ -70,7 +76,7 @@ def main():
     print()
     
     config = load_configs()
-    data_config = config['data_config']
+    # data_config = config['data_config']
     
     cluster_run = get_config_value(config, 'cluster', default=False)
     
@@ -84,7 +90,7 @@ def main():
     
     # Step 1: Validate dataset
     if not args.skip_validation and not args.sample_only:
-        cmd = f"python tools/validate_dataset.py --num_samples 3"
+        cmd = f"python tools/validate_dataset.py --config {args.config} --num_samples 3"
         success = run_command(cmd, "Dataset Validation")
         if not success:
             print("\n⚠️  Dataset validation failed. Please fix dataset issues before continuing.")
@@ -93,9 +99,9 @@ def main():
     # Step 2: Train VAE
     if not args.skip_vae and not args.sample_only:
         if cluster_run:
-            cmd = f"sbatch tools/train_vae_urban_ddp.sh"
+            cmd = f"sbatch tools/train_vae_urban_ddp.sh {args.config}"
         else:
-            cmd = f"python tools/train_vae_urban.py"
+            cmd = f"python tools/train_vae_urban.py --config {args.config}"
         success = run_command(cmd, "VAE Training")
         if not success:
             print("\n⚠️  VAE training failed. Check error messages above.")
@@ -103,14 +109,14 @@ def main():
     
     # Step 3: Train Diffusion Model
     if not args.skip_diffusion and not args.sample_only:
-        cmd = f"python tools/train_urban_inpainting.py"
+        cmd = f"python tools/train_urban_inpainting.py --config {args.config}"
         success = run_command(cmd, "Diffusion Model Training")
         if not success:
             print("\n⚠️  Diffusion training failed. Check error messages above.")
             return 1
     
     # Step 4: Generate Samples
-    cmd = f"python tools/sample_urban_inpainting.py --num_samples {args.num_samples}"
+    cmd = f"python tools/sample_urban_inpainting.py --config {args.config} --num_samples {args.num_samples}"
     success = run_command(cmd, "Sample Generation")
     if not success:
         print("\n⚠️  Sampling failed. Check error messages above.")
@@ -124,7 +130,7 @@ def main():
     print("  - VAE samples: vae_samples/")
     print("  - Inpainting samples: inpainting_samples/")
     print("\nTo generate more samples:")
-    print(f"  python tools/sample_urban_inpainting.py --num_samples 16")
+    print(f"  python tools/sample_urban_inpainting.py --config {args.config} --num_samples 16")
     print()
     
     return 0

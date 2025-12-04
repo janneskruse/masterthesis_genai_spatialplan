@@ -1,17 +1,27 @@
 # Validation script to test dataset loading and visualize samples
+##### Import libraries #####
+# Standard libraries
 import sys
 import os
 import yaml
 import argparse
-import torch
-import matplotlib.pyplot as plt
+
+# Data handling
 import numpy as np
+
+# Data Science/ML libraries
+import torch
 from torchvision.utils import make_grid
+
+# Visualization
+import matplotlib.pyplot as plt
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Local libraries
 from dataset.dataset import UrbanInpaintingDataset
+from helpers.load_configs import load_configs
 
 
 def visualize_sample(sample_data, save_path=None):
@@ -158,20 +168,10 @@ def validate_dataset(num_samples=5):
     print("="*50)
     
     ###### setup config variables #######
-    repo_name = 'masterthesis_genai_spatialplan'
-    if not repo_name in os.getcwd():
-        os.chdir(repo_name)
-
-    p=os.popen('git rev-parse --show-toplevel')
-    repo_dir = p.read().strip()
-    p.close()
-
-    with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
-        config = yaml.safe_load(stream)
-        
-    with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
-        data_config = yaml.safe_load(stream)
-
+    config = load_configs()
+    # repo_dir = config['repo_dir']
+    data_config = config['data_config']
+    
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
     print("\n✓ Loaded configuration")
