@@ -1,13 +1,22 @@
 # adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main
-# import relevant libraries
+
+###### import libraries ######
+# Standard libraries
 import os
 import yaml
+
+# Data handling
 import numpy as np
-import torch
 import xarray as xr
+
+# Data Science/ML libraries
+import torch
 from torch.utils.data.dataset import Dataset
+
+# Local imports
 from utils.diffusion_utils import load_latents
 from utils.read_yaml import get_nested
+from helpers.load_configs import load_configs
 
 # Dataset class
 class UrbanInpaintingDataset(Dataset):
@@ -22,7 +31,7 @@ class UrbanInpaintingDataset(Dataset):
     def __init__(self, split, use_latents=False, 
                  latent_path=None):
         """
-        :param split: 'train' or 'test'
+        :param split: 'train' or 'val'
         :param zarr_path: path to the zarr dataset
         :param patch_size: size of patches to extract
         :param stride: stride for patch extraction
@@ -34,19 +43,9 @@ class UrbanInpaintingDataset(Dataset):
         """
         
         ###### setup config variables #######
-        repo_name = 'masterthesis_genai_spatialplan'
-        if not repo_name in os.getcwd():
-            os.chdir(repo_name)
-
-        p=os.popen('git rev-parse --show-toplevel')
-        repo_dir = p.read().strip()
-        p.close()
-
-        with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
-            config = yaml.safe_load(stream)
-            
-        with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
-            data_config = yaml.safe_load(stream)
+        config = load_configs()
+        # repo_dir = config['repo_dir']
+        data_config = config['data_config']
 
         big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
         

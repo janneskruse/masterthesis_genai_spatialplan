@@ -101,8 +101,9 @@ def train():
     print("="*50)
     
     # Check if latents exist
-    latent_path = os.path.join(train_config['task_name'], 
-                               train_config.get('vqvae_latent_dir_name', 'vqvae_latents'))
+    # latent_path = os.path.join(train_config['task_name'], 
+    #                            train_config.get('vqvae_latent_dir_name', 'vqvae_latents'))
+    latent_path = f'{big_data_storage_path}/results/{train_config["task_name"]}/{train_config.get("latents_dir_name", "vae_ddp_latents")}'
     use_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
     
     urban_dataset = UrbanInpaintingDataset(
@@ -155,7 +156,7 @@ def train():
         # Load VAE checkpoint if exists
         vae_path = os.path.join(
             train_config['task_name'],
-            train_config.get('vqvae_autoencoder_ckpt_name', 'vqvae_urban_ckpt.pth')
+            train_config.get('autoencoder_ckpt_name', 'vae_urban_ddp_ckpt.pth')
         )
         if os.path.exists(vae_path):
             print(f'✓ Loaded VAE checkpoint from {vae_path}')

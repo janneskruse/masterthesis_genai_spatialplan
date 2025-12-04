@@ -69,9 +69,6 @@ autoencoder_params:
 
 train_params:
   seed: 42
-  task_name: 'urban_layout_inpainting'
-  autoencoder_ckpt_name: 'vae_urban_ddp_ckpt.pth' #'vae_urban_ckpt.pth'
-  latents_dir_name: 'vae_ddp_latents'
   ldm_batch_size: 4
   num_workers: 4
   autoencoder_batch_size: 2
@@ -99,7 +96,10 @@ train_params:
   # Classifier-free guidance scale for sampling
   cf_guidance_scale: 7.5  # Higher = more conditioning influence
   
-  # Checkpoint names
+  # file/folder names
+  task_name: 'urban_layout_inpainting'
+  autoencoder_ckpt_name: 'vae_urban_ddp_ckpt.pth' #'vae_urban_ckpt.pth'
+  latents_dir_name: 'vae_ddp_latents'
   ldm_ckpt_name: 'ddpm_urban_inpainting_ckpt.pth'
   vqvae_autoencoder_ckpt_name: 'vqvae_urban_ckpt.pth'
   vqvae_latent_dir_name: 'vqvae_latents'

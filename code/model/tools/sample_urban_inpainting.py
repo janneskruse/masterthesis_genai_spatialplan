@@ -1,25 +1,35 @@
 # Sampling script for urban inpainting
+#### import libraries ######
+# Standard libraries
 import sys
 import os
-import numpy as np
-import torch
 import random
-import torchvision
 import argparse
 import yaml
-from torchvision.utils import make_grid, save_image
-from PIL import Image
+
+# Visualization
 from tqdm import tqdm
+
+# Data handling
+import numpy as np
+from PIL import Image
+
+# Data Science/ML libraries
+import torch
+import torchvision
+from torchvision.utils import make_grid, save_image
 import torch.nn.functional as F
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Local libraries
 from diffusion_blocks.unet_cond_base import Unet
 from diffusion_blocks.vae import VAE
 from scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from dataset.dataset import UrbanInpaintingDataset
 from utils.config_utils import get_config_value
+from helpers.load_configs import load_configs
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -62,7 +72,7 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     # Load dataset to get real conditioning examples
     condition_config = get_config_value(diffusion_model_config, 'condition_config', None)
     dataset = UrbanInpaintingDataset(
-        split='train',
+        split='val',
         use_latents=False,
         latent_path=None
     )
@@ -211,19 +221,9 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
 
 def infer(args):
     ###### setup config variables #######
-    repo_name = 'masterthesis_genai_spatialplan'
-    if not repo_name in os.getcwd():
-        os.chdir(repo_name)
-
-    p=os.popen('git rev-parse --show-toplevel')
-    repo_dir = p.read().strip()
-    p.close()
-
-    with open(f"{repo_dir}/code/model/config/class_cond.yml", 'r') as stream:
-        config = yaml.safe_load(stream)
-        
-    with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
-        data_config = yaml.safe_load(stream)
+    config = load_configs()
+    # repo_dir = config['repo_dir']
+    data_config = config['data_config']
 
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
@@ -274,7 +274,7 @@ def infer(args):
     
     vae_path = os.path.join(
         train_config['task_name'],
-        train_config.get('vqvae_autoencoder_ckpt_name', 'vqvae_urban_ckpt.pth')
+        train_config.get('autoencoder_ckpt_name', 'vae_urban_ddp_ckpt.pth')
     )
     
     if not os.path.exists(vae_path):
