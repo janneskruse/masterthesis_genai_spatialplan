@@ -21,11 +21,47 @@ Dynamic: license-file
 
 
 ## Installation
-- install from conda environment.yml: `conda env create -f environment.yml`
-- activate conda environment: `conda activate genaiSpatialplan`
-- install jupyter kernel using: `python -m ipykernel install --user --name genaiSpatialplan`
-- update environment.yml: `conda env export --name genaiSpatialplan --file environment.yml`
-- update environment: `conda env update --name genaiSpatialplan --file environment.yml`
+
+**First time installation:**
+```bash
+conda env create -f environment.yml
+conda activate genaiSpatialplan
+pip install -e .  # Installs project in editable mode
+python -m ipykernel install --user --name genaiSpatialplan
+```
+
+Then on every project session, activate the environment and install any missing packages with a single command:
+
+**Linux/Mac/SLURM:**
+```bash
+source ./activate.sh   # Updates environment + installs package + activates
+```
+
+**Windows:**
+```powershell
+.\activate.ps1
+```
+
+
+**Update environment when dependencies change:**
+```bash
+conda env update -f environment.yml --prune
+```
+
+**Update environment.yml (after installing new packages):**
+```bash
+conda env export --name genaiSpatialplan --file environment.yml
+```
+
+### What does `pip install -e .` do?
+
+Installs the project package structure so you can import modules from anywhere:
+```python
+from helpers.load_configs import load_configs
+from dataset.dataset import UrbanInpaintingDataset
+```
+
+The `-e` (editable) flag means changes to your code are immediately available without reinstalling.
 
 ## Data acquisition and processing
 The data acquisition and processing scripts and notebooks are located in the [code/data_acquisition](./code/data_acquisition) folder. The final model input dataset is a zarr file containing multiple data sources combined and aligned to the same spatial grid. The data acquisition and processing pipeline consists of the following steps:
