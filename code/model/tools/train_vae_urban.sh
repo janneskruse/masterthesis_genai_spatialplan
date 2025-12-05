@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --time=6:00:00
+#SBATCH --time=2:30:00
 #SBATCH --job-name="train_vae_urban"
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
