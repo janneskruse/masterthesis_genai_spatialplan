@@ -4,7 +4,7 @@ from einops import einsum
 import torch.nn as nn
 from diffusion_blocks.blocks import get_time_embedding
 from diffusion_blocks.blocks import DownBlock, MidBlock, UpBlockUnet
-from utils.config_utils import *
+from model.utils.config_utils import *
 
 
 class Unet(nn.Module):

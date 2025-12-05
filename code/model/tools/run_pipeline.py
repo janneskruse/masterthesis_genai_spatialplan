@@ -12,7 +12,7 @@ import argparse
 
 # local imports
 from helpers.load_configs import load_configs
-from utils.config_utils import get_config_value
+from model.utils.config_utils import get_config_value
 
 
 def run_command(cmd, description):

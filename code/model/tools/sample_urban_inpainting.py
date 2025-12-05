@@ -25,7 +25,7 @@ from diffusion_blocks.unet_cond_base import Unet
 from diffusion_blocks.vae import VAE
 from scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
-from utils.config_utils import get_config_value
+from model.utils.config_utils import get_config_value
 from helpers.load_configs import load_configs
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

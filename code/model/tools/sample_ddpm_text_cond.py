@@ -8,8 +8,8 @@ from tqdm import tqdm
 from diffusion_blocks.unet_cond_base import Unet
 from diffusion_blocks.vqvae import VQVAE
 from scheduler.linear_noise_scheduler import LinearNoiseScheduler
-from utils.config_utils import *
-from utils.text_utils import *
+from model.utils.config_utils import *
+from model.utils.text_utils import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

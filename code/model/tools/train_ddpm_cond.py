@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader
 from diffusion_blocks.unet_cond_base import Unet
 from diffusion_blocks.vqvae import VQVAE
 from scheduler.linear_noise_scheduler import LinearNoiseScheduler
-from utils.text_utils import *
-from utils.config_utils import *
-from utils.diffusion_utils import *
+from model.utils.text_utils import *
+from model.utils.config_utils import *
+from model.utils.diffusion_utils import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

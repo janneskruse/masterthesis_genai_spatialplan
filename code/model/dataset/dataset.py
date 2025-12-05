@@ -14,8 +14,8 @@ import torch
 from torch.utils.data.dataset import Dataset
 
 # Local imports
-from utils.diffusion_utils import load_latents
-from utils.read_yaml import get_nested
+from model.utils.diffusion_utils import load_latents
+from model.utils.read_yaml import get_nested
 from helpers.load_configs import load_configs
 
 # Dataset class
