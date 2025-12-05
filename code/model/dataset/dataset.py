@@ -512,11 +512,10 @@ class UrbanInpaintingDataset(Dataset):
         Save dataset statistics to CSV files
         """
         
-        save_path = f"{save_path}/{stat_name}_stats_{self.split}.csv"
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        
         import pandas as pd
         for stat_name, records in self.stats.items():
+            save_path = f"{save_path}/{stat_name}_stats_{self.split}.csv"
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
             if records:
                 df = pd.DataFrame(records)
                 df.to_csv(save_path, index=False)
