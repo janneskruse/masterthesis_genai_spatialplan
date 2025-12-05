@@ -9,9 +9,9 @@ from torch.optim import Adam
 from model.dataset.mnist_dataset import MnistDataset
 from model.dataset.celeb_dataset import CelebDataset
 from torch.utils.data import DataLoader
-from diffusion_blocks.unet_base import Unet
-from diffusion_blocks.vqvae import VQVAE
-from scheduler.linear_noise_scheduler import LinearNoiseScheduler
+from model.diffusion_blocks.unet_base import Unet
+from model.diffusion_blocks.vqvae import VQVAE
+from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

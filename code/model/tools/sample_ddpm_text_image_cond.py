@@ -9,9 +9,9 @@ import os
 from torchvision.utils import make_grid
 from PIL import Image
 from tqdm import tqdm
-from diffusion_blocks.unet_cond_base import Unet
-from diffusion_blocks.vqvae import VQVAE
-from scheduler.linear_noise_scheduler import LinearNoiseScheduler
+from model.diffusion_blocks.unet_cond_base import Unet
+from model.diffusion_blocks.vqvae import VQVAE
+from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from transformers import DistilBertModel, DistilBertTokenizer, CLIPTokenizer, CLIPTextModel
 from model.utils.config_utils import *
 from model.utils.text_utils import *

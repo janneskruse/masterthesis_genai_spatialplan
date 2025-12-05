@@ -16,9 +16,9 @@ import torch.nn.functional as torchF
 
 # local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
-from diffusion_blocks.unet_cond_base import Unet
-from diffusion_blocks.vae import VAE
-from scheduler.linear_noise_scheduler import LinearNoiseScheduler
+from model.diffusion_blocks.unet_cond_base import Unet
+from model.diffusion_blocks.vae import VAE
+from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.utils.config_utils import get_config_value
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda

@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from model.dataset.celeb_dataset import CelebDataset
 from model.dataset.mnist_dataset import MnistDataset
-from diffusion_blocks.vqvae import VQVAE
+from model.diffusion_blocks.vqvae import VQVAE
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

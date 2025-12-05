@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image, make_grid
 
 from model.dataset.dataset import UrbanInpaintingDataset
-from diffusion_blocks.vae import VAE
-from diffusion_blocks.discriminator import Discriminator
-from diffusion_blocks.lpips import LPIPS
+from model.diffusion_blocks.vae import VAE
+from model.diffusion_blocks.discriminator import Discriminator
+from model.diffusion_blocks.lpips import LPIPS
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from helpers.load_configs import load_configs

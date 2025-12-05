@@ -6,9 +6,9 @@ import torchvision
 import os
 import numpy as np
 from tqdm import tqdm
-from diffusion_blocks.vqvae import VQVAE
-from diffusion_blocks.lpips import LPIPS
-from diffusion_blocks.discriminator import Discriminator
+from model.diffusion_blocks.vqvae import VQVAE
+from model.diffusion_blocks.lpips import LPIPS
+from model.diffusion_blocks.discriminator import Discriminator
 from torch.utils.data.dataloader import DataLoader
 from model.dataset.mnist_dataset import MnistDataset
 from model.dataset.celeb_dataset import CelebDataset

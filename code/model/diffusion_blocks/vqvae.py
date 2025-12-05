@@ -1,7 +1,7 @@
 # adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
 import torch
 import torch.nn as nn
-from diffusion_blocks.blocks import DownBlock, MidBlock, UpBlock
+from model.diffusion_blocks.blocks import DownBlock, MidBlock, UpBlock
 
 
 class VQVAE(nn.Module):
