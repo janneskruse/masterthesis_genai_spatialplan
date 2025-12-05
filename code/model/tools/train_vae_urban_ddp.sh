@@ -24,6 +24,7 @@ source activate genaiSpatialplan
 # Install package in editable mode for proper imports
 cd /home/sc.uni-leipzig.de/${USER}/masterthesis_genai_spatialplan
 pip install -e . --quiet
+cd -
 
 # Get IPv4 address explicitly (this is the key fix!)
 export MASTER_ADDR=$(hostname -I | awk '{print $1}')
