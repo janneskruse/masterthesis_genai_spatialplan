@@ -21,7 +21,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 # custom modules
-from dataset.dataset import UrbanInpaintingDataset
+from model.dataset.dataset import UrbanInpaintingDataset
 from diffusion_blocks.vae import VAE
 from diffusion_blocks.discriminator import Discriminator
 from diffusion_blocks.lpips import LPIPS

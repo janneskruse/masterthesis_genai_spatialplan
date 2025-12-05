@@ -9,7 +9,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torchvision.utils import save_image, make_grid
 
-from dataset.dataset import UrbanInpaintingDataset
+from model.dataset.dataset import UrbanInpaintingDataset
 from diffusion_blocks.vae import VAE
 from diffusion_blocks.discriminator import Discriminator
 from diffusion_blocks.lpips import LPIPS

@@ -17,7 +17,7 @@ from torchvision.utils import make_grid
 import matplotlib.pyplot as plt
 
 # Local libraries
-from dataset.dataset import UrbanInpaintingDataset
+from model.dataset.dataset import UrbanInpaintingDataset
 from helpers.load_configs import load_configs
 
 

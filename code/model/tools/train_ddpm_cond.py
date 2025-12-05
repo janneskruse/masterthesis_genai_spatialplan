@@ -4,8 +4,8 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 from torch.optim import Adam
-from dataset.mnist_dataset import MnistDataset
-from dataset.celeb_dataset import CelebDataset
+from model.dataset.mnist_dataset import MnistDataset
+from model.dataset.celeb_dataset import CelebDataset
 from torch.utils.data import DataLoader
 from diffusion_blocks.unet_cond_base import Unet
 from diffusion_blocks.vqvae import VQVAE

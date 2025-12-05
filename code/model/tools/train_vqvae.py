@@ -10,8 +10,8 @@ from diffusion_blocks.vqvae import VQVAE
 from diffusion_blocks.lpips import LPIPS
 from diffusion_blocks.discriminator import Discriminator
 from torch.utils.data.dataloader import DataLoader
-from dataset.mnist_dataset import MnistDataset
-from dataset.celeb_dataset import CelebDataset
+from model.dataset.mnist_dataset import MnistDataset
+from model.dataset.celeb_dataset import CelebDataset
 from torch.optim import Adam
 from torchvision.utils import make_grid
 

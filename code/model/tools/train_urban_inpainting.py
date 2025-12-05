@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as torchF
 
 # local libraries
-from dataset.dataset import UrbanInpaintingDataset
+from model.dataset.dataset import UrbanInpaintingDataset
 from diffusion_blocks.unet_cond_base import Unet
 from diffusion_blocks.vae import VAE
 from scheduler.linear_noise_scheduler import LinearNoiseScheduler

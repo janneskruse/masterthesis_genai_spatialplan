@@ -11,8 +11,8 @@ from torch.utils.data.dataloader import DataLoader
 from torchvision.utils import make_grid
 from tqdm import tqdm
 
-from dataset.celeb_dataset import CelebDataset
-from dataset.mnist_dataset import MnistDataset
+from model.dataset.celeb_dataset import CelebDataset
+from model.dataset.mnist_dataset import MnistDataset
 from diffusion_blocks.vqvae import VQVAE
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

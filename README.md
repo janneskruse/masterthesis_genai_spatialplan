@@ -43,7 +43,7 @@ conda env export --name genaiSpatialplan --file environment.yml
 Installs the project package structure so you can import modules from anywhere:
 ```python
 from helpers.load_configs import load_configs
-from dataset.dataset import UrbanInpaintingDataset
+from model.dataset.dataset import UrbanInpaintingDataset
 ```
 
 The `-e` (editable) flag means changes to your code are immediately available without reinstalling.

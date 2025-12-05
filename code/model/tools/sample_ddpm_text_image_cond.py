@@ -15,7 +15,7 @@ from scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from transformers import DistilBertModel, DistilBertTokenizer, CLIPTokenizer, CLIPTextModel
 from utils.config_utils import *
 from utils.text_utils import *
-from dataset.celeb_dataset import CelebDataset
+from model.dataset.celeb_dataset import CelebDataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
