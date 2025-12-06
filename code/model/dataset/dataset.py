@@ -16,6 +16,7 @@ from torch.utils.data.dataset import Dataset
 # Local imports
 from model.utils.diffusion_utils import load_latents
 from model.utils.read_yaml import get_nested
+from model.utils.diffusion_utils import load_single_latent
 from helpers.load_configs import load_configs
 
 # Dataset class
@@ -136,6 +137,8 @@ class UrbanInpaintingDataset(Dataset):
                 self.latent_maps = None
         elif use_latents and latent_path is None:
             print('⚠ use_latents=True but no latent_path provided, using raw images')
+            self.use_latents = False
+            self.latent_maps = None
         else:
             print('✓ Using raw satellite images (not latents)')
     
@@ -373,6 +376,120 @@ class UrbanInpaintingDataset(Dataset):
         
         data_layers = self.data_layers_per_region[region]
         
+        ##### Return latents and conditioning #####
+        # If using latents, load latent and prepare conditioning inputs
+        if self.use_latents:
+            # Load latent from file
+            latent_path = self.latent_maps[index]
+            latent = load_single_latent(latent_path, device=None)  # Load to CPU
+            
+            # Still need to prepare conditioning for latent-based training
+            # Calculate latent space dimensions
+            latent_h = ps // self.latent_downsample_factor
+            latent_w = ps // self.latent_downsample_factor
+            
+            # Prepare conditioning inputs
+            cond_inputs = {}
+            
+            # Create inpainting mask in original resolution
+            street_blocks_layer = None
+            if 'street_blocks' in data_layers and self.hole_config['type'] == 'street_blocks':
+                street_blocks_layer = data_layers['street_blocks'].isel(
+                    y=slice(y, y+ps),
+                    x=slice(x, x+ps)
+                ).values
+            
+            patch_info = {
+                'index': index,
+                'region': region,
+                'y': y,
+                'x': x,
+                'split': self.split
+            }
+            inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer=street_blocks_layer, patch_info=patch_info)
+            
+            # Prepare spatial conditioning
+            spatial = []
+            spatial_names = []
+            
+            if 'inpainting' in self.condition_types:
+                # Downsample mask to latent resolution
+                mask_latent = torch.from_numpy(inpaint_mask).float()
+                mask_latent = mask_latent.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+                mask_latent = torch.nn.functional.interpolate(
+                    mask_latent,
+                    size=(latent_h, latent_w),
+                    mode='nearest'
+                )
+                mask_latent = mask_latent.squeeze(0)  # [1,H_latent,W_latent]
+                self._append_spatial(spatial, spatial_names, mask_latent.numpy(), 'inpaint_mask')
+            
+            if 'osm_features' in self.condition_types:
+                osm_layers = []
+                for layer_name in self.osm_layers:
+                    if layer_name in data_layers and data_layers[layer_name] is not None:
+                        layer_patch = data_layers[layer_name].isel(
+                            y=slice(y, y+ps),
+                            x=slice(x, x+ps)
+                        ).values
+                        layer_patch = self._normalize_layer(layer_patch, layer_name)
+                        layer_patch = self._to_chw(layer_patch)
+                        osm_layers.append(layer_patch)
+                
+                if osm_layers:
+                    osm_features = np.concatenate(osm_layers, axis=0)
+                    # Downsample to latent resolution
+                    osm_features = torch.from_numpy(osm_features).float().unsqueeze(0)
+                    osm_features = torch.nn.functional.interpolate(
+                        osm_features,
+                        size=(latent_h, latent_w),
+                        mode='bilinear',
+                        align_corners=False
+                    ).squeeze(0)
+                    self._append_spatial(spatial, spatial_names, osm_features.numpy(), 'osm', channel_names=self.osm_layers)
+            
+            if 'environmental' in self.condition_types:
+                env_layers = []
+                for layer_name in self.environmental_layers:
+                    if layer_name in data_layers and data_layers[layer_name] is not None:
+                        layer_patch = data_layers[layer_name].isel(
+                            y=slice(y, y+ps),
+                            x=slice(x, x+ps)
+                        ).values
+                        layer_patch = self._normalize_layer(layer_patch, layer_name)
+                        layer_patch = self._to_chw(layer_patch)
+                        env_layers.append(layer_patch)
+                
+                if env_layers:
+                    env_features = np.concatenate(env_layers, axis=0)
+                    # Downsample to latent resolution
+                    env_features = torch.from_numpy(env_features).float().unsqueeze(0)
+                    env_features = torch.nn.functional.interpolate(
+                        env_features,
+                        size=(latent_h, latent_w),
+                        mode='bilinear',
+                        align_corners=False
+                    ).squeeze(0)
+                    self._append_spatial(spatial, spatial_names, env_features.numpy(), 'env', channel_names=self.environmental_layers)
+            
+            if spatial:
+                cond_inputs['image'] = torch.cat(spatial, dim=0)
+            
+            # Add meta information
+            cond_inputs['meta'] = {
+                'y': y,
+                'x': x,
+                'time': str(data_layers['date']),
+                'region': region,
+                'spatial_names': spatial_names
+            }
+            
+            if len(self.condition_types) == 0:
+                return latent
+            else:
+                return latent, cond_inputs
+        
+        ##### Return raw satellite image and conditioning #####
         # Extract satellite image patch (main input)
         img_patch = img_patch = data_layers['satellite'].isel(
             y=slice(y, y+ps), 
@@ -500,20 +617,24 @@ class UrbanInpaintingDataset(Dataset):
         
         # Convert target image to tensor
         im_tensor = torch.from_numpy(img_patch).float()
-        
-        # Return based on whether using latents
-        if self.use_latents:
-            # Placeholder - implement latent loading logic
-            latent = self.latent_maps[index]
-            if len(self.condition_types) == 0:
-                return latent
-            else:
-                return latent, cond_inputs
+        if len(self.condition_types) == 0:
+            return im_tensor
         else:
-            if len(self.condition_types) == 0:
-                return im_tensor
-            else:
-                return im_tensor, cond_inputs
+            return im_tensor, cond_inputs
+        
+        # # Return based on whether using latents
+        # if self.use_latents:
+        #     # Placeholder - implement latent loading logic
+        #     latent = self.latent_maps[index]
+        #     if len(self.condition_types) == 0:
+        #         return latent
+        #     else:
+        #         return latent, cond_inputs
+        # else:
+        #     if len(self.condition_types) == 0:
+        #         return im_tensor
+        #     else:
+        #         return im_tensor, cond_inputs
     
     def save_stats(self, save_path):
         """
