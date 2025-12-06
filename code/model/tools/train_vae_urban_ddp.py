@@ -224,6 +224,9 @@ def save_latents_distributed(
 
 ########## Main Training Function #############
 def train_vae():
+    # Record training start time
+    training_start_time = time.time()
+    
     ###### setup config variables #######
     config = load_configs()
     # repo_dir = config['repo_dir']
@@ -606,8 +609,16 @@ def train_vae():
     #     print(f"✓ Saved dataset statistics to {stats_path}")
     
     if is_main:
+        # Calculate total training time
+        training_end_time = time.time()
+        total_training_time = training_end_time - training_start_time
+        hours = int(total_training_time // 3600)
+        minutes = int((total_training_time % 3600) // 60)
+        seconds = int(total_training_time % 60)
+        
         print(f"\n{'='*50}")
-        print('✓ VAE Training Complete!')
+        print(f'✓ VAE Training Complete at: {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())} !')
+        print(f'✓ Total Training Time: {hours}h {minutes}m {seconds}s ({total_training_time:.2f} seconds)')
         print('='*50)
     
     # Cleanup
