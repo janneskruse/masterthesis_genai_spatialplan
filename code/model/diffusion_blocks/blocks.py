@@ -389,6 +389,12 @@ class UpBlockUnet(nn.Module):
         self.t_emb_dim = t_emb_dim
         self.cross_attn = cross_attn
         self.context_dim = context_dim
+        
+        # Ensure in_channels is divisible by norm_channels
+        if in_channels % norm_channels != 0:
+            raise ValueError(f"in_channels ({in_channels}) must be divisible by norm_channels ({norm_channels}). "
+                           f"Check your down_channels configuration.")
+        
         self.resnet_conv_first = nn.ModuleList(
             [
                 nn.Sequential(
