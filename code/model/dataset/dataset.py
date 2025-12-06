@@ -122,14 +122,22 @@ class UrbanInpaintingDataset(Dataset):
         self.patches = self._load_patches()
         
         # Load latents if specified
-        if self.use_latents and self.latent_path is not None:
-            latent_maps = load_latents(self.latent_path)
+        if use_latents and latent_path is not None:
+            print(f'Loading latents from {latent_path}...')
+            latent_maps = load_latents(latent_path)
             if len(latent_maps) == len(self.patches):
                 self.use_latents = True
                 self.latent_maps = latent_maps
-                print(f'Found {len(self.latent_maps)} latents')
+                print(f'✓ Found {len(self.latent_maps)} latents matching {len(self.patches)} patches')
             else:
-                print('Latents not found or size mismatch')
+                print(f'⚠ Latents size mismatch: found {len(latent_maps)} latents but need {len(self.patches)} patches')
+                print('⚠ Falling back to raw images (latents will not be used)')
+                self.use_latents = False
+                self.latent_maps = None
+        elif use_latents and latent_path is None:
+            print('⚠ use_latents=True but no latent_path provided, using raw images')
+        else:
+            print('✓ Using raw satellite images (not latents)')
     
     def _load_patches(self):
         """
