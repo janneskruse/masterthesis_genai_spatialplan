@@ -43,6 +43,7 @@ echo "=================================================="
 echo "Master Address: $MASTER_ADDR"
 echo "Master Port: $MASTER_PORT"
 echo "Starting DDP training with $WORLD_SIZE GPUs"
+echo "Passing config: $CONFIG_PATH"
 echo "=================================================="
 
 # Launch with srun and set CUDA_VISIBLE_DEVICES per process
