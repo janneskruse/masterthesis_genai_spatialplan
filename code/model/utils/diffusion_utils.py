@@ -1,28 +1,71 @@
 # adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/utils
-import pickle
-import glob
-import os
+### import libraries ######
+# Standard libraries
+from pathlib import Path
+from typing import List, Optional
+
+# Data Science/ML libraries
 import torch
 
 
-def load_latents(latent_path):
-    r"""
-    Simple utility to save latents to speed up ldm training
-    :param latent_path:
-    :return:
+def load_latents(latent_path: str) -> List[str]:
     """
-    latent_maps = {}
-    for fname in glob.glob(os.path.join(latent_path, '*.pt')):
-        s = pickle.load(open(fname, 'rb'))
-        for k, v in s.items():
-            latent_maps[k] = v[0]
-    if len(latent_maps) == 0:
-        # chek for pkl files
-        for fname in glob.glob(os.path.join(latent_path, '*.pkl')):
-            s = pickle.load(open(fname, 'rb'))
-            for k, v in s.items():
-                latent_maps[k] = v[0]
-    return latent_maps
+    Load pre-computed latents from disk to speed up LDM training.
+    Returns list of file paths for lazy loading.
+    
+    Args:
+        latent_path: Directory containing latent files
+        
+    Returns:
+        List of latent file paths sorted by index
+    """
+    latent_path = Path(latent_path)
+    
+    # Try .pt files (recommended format)
+    latent_files = sorted(
+        latent_path.glob('latent_*.pt'),
+        key=lambda x: int(x.stem.split('_')[1])
+    )
+    
+    if latent_files:
+        print(f"✓ Found {len(latent_files)} .pt latent files")
+        return [str(f) for f in latent_files]
+    
+    # Fall back to .pkl files (legacy format)
+    pkl_files = list(latent_path.glob('*.pkl'))
+    if pkl_files:
+        print(f"⚠ Found {len(pkl_files)} .pkl latent files (legacy format)")
+        print(f"⚠ Consider converting to .pt format for better performance")
+        
+        import pickle
+        latent_maps = {}
+        for fname in pkl_files:
+            with open(fname, 'rb') as f:
+                s = pickle.load(f)
+                for k, v in s.items():
+                    latent_maps[k] = v[0]
+        
+        # Convert dict to sorted list
+        return [latent_maps[i] for i in sorted(latent_maps.keys())]
+    
+    print(f"❌ No latent files found in {latent_path}")
+    return []
+
+def load_single_latent(latent_path: str, device: Optional[torch.device] = None) -> torch.Tensor:
+    """
+    Load a single latent tensor from disk.
+    
+    Args:
+        latent_path: Path to .pt file
+        device: Device to load tensor to (None = CPU)
+        
+    Returns:
+        Loaded latent tensor
+    """
+    if device is None:
+        return torch.load(latent_path, map_location='cpu')
+    else:
+        return torch.load(latent_path, map_location=device)
 
 
 def drop_text_condition(text_embed, im, empty_text_embed, text_drop_prob):
