@@ -12,10 +12,16 @@ def load_latents(latent_path):
     :return:
     """
     latent_maps = {}
-    for fname in glob.glob(os.path.join(latent_path, '*.pkl')):
+    for fname in glob.glob(os.path.join(latent_path, '*.pt')):
         s = pickle.load(open(fname, 'rb'))
         for k, v in s.items():
             latent_maps[k] = v[0]
+    if len(latent_maps) == 0:
+        # chek for pkl files
+        for fname in glob.glob(os.path.join(latent_path, '*.pkl')):
+            s = pickle.load(open(fname, 'rb'))
+            for k, v in s.items():
+                latent_maps[k] = v[0]
     return latent_maps
 
 
