@@ -5,6 +5,7 @@
 import os
 import yaml
 import re
+import time
 from pathlib import Path
 
 # data and visualization
@@ -131,7 +132,7 @@ def save_latents_distributed(
     
     if rank == 0:
         print(f"\n{'='*60}")
-        print("Encoding and Saving Latents (Distributed)")
+        print("Encoding and Saving Latents (Distributed) at:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
         print(f"{'='*60}")
         print(f"Total samples: {total_samples}")
         print(f"Samples per rank: {samples_per_rank}")
@@ -237,7 +238,7 @@ def train_vae():
     
     if is_main:
         print(f"\n{'='*50}")
-        print(f"Distributed Training Setup")
+        print(f"Distributed Training Setup at:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
         print(f"{'='*50}")
         print(f"✓ World size: {world_size}")
         print(f"✓ Rank: {rank}")
