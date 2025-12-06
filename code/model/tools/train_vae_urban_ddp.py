@@ -2,10 +2,10 @@
 
 ###### import libraries ######
 # system libraries
-import sys
 import os
 import yaml
 import re
+from pathlib import Path
 
 # data and visualization
 import numpy as np
@@ -83,6 +83,143 @@ def cleanup_distributed():
     """Cleanup distributed training"""
     if dist.is_initialized():
         dist.destroy_process_group()
+        
+        
+def save_latents_distributed(
+    model: torch.nn.Module,
+    dataset: torch.utils.data.Dataset,
+    latent_dir: Path,
+    batch_size: int,
+    rank: int,
+    world_size: int,
+    device: torch.device,
+) -> int:
+    """
+    Save latent encodings from VAE in distributed setting.
+    
+    Each rank processes a disjoint subset of the dataset to avoid duplicates.
+    Uses deterministic indexing to ensure consistent global indices across runs.
+    
+    Args:
+        model: Trained VAE model (wrapped in DDP)
+        dataset: Full training dataset
+        latent_dir: Directory to save latent .pt files
+        batch_size: Batch size for encoding
+        rank: Current process rank
+        world_size: Total number of processes
+        device: Device for computation
+        
+    Returns:
+        Number of latents saved by this rank
+    """
+    # Unwrap DDP model for inference
+    model_unwrapped = model.module if hasattr(model, 'module') else model
+    model_unwrapped.eval()
+    
+    # Create latent directory (only rank 0)
+    if rank == 0:
+        latent_dir.mkdir(parents=True, exist_ok=True)
+    
+    if world_size > 1:
+        dist.barrier()  # Wait for directory creation
+    
+    # Calculate this rank's data indices
+    total_samples = len(dataset)
+    samples_per_rank = (total_samples + world_size - 1) // world_size  # Ceiling division
+    start_idx = rank * samples_per_rank
+    end_idx = min(start_idx + samples_per_rank, total_samples)
+    
+    if rank == 0:
+        print(f"\n{'='*60}")
+        print("Encoding and Saving Latents (Distributed)")
+        print(f"{'='*60}")
+        print(f"Total samples: {total_samples}")
+        print(f"Samples per rank: {samples_per_rank}")
+        print(f"World size: {world_size}")
+    
+    print(f"Rank {rank}: Processing indices {start_idx} to {end_idx} ({end_idx - start_idx} samples)")
+    
+    # Create subset of dataset for this rank
+    rank_indices = list(range(start_idx, end_idx))
+    rank_dataset = torch.utils.data.Subset(dataset, rank_indices)
+    
+    # Create dataloader for this rank's subset
+    rank_loader = DataLoader(
+        rank_dataset,
+        batch_size=batch_size,
+        shuffle=False,  # Maintain deterministic order
+        num_workers=0,  # Avoid multiprocessing issues in DDP
+        pin_memory=True,
+        collate_fn=collate_fn,
+    )
+    
+    # Encode and save latents
+    latent_count = 0
+    
+    with torch.no_grad():
+        progress_bar = tqdm(
+            rank_loader,
+            desc=f"Rank {rank} encoding",
+            disable=(rank != 0),  # Only show progress on main rank
+            unit="batch"
+        )
+        
+        for batch_idx, data in enumerate(progress_bar):
+            # Handle different data formats
+            if len(data) == 2:
+                im, _ = data
+            else:
+                im = data
+            
+            im = im.float().to(device)
+            
+            # Encode to latent space
+            _, z, _, _ = model_unwrapped(im)
+            
+            # Save each latent with global index
+            for i in range(z.shape[0]):
+                # Calculate global index for this sample
+                global_idx = start_idx + batch_idx * batch_size + i
+                
+                # Ensure we don't exceed dataset bounds
+                if global_idx >= end_idx or global_idx >= total_samples:
+                    break
+                
+                # Save latent to disk
+                latent_path = latent_dir / f'latent_{global_idx}.pt'
+                torch.save(z[i].cpu(), latent_path)
+                latent_count += 1
+    
+    # Synchronize all ranks
+    if world_size > 1:
+        dist.barrier()
+    
+    # Verify completeness (rank 0 only)
+    if rank == 0:
+        saved_latents = sorted([
+            int(f.stem.split('_')[1]) 
+            for f in latent_dir.glob('latent_*.pt')
+        ])
+        
+        expected_latents = list(range(total_samples))
+        missing_latents = set(expected_latents) - set(saved_latents)
+        duplicate_latents = len(saved_latents) - len(set(saved_latents))
+        
+        print(f"\n{'='*60}")
+        print(f"✓ Total latents saved: {len(saved_latents)}/{total_samples}")
+        
+        if missing_latents:
+            print(f"⚠ Missing latents: {sorted(missing_latents)[:10]}{'...' if len(missing_latents) > 10 else ''}")
+        
+        if duplicate_latents > 0:
+            print(f"⚠ Duplicate latents found: {duplicate_latents}")
+        
+        if len(saved_latents) == total_samples and not missing_latents and duplicate_latents == 0:
+            print(f"✓ All latents saved successfully!")
+        
+        print(f"{'='*60}\n")
+    
+    return latent_count
 
 ########## Main Training Function #############
 def train_vae():
@@ -414,34 +551,58 @@ def train_vae():
             dist.barrier()
     
     ########## Save Latents ##########
-    if is_main and train_config.get('save_latents', True):
-        print("\n" + "="*50)
-        print("Encoding and Saving Latents")
-        print("="*50)
+    if train_config.get('save_latents', True):
+        latent_dir_name = train_config.get('latents_dir_name', 'vae_ddp_latents')
+        latent_dir = Path(big_data_storage_path) / "results" / train_config['task_name'] / latent_dir_name
         
-        model.eval()
+        # Save latents in distributed manner
+        latent_count = save_latents_distributed(
+            model=model,
+            dataset=urban_dataset,
+            latent_dir=latent_dir,
+            batch_size=batch_size,
+            rank=rank,
+            world_size=world_size,
+            device=device,
+        )
         
-        with torch.no_grad():
-            for idx, data in enumerate(tqdm(data_loader, desc='Encoding latents')):
-                if len(data) == 2:
-                    im, _ = data
-                else:
-                    im = data
-                
-                im = im.float().to(device)
-                _, z, _, _ = model(im)
-                
-                # Save each latent
-                for i in range(z.shape[0]):
-                    global_idx = idx * batch_size + i
-                    latent_path = os.path.join(latent_dir, f'latent_{global_idx}.pt')
-                    torch.save(z[i].cpu(), latent_path)
+        print(f"Rank {rank}: Saved {latent_count} latents")
         
-        print(f"✓ Saved {len(urban_dataset)} latents to {latent_dir}")
+        # Save dataset statistics (main rank only)
+        if is_main:
+            stats_path = urban_dataset.save_stats(out_dir / "vae_ddp_stats")
+            print(f"✓ Saved dataset statistics to {stats_path}")
     
-        # save statistics about inpainting masks
-        stats_path = urban_dataset.save_stats(f"{out_dir}/vae_ddp_stats")
-        print(f"✓ Saved dataset statistics to {stats_path}")
+    
+    # if is_main and train_config.get('save_latents', True):
+    #     print("\n" + "="*50)
+    #     print("Encoding and Saving Latents")
+    #     print("="*50)
+        
+    #     model.eval()
+        
+    #     with torch.no_grad():
+    #         for idx, data in enumerate(tqdm(data_loader, desc='Encoding latents')):
+    #             if len(data) == 2:
+    #                 im, _ = data
+    #             else:
+    #                 im = data
+                
+    #             im = im.float().to(device)
+    #             _, z, _, _ = model(im)
+                
+    #             # Save each latent
+    #             print("Shape of z:", z.shape)
+    #             for i in range(z.shape[0]):
+    #                 global_idx = idx * batch_size + i
+    #                 latent_path = os.path.join(latent_dir, f'latent_{global_idx}.pt')
+    #                 torch.save(z[i].cpu(), latent_path)
+        
+    #     print(f"✓ Saved {len(urban_dataset)} latents to {latent_dir}")
+    
+    #     # save statistics about inpainting masks
+    #     stats_path = urban_dataset.save_stats(f"{out_dir}/vae_ddp_stats")
+    #     print(f"✓ Saved dataset statistics to {stats_path}")
     
     if is_main:
         print(f"\n{'='*50}")
@@ -449,7 +610,8 @@ def train_vae():
         print('='*50)
     
     # Cleanup
-    cleanup_distributed()
+    if world_size > 1:
+        cleanup_distributed()
 
 
 if __name__ == '__main__':
