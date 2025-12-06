@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --time=2:30:00
+#SBATCH --time=3:00:00
 #SBATCH --job-name="train_vae_urban_ddp"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4  # One task per GPU
