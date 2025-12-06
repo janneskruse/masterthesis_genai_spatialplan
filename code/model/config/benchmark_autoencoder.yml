@@ -1,0 +1,105 @@
+cluster: True
+dataset_params:
+  train_regions: ['Dresden', 'Hamburg', 'Stuttgart'] # ['Leipzig'] # list of regions to include: 'Dresden', 'Leipzig', Hamburg', 'Stuttgart'
+  eval_regions: ['Leipzig'] # ['Dresden'] # regions for evaluation  
+  zarr_name: "input_config_ge25_cc10_2019_2024_clipped.zarr"
+  res: 3 # resolution in meters
+  patch_size_m: 800 # patch size in meters
+  im_channels: 3  # RGB satellite
+  min_valid_percent: 90 # minimum percent of valid pixels in a patch
+  stride_overlap: 2 # 50% overlap between patches --> 4 for 25% overlap, etc.
+  
+diffusion_params:
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+
+ldm_params: # latent diffusion model parameters
+  down_channels: [32, 64, 128, 256]
+  mid_channels: [256, 256, 128]
+  down_sample: [True, True, False]
+  attn_down: [True, True, False]
+  time_emb_dim: 128
+  norm_channels: 32
+  num_heads: 4
+  conv_out_channels: 128  # Output 128 channels for latent space
+  num_down_layers: 2
+  num_mid_layers: 2
+  num_up_layers: 2
+  
+  # Conditioning configuration
+  condition_config:
+    condition_types: ['inpainting', 'osm_features', 'environmental']
+    
+    # Inpainting hole configuration
+    hole_config:
+      type: 'street_blocks'  # 'random_square'  # or 'center_square' , 'street_blocks'
+      max_coverage_percent: 25  # Max % of image to mask for street blocks
+      size_px: 80
+      min_size_px: 40  # For variable mask sizes
+      max_size_px: 120
+
+    # OSM feature layers to use
+    osm_layers: ['buildings', 'streets', 'street_blocks', 'water']  # can add: 'landuse', 'buildings_heights', 'streets_service', 'streets_surface'
+    
+    # Environmental layers to use
+    environmental_layers: ['ndvi', 'landsat_surface_temp_b10_masked']
+    
+    # Image conditioning config (for spatial conditions)
+    image_condition_config:
+      # Total channels: masked_img(3) + mask(1) + osm_layers(3) + env_layers(2) = 9
+      image_condition_input_channels: 9  # Will be computed dynamically
+      image_condition_output_channels: 32  # Project to this many channels
+
+      # Conditioning dropout for classifier-free guidance
+      cond_drop_prob: 0.1 # 10% unconditional training for guidance
+
+autoencoder_params:
+  z_channels: 4
+  codebook_size: 8192
+  down_channels: [32, 64, 128, 128]
+  mid_channels: [128, 128]
+  down_sample: [True, True, True]
+  attn_down: [False, False, False]
+  norm_channels: 32
+  num_heads: 2
+  num_down_layers: 2
+  num_mid_layers: 2
+  num_up_layers: 2
+
+train_params:
+  seed: 42
+  ldm_batch_size: 4
+  num_workers: 4
+  autoencoder_batch_size: 2
+  disc_start: 10000
+  disc_weight: 0.5
+  codebook_weight: 1
+  commitment_beta: 0.2
+  perceptual_weight: 1
+  kl_weight: 0.000001
+  ldm_epochs: 200
+  autoencoder_epochs: 50
+  num_samples: 16
+  num_grid_rows: 4
+  ldm_lr: 0.00001
+  autoencoder_lr: 0.0001 # learning rate for VAE
+  autoencoder_acc_steps: 1
+  autoencoder_img_save_steps: 64
+  save_latents: True
+  
+  # Inpainting-specific parameters
+  mask_loss_weight: 2.0  # Weight loss inside mask region higher
+  boundary_loss_weight: 1.5  # Extra weight for boundary pixels
+  temperature_loss_weight: 0.0  # Will increase gradually during training
+  
+  # Classifier-free guidance scale for sampling
+  cf_guidance_scale: 7.5  # Higher = more conditioning influence
+  
+  # file/folder names
+  task_name: 'benchmark_autoencoder'
+  autoencoder_ckpt_name: 'vae_urban_ddp_ckpt.pth' #'vae_urban_ckpt.pth'
+  latents_dir_name: 'vae_ddp_latents'
+  ldm_ckpt_name: 'ddpm_urban_inpainting_ckpt.pth'
+  vqvae_autoencoder_ckpt_name: 'vqvae_urban_ckpt.pth'
+  vqvae_latent_dir_name: 'vqvae_latents'
