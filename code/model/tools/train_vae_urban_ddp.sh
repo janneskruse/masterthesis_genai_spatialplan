@@ -14,7 +14,11 @@
 #SBATCH -e log/%x.err-%j
 
 # Default config if not provided
-CONFIG_PATH=${1:-code/model/config/diffusion_1.yml}
+if [ "$1" = "--config" ] && [ -n "$2" ]; then
+    CONFIG_PATH=$2
+else
+    CONFIG_PATH=${1:-code/model/config/diffusion_1.yml}
+fi
 
 mkdir -p log
 
