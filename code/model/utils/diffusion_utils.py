@@ -1,6 +1,7 @@
 # adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/utils
 ### import libraries ######
 # Standard libraries
+import pickle
 from pathlib import Path
 from typing import List, Optional
 
@@ -36,17 +37,10 @@ def load_latents(latent_path: str) -> List[str]:
     if pkl_files:
         print(f"⚠ Found {len(pkl_files)} .pkl latent files (legacy format)")
         print(f"⚠ Consider converting to .pt format for better performance")
+        print(f"⚠ Note: .pkl files will be fully loaded into memory by load_single_latent")
         
-        import pickle
-        latent_maps = {}
-        for fname in pkl_files:
-            with open(fname, 'rb') as f:
-                s = pickle.load(f)
-                for k, v in s.items():
-                    latent_maps[k] = v[0]
-        
-        # Convert dict to sorted list
-        return [latent_maps[i] for i in sorted(latent_maps.keys())]
+        # Return paths as strings, consistent with .pt behavior
+        return [str(f) for f in sorted(pkl_files)]
     
     print(f"❌ No latent files found in {latent_path}")
     return []
@@ -56,16 +50,32 @@ def load_single_latent(latent_path: str, device: Optional[torch.device] = None) 
     Load a single latent tensor from disk.
     
     Args:
-        latent_path: Path to .pt file
+        latent_path: Path to .pt or .pkl file
         device: Device to load tensor to (None = CPU)
         
     Returns:
         Loaded latent tensor
     """
-    if device is None:
-        return torch.load(latent_path, map_location='cpu')
+    latent_path = Path(latent_path)
+    device_map = 'cpu' if device is None else device
+    
+    if latent_path.suffix == '.pt':
+        return torch.load(latent_path, map_location=device_map)
+    elif latent_path.suffix == '.pkl':
+        with open(latent_path, 'rb') as f:
+            data = pickle.load(f)
+            # Handle dict format from legacy pkl files
+            if isinstance(data, dict):
+                # Get first tensor from dict values
+                tensor = next(iter(data.values()))[0]
+            else:
+                tensor = data
+            
+            if device is not None and device != 'cpu':
+                tensor = tensor.to(device)
+            return tensor
     else:
-        return torch.load(latent_path, map_location=device)
+        raise ValueError(f"Unsupported file format: {latent_path.suffix}. Use .pt or .pkl")
 
 
 def drop_text_condition(text_embed, im, empty_text_embed, text_drop_prob):
