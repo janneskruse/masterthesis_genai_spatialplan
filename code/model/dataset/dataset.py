@@ -3,7 +3,7 @@
 ###### import libraries ######
 # Standard libraries
 import os
-import yaml
+from pathlib import Path
 
 # Data handling
 import numpy as np
@@ -18,6 +18,7 @@ from model.utils.diffusion_utils import load_latents
 from model.utils.read_yaml import get_nested
 from model.utils.diffusion_utils import load_single_latent
 from helpers.load_configs import load_configs
+from model.dataset.compare import reconcile_patches_with_latents
 
 # Dataset class
 class UrbanInpaintingDataset(Dataset):
@@ -95,6 +96,11 @@ class UrbanInpaintingDataset(Dataset):
         self.latent_path = latent_path
         self.use_latents = bool(use_latents)
         
+        # Calculate downsampling factor for latent space
+        autoencoder_config = config.get('autoencoder_params', {})
+        down_sample = autoencoder_config.get('down_sample', [True, True, True])
+        self.latent_downsample_factor = 2 ** sum([1 for ds in down_sample if ds])
+        
         # Load xarray dataset
         train_regions = dataset_config.get('train_regions', ['Dresden', 'Hamburg', 'Stuttgart'])
         eval_regions = dataset_config.get('eval_regions', ['Leipzig'])
@@ -122,25 +128,63 @@ class UrbanInpaintingDataset(Dataset):
         # Load patches
         self.patches = self._load_patches()
         
-        # Load latents if specified
+        # Load and reconcile latents if specified
         if use_latents and latent_path is not None:
             print(f'Loading latents from {latent_path}...')
             latent_maps = load_latents(latent_path)
+            
             if len(latent_maps) == len(self.patches):
+                # Perfect match
                 self.use_latents = True
                 self.latent_maps = latent_maps
                 print(f'✓ Found {len(self.latent_maps)} latents matching {len(self.patches)} patches')
             else:
+                # Mismatch - try to reconcile using VAE training stats
                 print(f'⚠ Latents size mismatch: found {len(latent_maps)} latents but need {len(self.patches)} patches')
-                print('⚠ Falling back to raw images (latents will not be used)')
-                self.use_latents = False
-                self.latent_maps = None
+                print(f'⚠ Attempting to reconcile using VAE training stats...')
+                
+                # Construct stats CSV path
+                results_dir = Path(big_data_storage_path) / "results" / config['train_params']['task_name']
+                stats_csv_path = results_dir / "vae_ddp_stats" / "inpainting_mask_stats_train.csv"
+                
+                # Reconcile patches with available latents
+                filtered_patches, filtered_latents, comparison_results = reconcile_patches_with_latents(
+                    stats_csv_path=stats_csv_path,
+                    current_patches=self.patches,
+                    latent_files=latent_maps,
+                    verbose=True
+                )
+                
+                if len(filtered_patches) > 0:
+                    # Successfully reconciled
+                    self.patches = filtered_patches
+                    self.latent_maps = filtered_latents
+                    self.use_latents = True
+                    print(f'✓ Successfully reconciled {len(self.patches)} patches with matching latents')
+                else:
+                    # No matches found
+                    print('⚠ No matching patches found - falling back to raw images')
+                    self.use_latents = False
+                    self.latent_maps = None
         elif use_latents and latent_path is None:
             print('⚠ use_latents=True but no latent_path provided, using raw images')
             self.use_latents = False
             self.latent_maps = None
         else:
             print('✓ Using raw satellite images (not latents)')
+            self.use_latents = False
+            self.latent_maps = None
+        
+        # Final status print
+        print(f"\n{'='*50}")
+        print(f"Dataset Configuration Summary")
+        print(f"{'='*50}")
+        print(f"Split: {self.split}")
+        print(f"Total patches: {len(self.patches)}")
+        print(f"Using latents: {self.use_latents}")
+        print(f"Patch size: {self.patch_size}x{self.patch_size}")
+        print(f"Conditioning types: {self.condition_types}")
+        print(f"{'='*50}\n")
     
     def _load_patches(self):
         """
