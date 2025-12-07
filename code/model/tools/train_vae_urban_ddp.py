@@ -574,7 +574,7 @@ def train_vae():
         
         # Save dataset statistics (main rank only)
         if is_main:
-            stats_path = urban_dataset.save_stats(out_dir / "vae_ddp_stats")
+            stats_path = urban_dataset.save_stats(f"{out_dir}/vae_ddp_stats")
             print(f"✓ Saved dataset statistics to {stats_path}")
     
     
