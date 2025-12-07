@@ -574,8 +574,8 @@ def train_vae():
         
         # Save dataset statistics (main rank only)
         if is_main:
-            stats_path = urban_dataset.save_stats(f"{out_dir}/vae_ddp_stats")
-            print(f"✓ Saved dataset statistics to {stats_path}")
+            urban_dataset.save_stats(f"{out_dir}/vae_ddp_stats")
+            print("✓ Saved dataset statistics")
     
     
     # if is_main and train_config.get('save_latents', True):
