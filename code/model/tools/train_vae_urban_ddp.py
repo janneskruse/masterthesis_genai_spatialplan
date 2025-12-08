@@ -281,6 +281,8 @@ def train_vae():
         #     batch_size = batch_size * num_gpus
         #     print(f"✓ Scaling batch size: {original_batch_size} → {batch_size}")
     
+    cache_dir = f"{big_data_storage_path}/processed/{train_config.get('task_name', 'urban_inpainting')}"
+    use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     ########## Load Dataset #############
     if is_main:
@@ -292,7 +294,9 @@ def train_vae():
     urban_dataset = UrbanInpaintingDataset(
         split='train',
         use_latents=False,
-        latent_path=None
+        latent_path=None,
+        use_cached_patches=use_cached_patches,
+        cache_dir=cache_dir
     )
     
     if is_main:

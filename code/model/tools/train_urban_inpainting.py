@@ -75,6 +75,11 @@ def train():
     autoencoder_model_config = config['autoencoder_params']
     train_config = config['train_params']
     
+    latent_path = f'{big_data_storage_path}/results/{train_config["task_name"]}/{train_config.get("latents_dir_name", "vae_ddp_latents")}'
+    use_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
+    cache_dir = f"{big_data_storage_path}/processed/{train_config.get('task_name', 'urban_inpainting')}"
+    use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
+    
     # Create output directory
     out_dir = f"{big_data_storage_path}/results/{train_config.get('task_name', 'urban_inpainting')}"
     
@@ -97,16 +102,13 @@ def train():
     print("Loading Urban Dataset")
     print("="*50)
     
-    # Check if latents exist
-    # latent_path = os.path.join(train_config['task_name'], 
-    #                            train_config.get('vqvae_latent_dir_name', 'vqvae_latents'))
-    latent_path = f'{big_data_storage_path}/results/{train_config["task_name"]}/{train_config.get("latents_dir_name", "vae_ddp_latents")}'
-    use_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
     
     urban_dataset = UrbanInpaintingDataset(
         split='train',
         use_latents=use_latents,
-        latent_path=latent_path if use_latents else None
+        latent_path=latent_path if use_latents else None,
+        use_cached_patches=use_cached_patches,
+        cache_dir=cache_dir
     )
     
     print(f"✓ Loaded {len(urban_dataset)} training patches")
