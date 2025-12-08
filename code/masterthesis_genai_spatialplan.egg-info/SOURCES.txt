@@ -37,6 +37,7 @@ code/masterthesis_genai_spatialplan.egg-info/dependency_links.txt
 code/masterthesis_genai_spatialplan.egg-info/requires.txt
 code/masterthesis_genai_spatialplan.egg-info/top_level.txt
 code/model/dataset/__init__.py
+code/model/dataset/compare.py
 code/model/dataset/dataset.py
 code/model/diffusion_blocks/__init__.py
 code/model/diffusion_blocks/blocks.py
@@ -48,6 +49,7 @@ code/model/diffusion_blocks/vqvae.py
 code/model/scheduler/__init__.py
 code/model/scheduler/linear_noise_scheduler.py
 code/model/tools/infer_vqvae.py
+code/model/tools/prepare_patches.py
 code/model/tools/run_pipeline.py
 code/model/tools/sample_ddpm_class_cond.py
 code/model/tools/sample_ddpm_text_cond.py
