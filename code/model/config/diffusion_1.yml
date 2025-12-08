@@ -17,7 +17,7 @@ diffusion_params:
 ldm_params: # latent diffusion model parameters
   down_channels: [32, 64, 128, 256]
   mid_channels: [256, 256, 128]
-  down_sample: [True, True, False]
+  down_sample: [True, True, False] # Last layer no downsampling
   attn_down: [True, True, False]
   time_emb_dim: 128
   norm_channels: 32
@@ -59,7 +59,7 @@ autoencoder_params:
   codebook_size: 8192
   down_channels: [32, 64, 128, 128]
   mid_channels: [128, 128]
-  down_sample: [True, True, True]
+  down_sample: [True, True, True] # 3 levels of downsampling
   attn_down: [False, False, False]
   norm_channels: 32
   num_heads: 2

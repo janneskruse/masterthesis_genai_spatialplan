@@ -66,14 +66,42 @@ class UrbanInpaintingDataset(Dataset):
         # Basic parameters
         big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
         im_res = dataset_config.get('res', 3)  # in meters
+        im_channels = dataset_config.get('im_channels', 3)
+        min_valid_percent = dataset_config.get('min_valid_percent', 90)
         pixel_size = dataset_config.get('patch_size_m', 650)  # in pixels
         patch_size = int(pixel_size/im_res)  # compute patch size in pixels
         patch_size = patch_size - (patch_size % 8) # make patch size divisible by 8
-        print(f"Using patch size: {patch_size} pixels ({patch_size*im_res} m at {im_res} m resolution)")
 
-        im_channels = dataset_config.get('im_channels', 3)
-        min_valid_percent = dataset_config.get('min_valid_percent', 90)
+        # Latent space configuration
+        self.latent_maps = None
+        self.latent_path = latent_path
+        self.use_latents = bool(use_latents)
+        # If using latents, need to account for both VAE and U-Net downsampling
+        if use_latents:
+            # Calculate downsampling factor for latent space
+            autoencoder_config = config.get('autoencoder_params', {})
+            down_sample = autoencoder_config.get('down_sample', [True, True, True])
+            self.latent_downsample_factor = 2 ** sum([1 for ds in down_sample if ds])
+        else:
+            self.latent_downsample_factor = 1
         
+        # Get U-Net downsampling factor
+        ldm_config = config.get('ldm_params', {})
+        num_down_layers = len(ldm_config.get('down_channels', [64, 128, 256, 512]))
+        unet_downsample_factor = 2 ** num_down_layers
+        
+        # Total required divisibility
+        total_divisor = self.latent_downsample_factor * unet_downsample_factor
+        
+        # Make patch size divisible by total factor
+        patch_size = patch_size - (patch_size % total_divisor)
+        
+        print(f"Using patch size: {patch_size} pixels ({patch_size*im_res} m at {im_res} m resolution)")
+        print(f"  VAE downsample factor: {self.latent_downsample_factor}")
+        print(f"  U-Net downsample factor: {unet_downsample_factor}")
+        print(f"  Total divisor: {total_divisor}")
+
+        # Store parameters
         self.split = split
         self.patch_size = patch_size
         self.stride_overlap = dataset_config.get('stride_overlap', 2)
@@ -97,17 +125,6 @@ class UrbanInpaintingDataset(Dataset):
         })
         self.osm_layers = get_nested(condition_config, ['osm_layers'], ['buildings', 'streets', 'water'])
         self.environmental_layers = get_nested(condition_config, ['environmental_layers'], ['ndvi', 'landsat_surface_temp_b10_masked'])
-
-
-        # Latent space configuration
-        self.latent_maps = None
-        self.latent_path = latent_path
-        self.use_latents = bool(use_latents)
-        
-        # Calculate downsampling factor for latent space
-        autoencoder_config = config.get('autoencoder_params', {})
-        down_sample = autoencoder_config.get('down_sample', [True, True, True])
-        self.latent_downsample_factor = 2 ** sum([1 for ds in down_sample if ds])
         
         # Select regions based on split
         train_regions = dataset_config.get('train_regions', ['Dresden', 'Hamburg', 'Stuttgart'])
