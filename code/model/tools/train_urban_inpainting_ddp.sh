@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --time=3:00:00
-#SBATCH --job-name="train_vae_urban_ddp"
+#SBATCH --time=12:00:00
+#SBATCH --job-name="train_diffusion_ddp"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
@@ -46,7 +46,7 @@ export NCCL_SOCKET_IFNAME=^lo,docker0
 echo "=================================================="
 echo "Master Address: $MASTER_ADDR"
 echo "Master Port: $MASTER_PORT"
-echo "Starting DDP training with $WORLD_SIZE GPUs"
+echo "Starting DDP diffusion training with $WORLD_SIZE GPUs"
 echo "Passing config: $CONFIG_PATH"
 echo "=================================================="
 
@@ -54,7 +54,7 @@ echo "=================================================="
 srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    python3 -u train_vae_urban_ddp.py --config $CONFIG_PATH
+    python3 -u train_urban_inpainting_ddp.py --config $CONFIG_PATH
 "
 
 echo "=================================================="
