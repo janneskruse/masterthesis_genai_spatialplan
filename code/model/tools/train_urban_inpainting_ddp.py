@@ -352,7 +352,7 @@ def train():
             model_unwrapped = model.module if hasattr(model, 'module') else model
             
             checkpoint_path = os.path.join(
-                train_config['task_name'],
+                out_dir,
                 train_config.get('ldm_ckpt_name', 'ddpm_urban_inpainting_ddp_ckpt.pth')
             )
             torch.save(model_unwrapped.state_dict(), checkpoint_path)
@@ -360,7 +360,7 @@ def train():
             # Save periodic checkpoint
             if (epoch_idx + 1) % 10 == 0:
                 periodic_path = os.path.join(
-                    train_config['task_name'],
+                    out_dir,
                     f'ddpm_urban_inpainting_ddp_epoch_{epoch_idx + 1}.pth'
                 )
                 torch.save(model_unwrapped.state_dict(), periodic_path)
