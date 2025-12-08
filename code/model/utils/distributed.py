@@ -37,7 +37,7 @@ def setup_distributed():
         os.environ['WORLD_SIZE'] = str(world_size)
         
         # init
-        dist.init_process_group('nccl')
+        dist.init_process_group('nccl', device_id=local_rank)
         
         # Verify initialization
         if rank == 0:
