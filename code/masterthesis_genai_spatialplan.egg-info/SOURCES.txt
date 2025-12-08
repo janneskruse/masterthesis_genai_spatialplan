@@ -59,6 +59,7 @@ code/model/tools/sample_urban_inpainting.py
 code/model/tools/train_ddpm_cond.py
 code/model/tools/train_ddpm_vqvae.py
 code/model/tools/train_urban_inpainting.py
+code/model/tools/train_urban_inpainting_ddp.py
 code/model/tools/train_vae_urban.py
 code/model/tools/train_vae_urban_ddp.py
 code/model/tools/train_vqvae.py
@@ -67,6 +68,7 @@ code/model/utils/__init__.py
 code/model/utils/config_utils.py
 code/model/utils/data_utils.py
 code/model/utils/diffusion_utils.py
+code/model/utils/distributed.py
 code/model/utils/load_cuda.py
 code/model/utils/read_yaml.py
 code/model/utils/text_utils.py
