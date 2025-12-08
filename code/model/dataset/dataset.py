@@ -4,10 +4,13 @@
 # Standard libraries
 import os
 from pathlib import Path
+from typing import Optional, List, Dict
+from tqdm.auto import tqdm
 
 # Data handling
 import numpy as np
 import xarray as xr
+import pandas as pd
 
 # Data Science/ML libraries
 import torch
@@ -28,34 +31,40 @@ class UrbanInpaintingDataset(Dataset):
     - OSM features (buildings, streets, water, etc.)
     - Environmental data (NDVI, LST)
     - Satellite imagery
+    
+    Supports two modes:
+    1. On-the-fly loading from Xarray (slower, flexible)
+    2. Pre-saved patches (faster, recommended for training)
     """
     
-    def __init__(self, split, use_latents=False, 
-                 latent_path=None):
+    def __init__(self, split, 
+                 use_latents=False, 
+                 latent_path=None,
+                 use_cached_patches: bool = True,
+                 cache_dir: Optional[str] = None
+        ):
         """
         :param split: 'train' or 'val'
-        :param zarr_path: path to the zarr dataset
-        :param patch_size: size of patches to extract
-        :param stride: stride for patch extraction
-        :param min_valid_percent: minimum percentage of valid pixels in a patch
-        :param im_channels: number of image channels
         :param use_latents: whether to use pre-computed latents from autoencoder
         :param latent_path: path to latent files
-        :param condition_config: dict with conditioning configuration
+        :param use_cached_patches: whether to use cached patches
+        :param cache_dir: directory for cached patches
         """
         
-        ###### setup config variables #######
+        ###### Setup config variables #######
         config = load_configs()
-        # repo_dir = config['repo_dir']
         data_config = config['data_config']
-
-        big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
-        
-        # if not config, raise error
         dataset_config = config.get('dataset_params', None)
+        
         if dataset_config is None:
             raise ValueError("Dataset configuration not found in config file")
         
+        self.config = config
+        self.data_config = data_config
+        self.dataset_config = dataset_config
+        
+        # Basic parameters
+        big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
         im_res = dataset_config.get('res', 3)  # in meters
         pixel_size = dataset_config.get('patch_size_m', 650)  # in pixels
         patch_size = int(pixel_size/im_res)  # compute patch size in pixels
@@ -72,7 +81,7 @@ class UrbanInpaintingDataset(Dataset):
         self.im_channels = im_channels
         self.min_valid_percent = min_valid_percent
 
-        
+        # Conditioning configuration
         ldm_config = config.get('ldm_params', None)
         if ldm_config is None:
             raise ValueError("LDM configuration not found in config file")
@@ -80,8 +89,7 @@ class UrbanInpaintingDataset(Dataset):
         condition_config = get_nested(config, ['ldm_params', 'condition_config'])
         if condition_config is None:
             raise ValueError("Conditioning configuration not found in config file")
-        
-        # Conditioning configuration
+
         self.condition_types = condition_config.get('condition_types', [])
         self.hole_config = condition_config.get('hole_config', {
             'type': 'random_square',
@@ -91,7 +99,7 @@ class UrbanInpaintingDataset(Dataset):
         self.environmental_layers = get_nested(condition_config, ['environmental_layers'], ['ndvi', 'landsat_surface_temp_b10_masked'])
 
 
-        # Latent configuration
+        # Latent space configuration
         self.latent_maps = None
         self.latent_path = latent_path
         self.use_latents = bool(use_latents)
@@ -101,14 +109,10 @@ class UrbanInpaintingDataset(Dataset):
         down_sample = autoencoder_config.get('down_sample', [True, True, True])
         self.latent_downsample_factor = 2 ** sum([1 for ds in down_sample if ds])
         
-        # Load xarray dataset
+        # Select regions based on split
         train_regions = dataset_config.get('train_regions', ['Dresden', 'Hamburg', 'Stuttgart'])
         eval_regions = dataset_config.get('eval_regions', ['Leipzig'])
-        
-        # Select regions based on split
         self.regions = train_regions if self.split == 'train' else eval_regions
-        processed_data_path = big_data_storage_path + "/processed"
-        zarr_name = dataset_config.get('zarr_name', 'input_data.zarr')
         
         # Store datasets and data layers per region
         self.datasets = {}
@@ -119,6 +123,48 @@ class UrbanInpaintingDataset(Dataset):
             "inpainting_mask": []
         }
         
+        # Cache directory setup
+        if cache_dir is None:
+            task_name = config['train_params']['task_name']
+            cache_dir = Path(big_data_storage_path) / "processed" / task_name
+            
+        self.cache_dir = Path(cache_dir)
+        self.use_cached_patches = use_cached_patches
+        
+        # Initialize data loading strategy
+        if use_cached_patches:
+            print(f"\n{'='*60}")
+            print(f"Attempting to load cached patches from: {self.cache_dir}")
+            print(f"{'='*60}")
+            
+            if self._load_cached_patches():
+                print(f"✓ Successfully loaded {len(self.patches)} cached patches")
+            else:
+                print(f"⚠ No cached patches found. Falling back to on-the-fly loading")
+                print(f"⚠ Run `prepare_cached_patches()` to generate cache for faster training")
+                self.use_cached_patches = False
+                self._initialize_xarray_loading()
+        else:
+            print(f"\n{'='*60}")
+            print(f"Using on-the-fly Xarray loading (slower)")
+            print(f"{'='*60}")
+            self._initialize_xarray_loading()
+            
+        # Load latents if specified
+        if use_latents and latent_path is not None:
+            self._load_and_reconcile_latents(big_data_storage_path)
+        elif use_latents and latent_path is None:
+            print('⚠ use_latents=True but no latent_path provided, using raw images')
+            self.use_latents = False
+            self.latent_maps = None
+        # Final summary
+        self._print_summary()
+        
+    def _initialize_xarray_loading(self):
+        """Initialize on-the-fly Xarray data loading"""
+        processed_data_path = self.data_config.get("big_data_storage_path", "/work/zt75vipu-master/data") + "/processed"
+        zarr_name = self.dataset_config.get('zarr_name', 'input_data.zarr')
+    
         # Load datasets for all regions
         for region in self.regions:
             region_zarr_path = os.path.join(processed_data_path, region.lower(), zarr_name)
@@ -128,63 +174,267 @@ class UrbanInpaintingDataset(Dataset):
         # Load patches
         self.patches = self._load_patches()
         
-        # Load and reconcile latents if specified
-        if use_latents and latent_path is not None:
-            print(f'Loading latents from {latent_path}...')
-            latent_maps = load_latents(latent_path)
-            
-            if len(latent_maps) == len(self.patches):
-                # Perfect match
-                self.use_latents = True
-                self.latent_maps = latent_maps
-                print(f'✓ Found {len(self.latent_maps)} latents matching {len(self.patches)} patches')
-            else:
-                # Mismatch - try to reconcile using VAE training stats
-                print(f'⚠ Latents size mismatch: found {len(latent_maps)} latents but need {len(self.patches)} patches')
-                print(f'⚠ Attempting to reconcile using VAE training stats...')
-                
-                # Construct stats CSV path
-                results_dir = Path(big_data_storage_path) / "results" / config['train_params']['task_name']
-                stats_csv_path = results_dir / "vae_ddp_stats" / "inpainting_mask_stats_train.csv"
-                
-                # Reconcile patches with available latents
-                filtered_patches, filtered_latents, comparison_results = reconcile_patches_with_latents(
-                    stats_csv_path=stats_csv_path,
-                    current_patches=self.patches,
-                    latent_files=latent_maps,
-                    verbose=True
-                )
-                
-                if len(filtered_patches) > 0:
-                    # Successfully reconciled
-                    self.patches = filtered_patches
-                    self.latent_maps = filtered_latents
-                    self.use_latents = True
-                    print(f'✓ Successfully reconciled {len(self.patches)} patches with matching latents')
-                else:
-                    # No matches found
-                    print('⚠ No matching patches found - falling back to raw images')
-                    self.use_latents = False
-                    self.latent_maps = None
-        elif use_latents and latent_path is None:
-            print('⚠ use_latents=True but no latent_path provided, using raw images')
-            self.use_latents = False
-            self.latent_maps = None
-        else:
-            print('✓ Using raw satellite images (not latents)')
-            self.use_latents = False
-            self.latent_maps = None
+    def _load_cached_patches(self) -> bool:
+        """
+        Load pre-saved patches from disk.
         
-        # Final status print
-        print(f"\n{'='*50}")
-        print(f"Dataset Configuration Summary")
-        print(f"{'='*50}")
-        print(f"Split: {self.split}")
-        print(f"Total patches: {len(self.patches)}")
-        print(f"Using latents: {self.use_latents}")
-        print(f"Patch size: {self.patch_size}x{self.patch_size}")
-        print(f"Conditioning types: {self.condition_types}")
-        print(f"{'='*50}\n")
+        Returns:
+            True if successful, False if cache doesn't exist
+        """
+        metadata_path = self.cache_dir / f"patches_metadata_{self.split}.csv"
+        
+        if not metadata_path.exists():
+            return False
+        
+        # Load patch metadata
+        metadata_df = pd.read_csv(metadata_path)
+        
+        # Validate cache matches current configuration
+        if not self._validate_cache_config(metadata_df):
+            print("⚠ Cached patches configuration mismatch. Regeneration recommended.")
+            return False
+        
+        # Load patch file paths
+        self.patches = [
+            (row['y'], row['x'], row['region'], row['cache_index'])
+            for _, row in metadata_df.iterrows()
+        ]
+        
+        print(f"✓ Loaded {len(self.patches)} patches from cache")
+        return True
+    
+    def _validate_cache_config(self, metadata_df: pd.DataFrame) -> bool:
+        """Validate that cached patches match current configuration"""
+        if len(metadata_df) == 0:
+            return False
+        
+        # Check patch size
+        first_patch_path = self.cache_dir / f"patch_{metadata_df.iloc[0]['cache_index']}.pt"
+        if first_patch_path.exists():
+            sample_data = torch.load(first_patch_path)
+            sample_image = sample_data['image'] if isinstance(sample_data, dict) else sample_data
+            
+            if sample_image.shape[-1] != self.patch_size or sample_image.shape[-2] != self.patch_size:
+                print(f"⚠ Patch size mismatch: cached={sample_image.shape[-2:]}, config={self.patch_size}")
+                return False
+        
+        # Check regions match
+        cached_regions = set(metadata_df['region'].unique())
+        config_regions = set(self.regions)
+        
+        if cached_regions != config_regions:
+            print(f"⚠ Region mismatch: cached={cached_regions}, config={config_regions}")
+            return False
+        
+        return True
+    
+    def _load_and_reconcile_latents(self, big_data_storage_path: str):
+        """Load VAE latents and reconcile with patches"""
+        print(f'Loading latents from {self.latent_path}...')
+        latent_maps = load_latents(self.latent_path)
+        
+        if len(latent_maps) == len(self.patches):
+            # Perfect match
+            self.use_latents = True
+            self.latent_maps = latent_maps
+            print(f'✓ Found {len(self.latent_maps)} latents matching {len(self.patches)} patches')
+        else:
+            # Mismatch - reconcile
+            print(f'⚠ Latents size mismatch: found {len(latent_maps)} latents but need {len(self.patches)} patches')
+            print(f'⚠ Attempting to reconcile using VAE training stats...')
+            
+            results_dir = Path(big_data_storage_path) / "results" / self.config['train_params']['task_name']
+            stats_csv_path = results_dir / "vae_ddp_stats" / "inpainting_mask_stats_train.csv"
+            
+            filtered_patches, filtered_latents, comparison_results = reconcile_patches_with_latents(
+                stats_csv_path=stats_csv_path,
+                current_patches=self.patches,
+                latent_files=latent_maps,
+                verbose=True
+            )
+            
+            if len(filtered_patches) > 0:
+                self.patches = filtered_patches
+                self.latent_maps = filtered_latents
+                self.use_latents = True
+                print(f'✓ Successfully reconciled {len(self.patches)} patches with matching latents')
+            else:
+                print('⚠ No matching patches found - falling back to raw images')
+                self.use_latents = False
+                self.latent_maps = None
+                    
+    def prepare_cached_patches(self) -> None:
+        """
+        Pre-save all patches to disk for faster training.
+        
+        This method:
+        1. Extracts all patches from Xarray
+        2. Normalizes and processes them
+        3. Saves as individual .pt files
+        4. Creates metadata CSV for index mapping
+        
+        Args:
+            num_workers: Number of parallel workers for processing
+        """
+        if not hasattr(self, 'datasets') or not self.datasets:
+            raise RuntimeError("Cannot cache patches: Xarray datasets not loaded. Set use_cached_patches=False first.")
+        
+        print(f"\n{'='*60}")
+        print(f"Preparing cached patches")
+        print(f"{'='*60}")
+        print(f"Output directory: {self.cache_dir}")
+        print(f"Total patches to process: {len(self.patches)}")
+        print(f"{'='*60}\n")
+        
+        # Create cache directory
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Metadata for tracking
+        metadata_records = []
+        
+        # Process and save each patch
+        for cache_idx, (y, x, region) in enumerate(tqdm(self.patches, desc="Caching patches")):
+            try:
+                # Extract patch data (reuse existing logic)
+                patch_data = self._extract_patch_from_xarray(y, x, region, cache_idx)
+                
+                # Save patch
+                patch_path = self.cache_dir / f"patch_{self.split}_{cache_idx}.pt"
+                torch.save(patch_data, patch_path)
+                
+                # Record metadata
+                metadata_records.append({
+                    'cache_index': cache_idx,
+                    'y': y,
+                    'x': x,
+                    'region': region,
+                    'patch_file': str(patch_path.name)
+                })
+                
+            except Exception as e:
+                print(f"⚠ Failed to cache patch {cache_idx} at (y={y}, x={x}, region={region}): {e}")
+                continue
+        
+        # Save metadata
+        metadata_df = pd.DataFrame(metadata_records)
+        metadata_path = self.cache_dir / f"patches_metadata_{self.split}.csv"
+        metadata_df.to_csv(metadata_path, index=False)
+        
+        print(f"\n✓ Successfully cached {len(metadata_records)} patches")
+        print(f"✓ Metadata saved to: {metadata_path}")
+        print(f"✓ Total disk usage: ~{self._estimate_cache_size()} MB\n")
+    
+    def _extract_patch_from_xarray(
+        self, 
+        y: int, 
+        x: int, 
+        region: str, 
+        index: int
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Extract and process a single patch from Xarray (existing __getitem__ logic).
+        
+        Returns:
+            Dictionary with 'image' and optional 'conditioning' data
+        """
+        ps = self.patch_size
+        data_layers = self.data_layers_per_region[region]
+        
+        # Extract satellite image
+        img_patch = data_layers['satellite'].isel(
+            y=slice(y, y+ps),
+            x=slice(x, x+ps)
+        ).values.astype(np.float32)
+        
+        img_patch = self._to_chw(img_patch)
+        img_patch = self._normalize_layer(img_patch, 'satellite')
+        
+        # Prepare conditioning
+        patch_info = {
+            'index': index,
+            'region': region,
+            'y': y,
+            'x': x,
+            'split': self.split
+        }
+        
+        # Street blocks for inpainting mask
+        street_blocks_layer = None
+        if 'street_blocks' in data_layers and self.hole_config['type'] == 'street_blocks':
+            street_blocks_layer = data_layers['street_blocks'].isel(
+                y=slice(y, y+ps),
+                x=slice(x, x+ps)
+            ).values
+        
+        inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer, patch_info)
+        
+        # Build conditioning dict
+        cond_inputs = {}
+        spatial = []
+        spatial_names = []
+        
+        if 'inpainting' in self.condition_types:
+            masked_image = img_patch * (1.0 - inpaint_mask)
+            rgb_names = ['blue', 'green', 'red']
+            self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
+            self._append_spatial(spatial, spatial_names, inpaint_mask, 'inpaint_mask')
+        
+        if 'osm_features' in self.condition_types:
+            osm_layers = []
+            for layer_name in self.osm_layers:
+                if layer_name in data_layers and data_layers[layer_name] is not None:
+                    layer_patch = data_layers[layer_name].isel(
+                        y=slice(y, y+ps),
+                        x=slice(x, x+ps)
+                    ).values
+                    layer_patch = self._normalize_layer(layer_patch, layer_name)
+                    layer_patch = self._to_chw(layer_patch)
+                    osm_layers.append(layer_patch)
+            
+            if osm_layers:
+                osm_features = np.concatenate(osm_layers, axis=0)
+                self._append_spatial(spatial, spatial_names, osm_features, 'osm', channel_names=self.osm_layers)
+        
+        if 'environmental' in self.condition_types:
+            env_layers = []
+            for layer_name in self.environmental_layers:
+                if layer_name in data_layers and data_layers[layer_name] is not None:
+                    layer_patch = data_layers[layer_name].isel(
+                        y=slice(y, y+ps),
+                        x=slice(x, x+ps)
+                    ).values
+                    layer_patch = self._normalize_layer(layer_patch, layer_name)
+                    layer_patch = self._to_chw(layer_patch)
+                    env_layers.append(layer_patch)
+            
+            if env_layers:
+                env_features = np.concatenate(env_layers, axis=0)
+                self._append_spatial(spatial, spatial_names, env_features, 'env', channel_names=self.environmental_layers)
+        
+        if spatial:
+            cond_inputs['image'] = torch.cat(spatial, dim=0)
+        
+        cond_inputs['meta'] = {
+            'y': y,
+            'x': x,
+            'time': str(data_layers['date']),
+            'region': region,
+            'spatial_names': spatial_names
+        }
+        
+        # Return as dict for easy serialization
+        return {
+            'image': torch.from_numpy(img_patch).float(),
+            'conditioning': cond_inputs if len(self.condition_types) > 0 else None
+        }
+        
+    def _estimate_cache_size(self) -> int:
+        """Estimate cache directory size in MB"""
+        total_size = 0
+        if self.cache_dir.exists():
+            for f in self.cache_dir.rglob('*.pt'):
+                total_size += f.stat().st_size
+        return total_size // (1024 * 1024)
     
     def _load_patches(self):
         """
@@ -214,7 +464,7 @@ class UrbanInpaintingDataset(Dataset):
             selected_date = valid_dates[0]
             print(f"Using date: {selected_date} for region {region}")
             
-            # Select data for this date
+            # Select data for this date 
             date_data = merged_xs.sel(time=selected_date)
             
             # Get satellite image and compute validity mask
@@ -413,8 +663,50 @@ class UrbanInpaintingDataset(Dataset):
                 # Fall back to numeric indices
                 names.extend([f"{base_name}:{i}" for i in range(arr.shape[0])])
 
+
+    def __getitem__(self, index: int):
+        """
+        Get a single training sample.
+        
+        Behavior depends on initialization:
+        - If use_cached_patches=True: Load from disk
+        - If use_cached_patches=False: Extract from Xarray
+        - If use_latents=True: Return latent + conditioning
+        """
+        if self.use_cached_patches:
+            return self._getitem_cached(index)
+        else:
+            return self._getitem_xarray(index)
+        
+    def _getitem_cached(self, index: int):
+        """Load pre-saved patch from disk"""
+        y, x, region, cache_idx = self.patches[index]
+        
+        # Load from cache
+        patch_path = self.cache_dir / f"patch_{self.split}_{cache_idx}.pt"
+        patch_data = torch.load(patch_path)
+        
+        if self.use_latents:
+            # Load corresponding latent
+            latent_path = self.latent_maps[index]
+            latent = load_single_latent(latent_path, device=None)
+            
+            # Prepare conditioning for latent space
+            cond_inputs = self._prepare_latent_conditioning(patch_data, y, x, region)
+            
+            if len(self.condition_types) == 0:
+                return latent
+            else:
+                return latent, cond_inputs
+        else:
+            # Return raw image + conditioning
+            if len(self.condition_types) == 0:
+                return patch_data['image']
+            else:
+                return patch_data['image'], patch_data['conditioning']
     
-    def __getitem__(self, index):
+    def _getitem_xarray(self, index: int):
+        """Extract patch on-the-fly from Xarray (existing logic)"""
         y, x, region = self.patches[index]
         ps = self.patch_size
         
@@ -679,6 +971,54 @@ class UrbanInpaintingDataset(Dataset):
         #         return im_tensor
         #     else:
         #         return im_tensor, cond_inputs
+    
+    def _prepare_latent_conditioning(
+        self,
+        patch_data: Dict[str, torch.Tensor],
+        y: int,
+        x: int,
+        region: str
+    ) -> Dict[str, torch.Tensor]:
+        """Prepare conditioning inputs for latent-based training"""
+        ps = self.patch_size
+        latent_h = ps // self.latent_downsample_factor
+        latent_w = ps // self.latent_downsample_factor
+        
+        cond_inputs = {}
+        spatial = []
+        spatial_names = []
+        
+        # Extract conditioning from cached patch data
+        if patch_data['conditioning'] is not None and 'image' in patch_data['conditioning']:
+            full_cond = patch_data['conditioning']['image']
+            
+            # Downsample to latent resolution
+            full_cond_resized = torch.nn.functional.interpolate(
+                full_cond.unsqueeze(0),
+                size=(latent_h, latent_w),
+                mode='bilinear',
+                align_corners=False
+            ).squeeze(0)
+            
+            cond_inputs['image'] = full_cond_resized
+            cond_inputs['meta'] = patch_data['conditioning']['meta']
+        
+        return cond_inputs
+    
+    def _print_summary(self):
+        """Print dataset configuration summary"""
+        print(f"\n{'='*60}")
+        print(f"Dataset Configuration Summary")
+        print(f"{'='*60}")
+        print(f"Split: {self.split}")
+        print(f"Mode: {'Cached patches' if self.use_cached_patches else 'On-the-fly Xarray'}")
+        print(f"Total patches: {len(self.patches)}")
+        print(f"Using latents: {self.use_latents}")
+        print(f"Patch size: {self.patch_size}x{self.patch_size}")
+        print(f"Conditioning types: {self.condition_types}")
+        if self.use_cached_patches:
+            print(f"Cache directory: {self.cache_dir}")
+        print(f"{'='*60}\n")
     
     def save_stats(self, save_path):
         """
