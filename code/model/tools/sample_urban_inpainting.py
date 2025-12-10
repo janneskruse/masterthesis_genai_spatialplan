@@ -6,6 +6,7 @@ import os
 import random
 import argparse
 import yaml
+from pathlib import Path
 
 # Visualization
 from tqdm import tqdm
@@ -68,10 +69,14 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     
     # Load dataset to get real conditioning examples
     condition_config = get_config_value(diffusion_model_config, 'condition_config', None)
+    task_name = train_config['task_name']
+    cache_dir = Path(big_data_storage_path) / "results" / task_name / "cached_patches"
     dataset = UrbanInpaintingDataset(
         split='val',
         use_latents=False,
-        latent_path=None
+        latent_path=None,
+        use_cached_patches=True,
+        cache_dir=cache_dir
     )
     
     # Get a random sample for conditioning
