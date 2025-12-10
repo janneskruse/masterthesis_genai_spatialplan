@@ -192,6 +192,8 @@ def train():
     print("Starting Training")
     print("="*50)
     
+    global_step = 0
+    
     for epoch_idx in range(num_epochs):
         losses = []
         progress_bar = tqdm(data_loader, desc=f'Epoch {epoch_idx + 1}/{num_epochs}')
@@ -247,6 +249,18 @@ def train():
             else:
                 mask_latent = torch.ones((im.shape[0], 1, im.shape[2], im.shape[3])).to(device)
             
+            if global_step == 0:
+                print(f"\n{'='*50}")
+                print("Mask Validation (First Batch)")
+                print(f"{'='*50}")
+                print(f"Mask stats: min={mask_latent.min().item():.4f}, max={mask_latent.max().item():.4f}, mean={mask_latent.mean().item():.4f}")
+                print(f"Mask shape: {mask_latent.shape}, Latent shape: {im.shape}")
+                print(f"Mask unique values: {torch.unique(mask_latent)}")
+                if 'image' in cond_input and 'meta' in cond_input:
+                    print(f"Spatial conditioning channels: {cond_input['meta']['spatial_names']}")
+                    print(f"Spatial conditioning shape: {cond_input['image'].shape}")
+                print(f"{'='*50}\n")
+            
             ########## Diffusion Forward Process ##########
             # Sample random noise
             noise = torch.randn_like(im).to(device)
@@ -261,20 +275,30 @@ def train():
             # Add noise to images according to timestep
             noisy_im = scheduler.add_noise(im, noise, t)
             
+            # Keep known region (unmasked) fixed --> only noise the masked region
+            noisy_im = mask_latent * noisy_im + (1 - mask_latent) * im
+            
             # Predict noise
             noise_pred = model(noisy_im, t, cond_input=cond_input)
             
-            # Compute weighted loss
-            loss = compute_inpainting_loss(
-                noise_pred,
-                noise,
-                mask_latent,
-                mask_loss_weight
-            )
+            # # Compute weighted loss
+            # loss = compute_inpainting_loss(
+            #     noise_pred,
+            #     noise,
+            #     mask_latent,
+            #     mask_loss_weight
+            # )
+            
+            # masked loss
+            noise_masked = mask_latent * noise
+            noise_pred_masked = mask_latent * noise_pred
+            loss = torchF.mse_loss(noise_pred_masked, noise_masked)
             
             losses.append(loss.item())
             loss.backward()
             optimizer.step()
+            
+            global_step += 1
             
             # Update progress bar
             progress_bar.set_postfix({'loss': f'{np.mean(losses[-100:]):.4f}'})
