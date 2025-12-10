@@ -286,17 +286,23 @@ def train():
                     # Replace with zeros (unconditional)
                     cond_input['image'] = torch.zeros_like(cond_input['image'])
                 
-                # Get mask for loss weighting
-                if 'mask' in cond_input:
-                    mask = cond_input['mask'].to(device)
-                    # Downsample mask to latent resolution
-                    mask_latent = torchF.interpolate(
-                        mask,
-                        size=im.shape[-2:],
-                        mode='nearest'
-                    )
+                # Get mask for loss weighting from spatial image
+                if 'image' in cond_input and 'meta' in cond_input:
+                    spatial_names = cond_input['meta']['spatial_names']
+                    try:
+                        mask_idx = spatial_names.index('inpaint_mask')
+                        mask = cond_input['image'][:, mask_idx:mask_idx+1, :, :]
+                        # Downsample mask to latent resolution
+                        mask_latent = torchF.interpolate(
+                            mask,
+                            size=im.shape[-2:],
+                            mode='nearest'
+                        )
+                    except (ValueError, KeyError):
+                        # No mask found, use uniform weighting
+                        mask_latent = torch.ones((im.shape[0], 1, im.shape[2], im.shape[3])).to(device)
                 else:
-                    # No explicit mask, use uniform weighting
+                    # No conditioning or mask, use uniform weighting
                     mask_latent = torch.ones((im.shape[0], 1, im.shape[2], im.shape[3])).to(device)
             else:
                 mask_latent = torch.ones((im.shape[0], 1, im.shape[2], im.shape[3])).to(device)

@@ -395,8 +395,6 @@ class UrbanInpaintingDataset(Dataset):
             rgb_names = ['blue', 'green', 'red']
             self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
             self._append_spatial(spatial, spatial_names, inpaint_mask, 'inpaint_mask')
-            # Also store mask separately for sampling compatibility
-            cond_inputs['mask'] = torch.from_numpy(self._to_chw(inpaint_mask)).float()
         
         if 'osm_features' in self.condition_types:
             osm_layers = []
@@ -438,8 +436,7 @@ class UrbanInpaintingDataset(Dataset):
             'x': x,
             'time': str(data_layers['date']),
             'region': region,
-            'spatial_names': spatial_names,
-            'mask_channel_idx': spatial_names.index('inpaint_mask') if 'inpaint_mask' in spatial_names else None
+            'spatial_names': spatial_names
         }
         
         # Return as dict for easy serialization
@@ -877,12 +874,6 @@ class UrbanInpaintingDataset(Dataset):
         # Prepare conditioning inputs
         cond_inputs = {}
         
-        if 'inpainting' in self.condition_types:
-            # Masked image for inpainting context
-            masked_image = img_patch * (1.0 - inpaint_mask)
-            cond_inputs['masked_image'] = torch.from_numpy(masked_image).float()
-            cond_inputs['mask'] = torch.from_numpy(self._to_chw(inpaint_mask)).float()  # [1,H,W]
-        
         if 'osm_features' in self.condition_types:
             # Stack OSM layers as control signal
             osm_layers = []
@@ -940,6 +931,7 @@ class UrbanInpaintingDataset(Dataset):
 
         # inpainting context
         if 'inpainting' in self.condition_types:
+            masked_image = img_patch * (1.0 - inpaint_mask)
             # RGB channels for masked image
             rgb_names = ['blue', 'green', 'red']
             self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
@@ -991,7 +983,8 @@ class UrbanInpaintingDataset(Dataset):
         #         return im_tensor
         #     else:
         #         return im_tensor, cond_inputs
-    
+
+
     def _prepare_latent_conditioning(
         self,
         patch_data: Dict[str, torch.Tensor],
@@ -999,31 +992,59 @@ class UrbanInpaintingDataset(Dataset):
         x: int,
         region: str
     ) -> Dict[str, torch.Tensor]:
-        """Prepare conditioning inputs for latent-based training"""
+        """
+        Prepare conditioning inputs for latent-based training.
+        
+        Downsamples spatial conditioning to latent resolution, using appropriate
+        interpolation for each channel type (nearest for mask, bilinear for features).
+        
+        Args:
+            patch_data: Cached patch data with 'image' and 'conditioning'
+            y, x: Patch coordinates
+            region: Region name
+        
+        Returns:
+            Conditioning dict with downsampled spatial features
+        """
         ps = self.patch_size
         latent_h = ps // self.latent_downsample_factor
         latent_w = ps // self.latent_downsample_factor
         
         cond_inputs = {}
-        spatial = []
-        spatial_names = []
         
-        # Extract conditioning from cached patch data
-        if patch_data['conditioning'] is not None and 'image' in patch_data['conditioning']:
-            full_cond = patch_data['conditioning']['image']
+        if patch_data['conditioning'] is None or 'image' not in patch_data['conditioning']:
+            return cond_inputs
+        
+        full_cond = patch_data['conditioning']['image']  # [C, H, W]
+        spatial_names = patch_data['conditioning']['meta'].get('spatial_names', [])
+        
+        # Separate mask from other features for appropriate downsampling
+        downsampled_channels = []
+        
+        for idx, channel_name in enumerate(spatial_names):
+            channel = full_cond[idx:idx+1, :, :]  # [1, H, W]
             
-            # Downsample to latent resolution
-            full_cond_resized = torch.nn.functional.interpolate(
-                full_cond.unsqueeze(0),
+            # Use nearest interpolation for mask to preserve binary values
+            if 'mask' in channel_name.lower():
+                mode = 'nearest'
+            else:
+                mode = 'bilinear'
+            
+            channel_resized = torch.nn.functional.interpolate(
+                channel.unsqueeze(0),  # [1, 1, H, W]
                 size=(latent_h, latent_w),
-                mode='bilinear',
-                align_corners=False
-            ).squeeze(0)
+                mode=mode,
+                align_corners=False if mode == 'bilinear' else None
+            ).squeeze(0)  # [1, H_latent, W_latent]
             
-            cond_inputs['image'] = full_cond_resized
-            cond_inputs['meta'] = patch_data['conditioning']['meta']
+            downsampled_channels.append(channel_resized)
+        
+        # Concatenate all channels
+        cond_inputs['image'] = torch.cat(downsampled_channels, dim=0)  # [C, H_latent, W_latent]
+        cond_inputs['meta'] = patch_data['conditioning']['meta'].copy()
         
         return cond_inputs
+
     
     def _print_summary(self):
         """Print dataset configuration summary"""
