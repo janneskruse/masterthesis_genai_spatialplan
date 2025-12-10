@@ -17,7 +17,7 @@ def main():
     config = load_configs()
     big_data_storage_path = config['data_config'].get("big_data_storage_path", "/work/zt75vipu-master/data")
     task_name = config['train_params']['task_name']
-    cache_dir = Path(big_data_storage_path) / "results" / task_name / "cached_patches"
+    cache_dir = Path(big_data_storage_path) / "processed" / task_name
     
     print(f"\n{'='*80}")
     print(f"Preparing Cached Patches for Task: {task_name}")
@@ -28,7 +28,8 @@ def main():
     train_dataset = UrbanInpaintingDataset(
         split='train',
         use_latents=False,
-        use_cached_patches=False  # Force Xarray loading
+        use_cached_patches=False,  # Force Xarray loading
+        cache_dir=cache_dir
     )
     train_dataset.prepare_cached_patches()
     
@@ -37,7 +38,8 @@ def main():
     val_dataset = UrbanInpaintingDataset(
         split='val',
         use_latents=False,
-        use_cached_patches=False
+        use_cached_patches=False,
+        cache_dir=cache_dir
     )
     val_dataset.prepare_cached_patches()
     
