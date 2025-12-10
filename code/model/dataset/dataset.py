@@ -395,6 +395,8 @@ class UrbanInpaintingDataset(Dataset):
             rgb_names = ['blue', 'green', 'red']
             self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
             self._append_spatial(spatial, spatial_names, inpaint_mask, 'inpaint_mask')
+            # Also store mask separately for sampling compatibility
+            cond_inputs['mask'] = torch.from_numpy(self._to_chw(inpaint_mask)).float()
         
         if 'osm_features' in self.condition_types:
             osm_layers = []
@@ -436,7 +438,8 @@ class UrbanInpaintingDataset(Dataset):
             'x': x,
             'time': str(data_layers['date']),
             'region': region,
-            'spatial_names': spatial_names
+            'spatial_names': spatial_names,
+            'mask_channel_idx': spatial_names.index('inpaint_mask') if 'inpaint_mask' in spatial_names else None
         }
         
         # Return as dict for easy serialization

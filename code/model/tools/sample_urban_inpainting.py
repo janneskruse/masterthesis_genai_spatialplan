@@ -101,6 +101,16 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     if 'mask' in cond_input:
         mask_full = cond_input['mask']  # [1, 1, H, W] in pixel space
         print(f"Mask shape: {mask_full.shape}")
+    elif 'image' in cond_input and 'meta' in cond_input:
+        # Extract mask from combined spatial tensor using metadata
+        mask_idx = cond_input['meta'].get('mask_channel_idx')
+        if mask_idx is not None:
+            # Extract mask channel from spatial image tensor
+            mask_full = cond_input['image'][:, mask_idx:mask_idx+1, :, :]  # [1, 1, H, W]
+            print(f"Mask extracted from spatial tensor at channel {mask_idx}")
+            print(f"Mask shape: {mask_full.shape}")
+        else:
+            raise ValueError("Mask channel index not found in metadata")
     else:
         raise ValueError("Mask not found in conditioning input")
     
