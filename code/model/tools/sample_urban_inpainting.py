@@ -199,7 +199,7 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     grid = make_grid(grid_images, nrow=int(np.sqrt(num_samples + 1)) + 1, padding=4, pad_value=1.0)
     
     # Save results
-    out_dir = f"{big_data_storage_path}/results/{train_config.get('task_name', 'urban_inpainting')}/inpainting_samples"
+    out_dir = f"{big_data_storage_path}/results/{train_config.get('task_name', 'urban_inpainting')}/output"
     os.makedirs(out_dir, exist_ok=True)
     output_path = os.path.join(out_dir, f'samples_guidance{guidance_scale}.png')
     save_image(grid, output_path)
@@ -233,6 +233,7 @@ def infer(args):
     diffusion_model_config = config['ldm_params']
     autoencoder_model_config = config['autoencoder_params']
     train_config = config['train_params']
+    model_dir = f"{big_data_storage_path}/results/{train_config.get('task_name', 'urban_inpainting')}"
     
     ########## Create the noise scheduler #############
     scheduler = LinearNoiseScheduler(
@@ -252,7 +253,7 @@ def infer(args):
     ).to(device)
     
     model_path = os.path.join(
-        train_config['task_name'],
+        model_dir,
         train_config.get('ldm_ckpt_name', 'ddpm_urban_inpainting_ckpt.pth')
     )
     
@@ -270,7 +271,7 @@ def infer(args):
     ).to(device)
     
     vae_path = os.path.join(
-        train_config['task_name'],
+        model_dir,
         train_config.get('autoencoder_ckpt_name', 'vae_urban_ddp_ckpt.pth')
     )
     
