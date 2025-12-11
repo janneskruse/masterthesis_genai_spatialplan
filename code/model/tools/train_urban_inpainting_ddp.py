@@ -325,7 +325,7 @@ def train():
                 print(f"Mask shape: {mask_latent.shape}, Latent shape: {im.shape}")
                 print(f"Mask unique values: {torch.unique(mask_latent)}")
                 if 'image' in cond_input and 'meta' in cond_input:
-                    print(f"Spatial conditioning channels: {cond_input['meta']['spatial_names']}")
+                    print(f"Spatial conditioning channels: {spatial_names}")
                     print(f"Spatial conditioning shape: {cond_input['image'].shape}")
                 print(f"{'='*50}\n")
             
