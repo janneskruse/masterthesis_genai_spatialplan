@@ -10,7 +10,7 @@ dataset_params:
   stride_overlap: 2 # 50% overlap between patches --> 4 for 25% overlap, etc.
   
 diffusion_params:
-  num_timesteps: 1000
+  num_timesteps: 1000 # number of diffusion steps for sampling
   beta_start: 0.0001
   beta_end: 0.02
 
