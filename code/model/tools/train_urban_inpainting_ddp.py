@@ -288,8 +288,17 @@ def train():
                 
                 # Get mask for loss weighting from spatial image
                 if 'image' in cond_input and 'meta' in cond_input:
-                    spatial_names = cond_input['meta']['spatial_names']
+                    if isinstance(cond_input['meta'], list):
+                        if len(cond_input['meta']) == 0:
+                            spatial_names = []
+                        else:
+                            # Use first sample's metadata to get spatial names structure
+                            # all images in the batch would have the same index for 'inpaint_mask'
+                            spatial_names = cond_input['meta'][0].get('spatial_names', [])
+                    else:
+                        spatial_names = cond_input['meta'].get('spatial_names', [])
                     try:
+                        # get index for inpaint_mask
                         mask_idx = spatial_names.index('inpaint_mask')
                         mask = cond_input['image'][:, mask_idx:mask_idx+1, :, :]
                         # Downsample mask to latent resolution
@@ -299,6 +308,7 @@ def train():
                             mode='nearest'
                         )
                     except (ValueError, KeyError):
+                        print("⚠ 'inpaint_mask' not found in spatial conditioning names.")
                         # No mask found, use uniform weighting
                         mask_latent = torch.ones((im.shape[0], 1, im.shape[2], im.shape[3])).to(device)
                 else:
