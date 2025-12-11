@@ -130,7 +130,7 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
         
         # Encode to latent space
         with torch.no_grad():
-            x_context, _ = vae.encode(masked_rgb)
+            x_context, _, _ = vae.encode(masked_rgb) # returns sample, mean, logvar
             print(f"Context latent shape: {x_context.shape}")
     
     # Downsample mask to latent resolution
