@@ -132,11 +132,16 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
         with torch.no_grad():
             x_context, _, _ = vae.encode(masked_rgb) # returns sample, mean, logvar
             print(f"Context latent shape: {x_context.shape}")
+            
+            # Get actual latent dimensions from VAE output
+            actual_latent_h = x_context.shape[2]
+            actual_latent_w = x_context.shape[3]
+            print(f"Actual latent size from VAE: {actual_latent_h}x{actual_latent_w}")
     
     # Downsample mask to latent resolution
     mask_latent = F.interpolate(
         mask_full,
-        size=(latent_size, latent_size),
+        size=(actual_latent_h, actual_latent_w),
         mode='nearest'
     )
     print(f"Mask latent shape: {mask_latent.shape}")
@@ -163,8 +168,8 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
         xt = torch.randn(
             1,
             autoencoder_model_config['z_channels'],
-            latent_size,
-            latent_size
+            actual_latent_h,
+            actual_latent_w
         ).to(device)
         
         # Replace known region with noisy context
