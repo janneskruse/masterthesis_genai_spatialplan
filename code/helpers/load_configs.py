@@ -40,3 +40,45 @@ def load_configs() -> Dict:
     config['repo_dir'] = repo_dir
     config['data_config'] = data_config
     return config
+
+def load_configs_notebook(
+    config_path: str = 'code/model/config/diffusion_1.yml',
+    data_config_path: str = 'code/data_acquisition/config.yml'
+) -> dict:
+    """
+    Load configuration from YAML files (notebook-friendly version).
+    
+    Args:
+        config_path: Path to experiment config file
+        data_config_path: Path to data config file
+        
+    Returns:
+        Dictionary containing merged configuration
+    """
+    repo_name = 'masterthesis_genai_spatialplan'
+    if repo_name not in os.getcwd():
+        try:
+            os.chdir(repo_name)
+        except FileNotFoundError:
+            pass
+    
+    print(f"Loading config from: {config_path}")
+    print(f"Loading data config from: {data_config_path}")
+    
+    if os.path.exists('/.dockerenv'):
+        repo_dir = '/app'
+    else:
+        p = os.popen('git rev-parse --show-toplevel')
+        repo_dir = p.read().strip()
+        p.close()
+    
+    with open(f"{repo_dir}/{config_path}", 'r') as stream:
+        config = yaml.safe_load(stream)
+    
+    with open(f"{repo_dir}/{data_config_path}", 'r') as stream:
+        data_config = yaml.safe_load(stream)
+    
+    config['repo_dir'] = repo_dir
+    config['data_config'] = data_config
+    
+    return config
