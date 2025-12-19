@@ -12,6 +12,7 @@ import xarray as xr
 
 # local imports
 from data_acquisition.cube.vectorize import xr_vectorize
+from data_acquisition.cube.corine import load_corine_raster, filter_corine_by_classes
 
 # function to define a urban areas mask from OSM data and the Corine Landcover dataset
 def define_urban_areas(region: str,
@@ -50,45 +51,13 @@ def define_urban_areas(region: str,
         # read the OSM data
         osm_gdf=gpd.read_parquet(data_filename)[["id","geometry","natural", "water", "boundary", "landuse", "building", "highway", "waterway", "leisure", "width"]]
 
-        ##### read the corine data
+        ##### Load Corine data
         print("   Reading Corine Landcover data...")
-        # get the corine folder
-        corine_folder = [folder for folder in os.listdir(f"{repo_dir}/data/corine") if os.path.isdir(os.path.join(f"{repo_dir}/data/corine", folder))]
-        # reverse sort by year
-        corine_folder.sort(key=lambda x: int(x.split("_")[-1]), reverse=True)
-        print("corine debug", corine_folder, os.listdir(f"{repo_dir}/data/corine"))
-        corine_folder = corine_folder[0]
-
-        # xarray read geotiff
-        geotiff_path = [f for f in os.listdir(f"{repo_dir}/data/corine/{corine_folder}/DATA") if f.endswith(".tif")][0]
-        corine_raster = rxr.open_rasterio(f"{repo_dir}/data/corine/{corine_folder}/DATA/{geotiff_path}", masked=True).squeeze("band", drop=True)
-
-        # parse the xml to read the crs
-        xml_paths = [f for f in os.listdir(f"{repo_dir}/data/corine/{corine_folder}/Metadata") if f.endswith(".xml")]
-        xml_path = min(xml_paths, key=len) # get shortest xml path
-        with open(f"{repo_dir}/data/corine/{corine_folder}/Metadata/{xml_path}", 'r') as xml_file:
-            xml_content = xml_file.read()
-            # find the crs string
-            start_index = xml_content.find('EPSG:')
-            # print("Start index of CRS in XML:", start_index)
-            # get line
-            end_index = xml_content.find('</gmd:code>', start_index)
-            crs_string = xml_content[start_index:end_index].split('<')[0]
-
-        # set crs
-        corine_raster.rio.write_crs(crs_string, inplace=True)
-
-        # reproject bbox to corine crs
-        bbox_gdf_corine = bbox_gdf.to_crs(corine_raster.rio.crs)
-
-        # clip to bbox
-        corine_raster = corine_raster.rio.clip_box(minx=bbox_gdf_corine.geometry.bounds.minx.values[0],
-                                                    miny=bbox_gdf_corine.geometry.bounds.miny.values[0],
-                                                    maxx=bbox_gdf_corine.geometry.bounds.maxx.values[0],
-                                                    maxy=bbox_gdf_corine.geometry.bounds.maxy.values[0])
-
-        # reproject to utm crs
-        corine_raster = corine_raster.rio.reproject(utm_crs)
+        corine_raster, corine_folder_path = load_corine_raster(
+            repo_dir=repo_dir,
+            bbox_gdf=bbox_gdf,
+            target_crs=utm_crs
+        )
         corine_raster_copy = corine_raster.copy()
 
         ##### mask water bodies
@@ -136,16 +105,8 @@ def define_urban_areas(region: str,
         # clip corine raster to water bodies
         corine_raster_waterclip = corine_raster.rio.clip(water_gdf.geometry, crs=utm_crs)
 
-        ##### drop non-forest and non-agricultural classes
+        ##### Filter out non-urban classes (forests, agricultural land, etc.)
         print("   Filtering Corine Landcover data by rural classes...")
-        # legend mapping
-        legend_path = [f for f in os.listdir(f"{repo_dir}/data/corine/{corine_folder}/Legend") if f.endswith(".txt")][0]
-        legend = pd.read_csv(f"{repo_dir}/data/corine/{corine_folder}/Legend/{legend_path}", sep=",", header=None)
-
-        # rename last column
-        column_count = legend.shape[1]
-        legend = legend.rename(columns={column_count - 1: "Class_Name"})
-
         drop_classes = [
             "Non-irrigated arable land", 
             "Permanently irrigated land", 
@@ -170,17 +131,13 @@ def define_urban_areas(region: str,
             "Salt marshes", 
             "Salines", 
             "Intertidal flats"
-            ]
-
-        # drop by id
-        for class_name in drop_classes:
-            class_df = legend[legend["Class_Name"].str.strip() == class_name.strip()]
-            # if empty continue
-            if class_df.empty:
-                print(f"Class {class_name} not found in legend, skipping...")
-                continue
-            class_id = class_df.index[0]
-            corine_raster = corine_raster.where(corine_raster != class_id, other=np.nan)
+        ]
+        
+        corine_raster = filter_corine_by_classes(
+            corine_raster=corine_raster,
+            corine_folder_path=corine_folder_path,
+            drop_classes=drop_classes
+        )
             
         #### create a buffer to include rural edges
         print("   Creating buffer around urban areas...")    
