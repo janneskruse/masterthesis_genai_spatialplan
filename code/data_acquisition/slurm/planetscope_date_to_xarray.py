@@ -26,6 +26,11 @@ from rioxarray.merge import merge_arrays
 import utm
 from pyproj import CRS
 
+# local imports
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from data_acquisition.cube.metropolitan_regions import get_region_bbox
+
 ##### Function to exit on error ######
 def exit_with_error(message):
     print(message)
@@ -128,8 +133,7 @@ try:
         exit(0)
         
     ############ Define the bbox ############ 
-    ghsl_df_new = gpd.read_parquet(f"{repo_dir}/data/processed/ghsl_regions.parquet")
-    bbox_gdf = gpd.GeoDataFrame(geometry=ghsl_df_new[ghsl_df_new["region_name"]==region].bbox, crs="EPSG:4326")
+    bbox_gdf = get_region_bbox(region=region, repo_dir=repo_dir)
     bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
     coordinates=json.loads(bbox_gdf.geometry.to_json())["features"][0]["geometry"]["coordinates"]
 

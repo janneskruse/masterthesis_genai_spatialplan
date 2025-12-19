@@ -2,6 +2,7 @@
 
 ##### Import libraries ######
 # system
+import sys
 import os
 import time
 import multiprocessing as mp
@@ -32,15 +33,8 @@ from pyproj import CRS
 from tqdm import tqdm
 
 # local imports
-import sys
-repo_name = 'masterthesis_genai_spatialplan'
-if repo_name in os.getcwd():
-    p = os.popen('git rev-parse --show-toplevel')
-    repo_dir = p.read().strip()
-    p.close()
-    sys.path.insert(0, f"{repo_dir}/code")
-
 from data_acquisition.cube.rasterize import register_xarray_accessor
+from data_acquisition.cube.metropolitan_regions import get_region_bbox
 
 
 #### Function to exit on error ######
@@ -90,8 +84,7 @@ try:
         exit(0)
             
     ############ Define the bbox ############ 
-    ghsl_df_new = gpd.read_parquet(f"{repo_dir}/data/processed/ghsl_regions.parquet")
-    bbox_gdf = gpd.GeoDataFrame(geometry=ghsl_df_new[ghsl_df_new["region_name"]==region].bbox, crs="EPSG:4326")
+    bbox_gdf = get_region_bbox(region=region, repo_dir=repo_dir)
     bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
     bbox = bbox_gdf.total_bounds
     coordinates=json.loads(bbox_gdf.geometry.to_json())["features"][0]["geometry"]["coordinates"]

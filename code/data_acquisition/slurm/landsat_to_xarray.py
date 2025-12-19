@@ -41,6 +41,9 @@ p.close()
 sys.path.append(f"{repo_dir}/code/helpers")
 from landsat_config import get_landsat_config_vars
 
+# local imports
+from data_acquisition.cube.metropolitan_regions import get_region_bbox
+
 # Load .env file
 load_dotenv(dotenv_path=f"{repo_dir}/.env")
 
@@ -71,10 +74,7 @@ print(f"Processing region: {region} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 ######## Try except Landsat data processing ########
 try:
     ############ Define the bbox ############ 
-    # load from GSHL regions file
-    # region = config.get("regions", ["Leipzig"])[0]
-    ghsl_df_new = gpd.read_parquet(f"{repo_dir}/data/processed/ghsl_regions.parquet")
-    bbox_gdf = gpd.GeoDataFrame(geometry=ghsl_df_new[ghsl_df_new["region_name"]==region].bbox, crs="EPSG:4326")
+    bbox_gdf = get_region_bbox(region=region, repo_dir=repo_dir)
     bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
 
     ####### Get/Define the config parameters ########

@@ -15,6 +15,7 @@ from pyproj import CRS
 # local imports
 from data_acquisition.cube.urban_zones import define_urban_areas
 from data_acquisition.cube.reproject import reproject_ds
+from data_acquisition.cube.metropolitan_regions import get_region_bbox
 
 # combine function
 def combine_region_datasets(region, big_data_storage_path, repo_dir, region_filenames_json) -> xr.Dataset:
@@ -44,9 +45,8 @@ def combine_region_datasets(region, big_data_storage_path, repo_dir, region_file
         print(f"Processed Zarr file already exists at {processed_zarr_name}. Skipping processing.")
         return xr.open_zarr(processed_zarr_name, consolidated=True)
     
-    # define the bbox
-    ghsl_df_new = gpd.read_parquet(f"{repo_dir}/data/processed/ghsl_regions.parquet")
-    bbox_gdf = gpd.GeoDataFrame(geometry=ghsl_df_new[ghsl_df_new["region_name"]==region].bbox, crs="EPSG:4326")
+    # Get region bounding box
+    bbox_gdf = get_region_bbox(region=region, repo_dir=repo_dir)
 
     # reproject gdfs to utm zone
     easting, northing, zone_number, zone_letter = utm.from_latlon(bbox_gdf.geometry.centroid.y.values[0], bbox_gdf.geometry.centroid.x.values[0])

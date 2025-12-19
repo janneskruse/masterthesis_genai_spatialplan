@@ -34,6 +34,10 @@ from shapely.geometry import box, shape
 import utm
 from pyproj import CRS
 
+# local imports
+from data_acquisition.cube.metropolitan_regions import get_region_bbox
+from helpers.submit_job import submit_job_with_dependency
+
 # visualization
 from tqdm import tqdm
 
@@ -52,9 +56,6 @@ p=os.popen('git rev-parse --show-toplevel')
 repo_dir = p.read().strip()
 p.close()
 
-# import helper functions
-sys.path.append(f"{repo_dir}/code/helpers")
-from submit_job import submit_job_with_dependency
 
 with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
     config = yaml.safe_load(stream)
@@ -141,9 +142,8 @@ try:
         print(f"PlanetScope data already exists at {planet_zarr_name}, skipping processing.")
         exit(0)
     
-    ############ Define the bbox ############ 
-    ghsl_df_new = gpd.read_parquet(f"{repo_dir}/data/processed/ghsl_regions.parquet")
-    bbox_gdf = gpd.GeoDataFrame(geometry=ghsl_df_new[ghsl_df_new["region_name"]==region].bbox, crs="EPSG:4326")
+    ############ Define the bbox ############
+    bbox_gdf = get_region_bbox(region=region, repo_dir=repo_dir)
     bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
     coordinates=json.loads(bbox_gdf.geometry.to_json())["features"][0]["geometry"]["coordinates"]
 
