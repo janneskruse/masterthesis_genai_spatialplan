@@ -79,6 +79,11 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
         cache_dir=cache_dir
     )
     
+    # set seed for reproducibility
+    random.seed(42)
+    torch.manual_seed(42)
+    np.random.seed(42)
+    
     # Get a random sample for conditioning
     sample_idx = random.randint(0, len(dataset) - 1)
     print(f"\nUsing sample index {sample_idx} for conditioning")
@@ -216,6 +221,10 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     original_decoded = torch.clamp(original_decoded, -1., 1.)
     original_decoded = (original_decoded + 1) / 2
     
+    # additional clamp for safety
+    all_samples = torch.clamp(all_samples, 0., 1.)
+    original_decoded = torch.clamp(original_decoded, 0., 1.)
+    
     # Create grid with original first
     grid_images = torch.cat([original_decoded, all_samples], dim=0)
     grid = make_grid(grid_images, nrow=int(np.sqrt(num_samples + 1)) + 1, padding=4, pad_value=1.0)
@@ -227,6 +236,11 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     save_image(grid, output_path)
     
     print(f"\n✓ Saved samples to {output_path}")
+    
+    # Save mask for visualization purposes
+    mask_save_path = os.path.join(out_dir, 'mask.npy')
+    np.save(mask_save_path, mask_full.cpu().numpy().squeeze())
+    print(f"✓ Saved mask to {mask_save_path}")
     
     # Also save individual samples
     for idx, sample in enumerate(all_samples):
