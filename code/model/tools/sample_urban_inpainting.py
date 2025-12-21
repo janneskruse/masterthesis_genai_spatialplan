@@ -101,16 +101,10 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
             continue
         if isinstance(cond_input[key], torch.Tensor):
             cond_input[key] = cond_input[key].unsqueeze(0).to(device)
-    
-    # Get mask and context latent for inpainting
-    if 'mask' in cond_input:
-        # New format: mask stored separately
-        mask_full = cond_input['mask']  # [1, 1, H, W] in pixel space
-        print(f"Mask shape: {mask_full.shape}")
-    elif 'image' in cond_input and 'meta' in cond_input:
-        # Old cached format: mask in spatial image
+
+    # Extract mask and prepare context for inpainting
+    if 'image' in cond_input and 'meta' in cond_input:
         spatial_names = cond_input['meta']['spatial_names']
-        print(f"Spatial channels: {spatial_names}")
         try:
             mask_idx = spatial_names.index('inpaint_mask')
             mask_full = cond_input['image'][:, mask_idx:mask_idx+1, :, :]
@@ -118,38 +112,100 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
             print(f"Mask shape: {mask_full.shape}")
         except ValueError:
             raise ValueError(f"Mask not found. Available channels: {spatial_names}")
-    else:
-        raise ValueError("Mask not found in conditioning input")
-    
-    # Encode spatial context (the image conditioning)
-    if 'image' in cond_input:
+        
+        # Encode spatial context (image conditioning)
+        # and extract the masked RGB from spatial conditioning for context
         spatial_cond = cond_input['image']  # [1, C, H, W]
+        print(f"\n{'='*50}")
+        print("Channel Analysis")
+        print(f"{'='*50}")
         print(f"Spatial conditioning shape: {spatial_cond.shape}")
-        print(f"Spatial conditioning channels: {cond_input['meta']['spatial_names']}")
-    
-    # Extract the masked RGB from spatial conditioning for context
-    # Assume first 3 channels are masked RGB
-    if 'image' in cond_input:
-        masked_rgb = spatial_cond[:, :3, :, :]  # First 3 channels
-        print(f"Masked RGB shape: {masked_rgb.shape}")
+        print(f"Available conditioning channels: {spatial_names}")
+        
+        # Find RGB channel indices explicitly
+        rgb_channel_names = ['masked_image:blue', 'masked_image:green', 'masked_image:red']
+        rgb_indices = []
+        for channel_name in rgb_channel_names:
+            try:
+                idx = spatial_names.index(channel_name)
+                rgb_indices.append(idx)
+                print(f"✓ Found {channel_name} at index {idx}")
+            except ValueError:
+                print(f"⚠ Channel {channel_name} not found!")
+        
+        # Extract masked RGB channels
+        if len(rgb_indices) == 3:
+            # Extract RGB in BGR order (blue, green, red)
+            masked_rgb_bgr = spatial_cond[:, rgb_indices, :, :]
+            # Convert BGR to RGB
+            masked_rgb = torch.stack([
+                masked_rgb_bgr[:, 2, :, :],  # Red
+                masked_rgb_bgr[:, 1, :, :],  # Green
+                masked_rgb_bgr[:, 0, :, :]   # Blue
+            ], dim=1)
+            print(f"✓ Extracted RGB (converted from BGR) with shape: {masked_rgb.shape}")
+        else:
+            # Fallback: use first 3 channels
+            masked_rgb = spatial_cond[:, :3, :, :]
+            print(f"⚠ Using fallback: first 3 channels as RGB")
+            
+        print(f"\n{'='*50}")
+        print("Value Range Analysis (Before VAE Encoding)")
+        print(f"{'='*50}")
+        print(f"Masked RGB stats:")
+        print(f"  min: {masked_rgb.min().item():.4f}")
+        print(f"  max: {masked_rgb.max().item():.4f}")
+        print(f"  mean: {masked_rgb.mean().item():.4f}")
+        print(f"  std: {masked_rgb.std().item():.4f}")
+        
+        # Check if data is in [0, 1] or [-1, 1]
+        if masked_rgb.min() >= -0.1 and masked_rgb.max() <= 1.1:
+            print("✓ Data appears to be in [0, 1] range")
+            # Convert to [-1, 1] for VAE
+            masked_rgb_normalized = masked_rgb * 2.0 - 1.0
+            print("✓ Converted to [-1, 1] for VAE")
+        elif masked_rgb.min() >= -1.1 and masked_rgb.max() <= 1.1:
+            print("✓ Data already in [-1, 1] range")
+            masked_rgb_normalized = masked_rgb
+        else:
+            print(f"⚠ WARNING: Data range unexpected!")
+            print(f"  Clamping to [0, 1] then converting to [-1, 1]")
+            masked_rgb_normalized = torch.clamp(masked_rgb, 0., 1.) * 2.0 - 1.0
         
         # Encode to latent space
         with torch.no_grad():
-            x_context, _, _ = vae.encode(masked_rgb) # returns sample, mean, logvar
+            x_context, _, _ = vae.encode(masked_rgb_normalized)
+            print(f"\n{'='*50}")
+            print("Latent Space Analysis")
+            print(f"{'='*50}")
             print(f"Context latent shape: {x_context.shape}")
+            print(f"Context latent stats:")
+            print(f"  min: {x_context.min().item():.4f}")
+            print(f"  max: {x_context.max().item():.4f}")
+            print(f"  mean: {x_context.mean().item():.4f}")
+            print(f"  std: {x_context.std().item():.4f}")
             
             # Get actual latent dimensions from VAE output
             actual_latent_h = x_context.shape[2]
             actual_latent_w = x_context.shape[3]
             print(f"Actual latent size from VAE: {actual_latent_h}x{actual_latent_w}")
+            
+            # Test decode to verify VAE reconstruction
+            test_decoded = vae.decode(x_context)
+            print(f"\nTest VAE reconstruction stats:")
+            print(f"  min: {test_decoded.min().item():.4f}")
+            print(f"  max: {test_decoded.max().item():.4f}")
+            print(f"  mean: {test_decoded.mean().item():.4f}")
     
-    # Downsample mask to latent resolution
-    mask_latent = F.interpolate(
-        mask_full,
-        size=(actual_latent_h, actual_latent_w),
-        mode='nearest'
-    )
-    print(f"Mask latent shape: {mask_latent.shape}")
+        # Downsample mask to latent resolution
+        mask_latent = F.interpolate(
+            mask_full,
+            size=(actual_latent_h, actual_latent_w),
+            mode='nearest'
+        )
+        print(f"Mask latent shape: {mask_latent.shape}")
+    else:
+        raise ValueError("Conditioning input must contain 'image' and 'meta' keys")
     
     # Create unconditional input for classifier-free guidance
     uncond_input = {}
@@ -177,7 +233,9 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
             actual_latent_w
         ).to(device)
         
-        # Replace known region with noisy context
+        # xt is the noisy latent at the current timestep
+        # this replaces the known (unmasked) regions with the encoded context and keeps
+        # the masked regions as noise
         xt = mask_latent * xt + (1 - mask_latent) * x_context
         
         for i in tqdm(reversed(range(diffusion_config['num_timesteps'])), 
