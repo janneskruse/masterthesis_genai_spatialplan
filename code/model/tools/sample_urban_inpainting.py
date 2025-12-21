@@ -436,14 +436,12 @@ if __name__ == '__main__':
         action='store_true',
         help='Whether to overwrite existing samples',
         default=False,
-        help='Whether to overwrite existing sample paths'
     )
     parser.add_argument(
         '--clamp_sampling',
         action='store_true',
         help='Whether to clamp sampling outputs to [-1, 1]',
         default=True,
-        help='Whether to clamp sampling outputs to [-1, 1]'
     )
     args = parser.parse_args()
     infer(args)
