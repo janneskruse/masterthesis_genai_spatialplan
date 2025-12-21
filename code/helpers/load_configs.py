@@ -14,14 +14,17 @@ def load_configs() -> Dict:
         except FileNotFoundError:
             pass
         
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(add_help=False) # to allow import without command line args
     parser.add_argument('--config', type=str, default='code/model/config/diffusion_1.yml', help='Path to the experiment config file')
     parser.add_argument('--data_config', type=str, default='code/data_acquisition/config.yml', help='Path to the data config file')
-    args = parser.parse_args()
+    # args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
     
     print(f"Loading config from: {args.config}")
     print(f"Loading data config from: {args.data_config}")
+    print(f"Unknown args: {unknown}")
 
+    # determine repo root directory
     if os.path.exists('/.dockerenv'):
         # Running in Docker - use /app as repo_dir
         repo_dir = '/app'
