@@ -13,6 +13,8 @@ class VAE(nn.Module):
         self.num_down_layers = model_config['num_down_layers']
         self.num_mid_layers = model_config['num_mid_layers']
         self.num_up_layers = model_config['num_up_layers']
+        self.tanh_activation = model_config.get('tanh_activation', False)
+        self.tanh_scaling = model_config.get('tanh_scaling', 1.0)
         
         # To disable attention in Downblock of Encoder and Upblock of Decoder
         self.attns = model_config['attn_down']
@@ -113,6 +115,12 @@ class VAE(nn.Module):
         out = self.decoder_norm_out(out)
         out = nn.SiLU()(out)
         out = self.decoder_conv_out(out)
+        
+        # Ensure output is in [-1, 1] with optional scaling  
+        # to prevent saturation
+        if self.tanh_activation:
+            out = torch.tanh(out) * self.tanh_scaling 
+        
         return out
 
     def forward(self, x):
