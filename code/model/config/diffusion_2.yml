@@ -98,6 +98,8 @@ train_params:
   
   # Classifier-free guidance scale for sampling
   cf_guidance_scale: 7.5  # Higher = more conditioning influence
+  overwrite_samples: False # wether to overwrite existing sample file paths
+  clamp_sampling: True # whether to clamp sampling outputs to [-1, 1]
   
   # file/folder names
   task_name: 'diffusion_2'

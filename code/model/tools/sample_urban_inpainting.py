@@ -28,6 +28,7 @@ from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import get_config_value
 from helpers.load_configs import load_configs
+from helpers.indexed_outputs import get_next_run_idx
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -35,7 +36,9 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
                      autoencoder_model_config, diffusion_config, dataset_config,
                      big_data_storage_path, vae,
-                     num_samples=4, guidance_scale=7.5):
+                     num_samples=4, guidance_scale=7.5,
+                     overwrite_samples=False,
+                     clamp_sampling=True):
     """
     Sample urban layouts using inpainting diffusion model.
     
@@ -192,6 +195,8 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
             
             # Test decode to verify VAE reconstruction
             test_decoded = vae.decode(x_context)
+            if clamp_sampling:
+                test_decoded = torch.clamp(test_decoded, -1., 1.)
             print(f"\nTest VAE reconstruction stats:")
             print(f"  min: {test_decoded.min().item():.4f}")
             print(f"  max: {test_decoded.max().item():.4f}")
@@ -263,6 +268,8 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
         # Decode final latent
         with torch.no_grad():
             generated_img = vae.decode(xt)
+            if clamp_sampling:
+                generated_img = torch.clamp(generated_img, -1., 1.)
         
         all_samples.append(generated_img)
     
@@ -272,9 +279,11 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     # Also include the original masked image for comparison
     with torch.no_grad():
         original_decoded = vae.decode(x_context)
+        if clamp_sampling:
+            original_decoded = torch.clamp(original_decoded, -1., 1.)
     
     # Normalize to [0, 1]
-    all_samples = torch.clamp(all_samples, -1., 1.)
+    all_samples = torch.clamp(all_samples, -1., 1.) 
     all_samples = (all_samples + 1) / 2
     original_decoded = torch.clamp(original_decoded, -1., 1.)
     original_decoded = (original_decoded + 1) / 2
@@ -290,19 +299,30 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     # Save results
     out_dir = f"{big_data_storage_path}/results/{train_config.get('task_name', 'urban_inpainting')}/output"
     os.makedirs(out_dir, exist_ok=True)
-    output_path = os.path.join(out_dir, f'samples_guidance{guidance_scale}.png')
-    save_image(grid, output_path)
     
+    # Get next run index
+    base_name = f'samples_guidance{guidance_scale}'
+    run_idx = get_next_run_idx(out_dir, base_name)
+    if overwrite_samples and run_idx > 0:
+        run_idx -= 1
+        
+    print(f"\n{'='*50}")
+    print(f"Output Run Index: {run_idx}")
+    print(f"{'='*50}")
+    
+    # Save grid with run index
+    output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}.png')
+    save_image(grid, output_path)
     print(f"\n✓ Saved samples to {output_path}")
     
     # Save mask for visualization purposes
-    mask_save_path = os.path.join(out_dir, 'mask.npy')
+    mask_save_path = os.path.join(out_dir, f'mask_idx{run_idx}.npy')
     np.save(mask_save_path, mask_full.cpu().numpy().squeeze())
     print(f"✓ Saved mask to {mask_save_path}")
     
-    # Also save individual samples
+    # Also save individual samples with run index
     for idx, sample in enumerate(all_samples):
-        individual_path = os.path.join(out_dir, f'sample_{idx}.png')
+        individual_path = os.path.join(out_dir, f'sample_{idx}_idx{run_idx}.png')
         save_image(sample, individual_path)
     
     print(f"✓ Saved {num_samples} individual samples")
@@ -377,15 +397,19 @@ def infer(args):
     print(f"✓ Loaded VAE from {vae_path}")
     
     ########## Sample #############
-    guidance_scale = train_config.get('cf_guidance_scale', 7.5)
+    guidance_scale = args.guidance_scale if args.guidance_scale is not None else train_config.get('cf_guidance_scale', 7.5)
     num_samples = args.num_samples
+    overwrite_samples = args.overwrite_samples if args.overwrite_samples is not None else train_config.get('overwrite_samples', False)
+    clamp_sampling = args.clamp_sampling if args.clamp_sampling is not None else train_config.get('clamp_sampling', True)
     
     with torch.no_grad():
         samples = sample_inpainting(
             model, scheduler, train_config, diffusion_model_config,
             autoencoder_model_config, diffusion_config, dataset_config, big_data_storage_path, vae,
             num_samples=num_samples,
-            guidance_scale=guidance_scale
+            guidance_scale=guidance_scale,
+            overwrite_samples=overwrite_samples,
+            clamp_sampling=clamp_sampling
         )
     
     print("\n" + "="*50)
@@ -400,6 +424,26 @@ if __name__ == '__main__':
         type=int,
         default=4,
         help='Number of samples to generate'
+    )
+    parser.add_argument(
+        '--guidance_scale',
+        type=float,
+        default=7.5,
+        help='Classifier-free guidance scale'
+    )
+    parser.add_argument(
+        '--overwrite_samples',
+        action='store_true',
+        help='Whether to overwrite existing samples',
+        default=False,
+        help='Whether to overwrite existing sample paths'
+    )
+    parser.add_argument(
+        '--clamp_sampling',
+        action='store_true',
+        help='Whether to clamp sampling outputs to [-1, 1]',
+        default=True,
+        help='Whether to clamp sampling outputs to [-1, 1]'
     )
     args = parser.parse_args()
     infer(args)
