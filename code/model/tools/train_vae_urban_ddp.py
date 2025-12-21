@@ -348,6 +348,9 @@ def train_vae():
     disc_weight = train_config.get('disc_weight', 0.5)
     disc_start_epoch = train_config.get('disc_start', 10000) // len(data_loader)  # Convert steps to epochs
     
+    # out of bounds penalization
+    penalize_out_of_range = train_config.get('penalize_out_of_range', False)
+    
     if is_main:
         print(f"\n✓ Training for {num_epochs} epochs")
         print(f"✓ Learning rate: {train_config['autoencoder_lr']}")
@@ -355,7 +358,8 @@ def train_vae():
         print(f"✓ KL weight: {kl_weight}")
         print(f"✓ Perceptual weight: {perceptual_weight}")
         print(f"✓ Discriminator weight: {disc_weight} (starting epoch {disc_start_epoch})")
-    
+        print(f"✓ Out-of-bounds penalization: {'Enabled' if penalize_out_of_range else 'Disabled'}")
+        
     ########## Training Loop #############
     if is_main:
         print("\n" + "="*50)
@@ -403,6 +407,11 @@ def train_vae():
             
             # Reconstruction loss (L1)
             recon_loss = torch.abs(im - im_recon).mean()
+            
+            # Out-of-bounds penalization
+            if penalize_out_of_range:
+                range_penalty = torch.relu(torch.abs(im_recon) - 1.0).mean()
+                recon_loss = recon_loss + 0.1 * range_penalty  # weighted penalty
             
             # KL divergence loss
             kl_loss = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp())
