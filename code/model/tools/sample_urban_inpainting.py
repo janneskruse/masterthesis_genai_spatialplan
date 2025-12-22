@@ -577,9 +577,9 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     return all_samples
 
 
-def infer(args):
+def infer(args, config):
     ###### setup config variables #######
-    config = load_configs()
+    # config is now passed as argument
     # repo_dir = config['repo_dir']
     data_config = config['data_config']
 
@@ -665,7 +665,14 @@ def infer(args):
 
 
 if __name__ == '__main__':
+    # Create parser with all arguments
     parser = argparse.ArgumentParser(description='Sample from urban inpainting model')
+    
+    # Add config file arguments
+    from helpers.load_configs import add_config_arguments
+    add_config_arguments(parser)
+    
+    # Add sampling-specific arguments
     parser.add_argument(
         '--num_samples',
         type=int,
@@ -690,5 +697,12 @@ if __name__ == '__main__':
         help='Whether to clamp sampling outputs to [-1, 1]',
         default=True,
     )
+    
+    # Parse arguments
     args = parser.parse_args()
-    infer(args)
+    
+    # Load configs using the parser (which now has all arguments)
+    config = load_configs(parser)
+    
+    # Run inference
+    infer(args, config)

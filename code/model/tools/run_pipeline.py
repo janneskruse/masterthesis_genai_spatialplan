@@ -35,13 +35,14 @@ def run_command(cmd, description):
 
 
 def main():
+    # Create parser with all arguments
     parser = argparse.ArgumentParser(description='Urban inpainting training pipeline')
-    parser.add_argument(
-        '--config',
-        type=str,
-        default='code/model/config/diffusion_1.yml',
-        help='Path to config file'
-    )
+    
+    # Add config file arguments
+    from helpers.load_configs import add_config_arguments
+    add_config_arguments(parser)
+    
+    # Add pipeline-specific arguments
     parser.add_argument(
         '--skip-validation',
         action='store_true',
@@ -68,6 +69,8 @@ def main():
         default=8,
         help='Number of samples to generate'
     )
+    
+    # Parse arguments
     args = parser.parse_args()
     
     print("="*60)
@@ -75,7 +78,8 @@ def main():
     print("="*60)
     print()
     
-    config = load_configs()
+    # Load configs using the parser
+    config = load_configs(parser)
     # data_config = config['data_config']
     
     cluster_run = get_config_value(config, 'cluster', default=False)

@@ -1,23 +1,48 @@
 import os
-from typing import Dict
+from typing import Dict, Optional
 import argparse
 # from pathlib import Path
 import yaml
 # import json
 
-def load_configs() -> Dict:
-    """Load configuration from config.yml."""
+def add_config_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    """
+    Add configuration file arguments to an existing parser.
+    
+    Args:
+        parser: ArgumentParser to add config arguments to
+        
+    Returns:
+        The same parser with config arguments added
+    """
+    parser.add_argument('--config', type=str, default='code/model/config/diffusion_1.yml', 
+                       help='Path to the experiment config file')
+    parser.add_argument('--data_config', type=str, default='code/data_acquisition/config.yml', 
+                       help='Path to the data config file')
+    return parser
+
+def load_configs(parser: Optional[argparse.ArgumentParser] = None) -> Dict:
+    """
+    Load configuration from config.yml.
+    
+    Args:
+        parser: Optional ArgumentParser with arguments already defined.
+                If None, creates a new parser with just config arguments.
+                
+    Returns:
+        Dictionary containing merged configuration
+    """
     repo_name = 'masterthesis_genai_spatialplan'
     if repo_name not in os.getcwd():
         try:
             os.chdir(repo_name)
         except FileNotFoundError:
             pass
-        
-    parser = argparse.ArgumentParser(add_help=False) # to allow import without command line args
-    parser.add_argument('--config', type=str, default='code/model/config/diffusion_1.yml', help='Path to the experiment config file')
-    parser.add_argument('--data_config', type=str, default='code/data_acquisition/config.yml', help='Path to the data config file')
-    # args = parser.parse_args()
+    
+    if parser is None:
+        parser = argparse.ArgumentParser(add_help=False)
+        add_config_arguments(parser)
+    
     args, unknown = parser.parse_known_args()
     
     print(f"Loading config from: {args.config}")

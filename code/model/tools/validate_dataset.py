@@ -152,20 +152,21 @@ def visualize_sample(sample_data, save_path=None):
     plt.close()
 
 
-def validate_dataset(num_samples=5):
+def validate_dataset(num_samples=5, config=None):
     """
     Validate dataset loading and visualize samples.
     
     Args:
-        config_path: Path to config file
         num_samples: Number of samples to visualize
+        config: Configuration dict (if None, will load from load_configs)
     """
     print("="*50)
     print("Dataset Validation")
     print("="*50)
     
     ###### setup config variables #######
-    config = load_configs()
+    if config is None:
+        config = load_configs()
     # repo_dir = config['repo_dir']
     data_config = config['data_config']
     
@@ -254,13 +255,26 @@ def validate_dataset(num_samples=5):
 
 
 if __name__ == '__main__':
+    # Create parser with all arguments
     parser = argparse.ArgumentParser(description='Validate urban inpainting dataset')
+    
+    # Add config file arguments
+    from helpers.load_configs import add_config_arguments
+    add_config_arguments(parser)
+    
+    # Add validation-specific arguments
     parser.add_argument(
         '--num_samples',
         type=int,
         default=5,
         help='Number of samples to visualize'
     )
+    
+    # Parse arguments
     args = parser.parse_args()
     
-    validate_dataset(args.num_samples)
+    # Load configs using the parser
+    config = load_configs(parser)
+    
+    # Run validation
+    validate_dataset(args.num_samples, config)
