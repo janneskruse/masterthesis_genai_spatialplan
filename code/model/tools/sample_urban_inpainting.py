@@ -33,6 +33,39 @@ from helpers.indexed_outputs import get_next_run_idx
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
+def calculate_ndvi_from_rgb(rgb):
+    """
+    Calculate NDVI approximation from RGB image.
+    
+    For multispectral data: NDVI = (NIR - Red) / (NIR + Red)
+    For RGB approximation: NDVI ≈ (Green - Red) / (Green + Red)
+    
+    Args:
+        rgb: RGB tensor [B, 3, H, W] or [3, H, W] in range [-1, 1] or [0, 1]
+        
+    Returns:
+        NDVI tensor [B, 1, H, W] or [1, H, W] in range [-1, 1]
+    """
+    # Ensure proper range [0, 1]
+    if rgb.min() < -0.1:  # Likely in [-1, 1]
+        rgb_normalized = (rgb + 1) / 2
+    else:
+        rgb_normalized = rgb
+    
+    # Extract channels (assuming RGB order)
+    if rgb.dim() == 4:  # [B, C, H, W]
+        red = rgb_normalized[:, 0:1, :, :]
+        green = rgb_normalized[:, 1:2, :, :]
+    else:  # [C, H, W]
+        red = rgb_normalized[0:1, :, :]
+        green = rgb_normalized[1:2, :, :]
+    
+    # Calculate NDVI
+    ndvi = (green - red) / (green + red + 1e-8)
+    
+    return ndvi
+
+
 def create_mask_overlay(rgb, masks, layer_names, alpha=0.5):
     """
     Create visualization with colored masks overlaid on RGB image.
@@ -49,6 +82,7 @@ def create_mask_overlay(rgb, masks, layer_names, alpha=0.5):
     colors = {
         'buildings': torch.tensor([1.0, 0.0, 0.0]),  # Red
         'streets': torch.tensor([0.8, 0.8, 0.0]),    # Yellow
+        'street_blocks': torch.tensor([0.9, 0.6, 0.0]), # Orange
         'water': torch.tensor([0.0, 0.5, 1.0]),      # Blue
         'vegetation': torch.tensor([0.0, 1.0, 0.0]), # Green
     }
@@ -81,20 +115,25 @@ def create_mask_overlay(rgb, masks, layer_names, alpha=0.5):
 def save_samples_with_masks(
     rgb_samples,
     seg_masks,
+    env_preds,
     out_dir,
     run_idx,
     osm_layer_names,
+    env_layer_names,
     guidance_scale
 ):
     """
-    Save RGB samples with segmentation masks.
+    Save RGB samples with segmentation masks and environmental predictions.
+    Also calculates and saves NDVI from RGB.
     
     Args:
         rgb_samples: List of RGB tensors [1, 3, H, W]
-        seg_masks: List of segmentation tensors [1, num_classes, H, W] or None
+        seg_masks: List of OSM segmentation tensors [1, num_classes, H, W] or None
+        env_preds: List of environmental prediction tensors [1, num_env, H, W] or None
         out_dir: Output directory
         run_idx: Run index for filenames
         osm_layer_names: List of OSM layer names
+        env_layer_names: List of environmental layer names (e.g., ['temperature'])
         guidance_scale: Guidance scale used
     """
     os.makedirs(out_dir, exist_ok=True)
@@ -104,31 +143,58 @@ def save_samples_with_masks(
         rgb_path = os.path.join(out_dir, f'sample_{idx}_rgb_guidance{guidance_scale}_idx{run_idx}.png')
         save_image(rgb, rgb_path)
         
+        # Calculate and save NDVI from RGB
+        ndvi_calculated = calculate_ndvi_from_rgb(rgb)
+        # Normalize to [0, 1] for visualization
+        ndvi_norm = (ndvi_calculated + 1) / 2  # NDVI is in [-1, 1]
+        ndvi_path = os.path.join(out_dir, f'sample_{idx}_env_ndvi_calculated_guidance{guidance_scale}_idx{run_idx}.png')
+        save_image(ndvi_norm, ndvi_path)
+        
+        # Save OSM masks
         if seg_masks is not None and idx < len(seg_masks):
             masks = seg_masks[idx]  # [1, num_classes, H, W]
             
-            # Save individual masks
+            # Save individual OSM masks
             for mask_idx, layer_name in enumerate(osm_layer_names):
                 if mask_idx >= masks.shape[1]:
                     break
                 mask = masks[:, mask_idx:mask_idx+1, :, :]  # [1, 1, H, W]
                 mask_path = os.path.join(
                     out_dir,
-                    f'sample_{idx}_{layer_name}_guidance{guidance_scale}_idx{run_idx}.png'
+                    f'sample_{idx}_osm_{layer_name}_guidance{guidance_scale}_idx{run_idx}.png'
                 )
                 save_image(mask, mask_path)
             
-            # Create and save overlay
+            # Create and save OSM overlay
             rgb_single = rgb.squeeze(0)  # [3, H, W]
             masks_single = masks.squeeze(0)  # [num_classes, H, W]
             overlay = create_mask_overlay(rgb_single, masks_single, osm_layer_names, alpha=0.4)
             overlay_path = os.path.join(
                 out_dir,
-                f'sample_{idx}_overlay_guidance{guidance_scale}_idx{run_idx}.png'
+                f'sample_{idx}_osm_overlay_guidance{guidance_scale}_idx{run_idx}.png'
             )
             save_image(overlay, overlay_path)
+        
+        # Save environmental predictions
+        if env_preds is not None and idx < len(env_preds):
+            env = env_preds[idx]  # [1, num_env, H, W]
+            
+            # Save individual environmental layers
+            for env_idx, layer_name in enumerate(env_layer_names):
+                if env_idx >= env.shape[1]:
+                    break
+                env_layer = env[:, env_idx:env_idx+1, :, :]  # [1, 1, H, W]
+                
+                # Normalize to [0, 1] for visualization
+                env_layer_norm = (env_layer - env_layer.min()) / (env_layer.max() - env_layer.min() + 1e-8)
+                
+                env_path = os.path.join(
+                    out_dir,
+                    f'sample_{idx}_env_{layer_name}_guidance{guidance_scale}_idx{run_idx}.png'
+                )
+                save_image(env_layer_norm, env_path)
     
-    print(f"✓ Saved {len(rgb_samples)} samples with segmentation masks")
+    print(f"✓ Saved {len(rgb_samples)} samples with OSM masks, environmental predictions, and calculated NDVI")
 
 
 def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
@@ -158,17 +224,31 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     
     model.eval()
     
-    # Check if model has segmentation head
+    # Check if model has auxiliary prediction heads
     has_seg_head = hasattr(model, 'segmentation_head') and model.segmentation_head is not None
-    if return_segmentation and not has_seg_head:
-        print("⚠ Warning: return_segmentation=True but model has no segmentation head")
+    has_env_head = hasattr(model, 'environmental_head') and model.environmental_head is not None
+    
+    if return_segmentation and not (has_seg_head or has_env_head):
+        print("⚠ Warning: return_segmentation=True but model has no auxiliary heads")
         return_segmentation = False
     
-    if has_seg_head:
-        print(f"✓ Model has segmentation head - will extract OSM masks")
-        condition_config = get_config_value(diffusion_model_config, 'condition_config', None)
-        osm_layers = condition_config.get('osm_layers', []) if condition_config else []
-        print(f"  OSM layers: {osm_layers}")
+    osm_layers = []
+    env_layers = []
+    condition_config = get_config_value(diffusion_model_config, 'condition_config', None)
+    
+    if condition_config:
+        if has_seg_head:
+            osm_layers = condition_config.get('osm_layers', [])
+            print(f"✓ Model has OSM segmentation head - will extract {len(osm_layers)} layers")
+            print(f"  OSM layers: {osm_layers}")
+        
+        if has_env_head:
+            # Use prediction layers only (temperature, not NDVI)
+            env_layers = condition_config.get('environmental_prediction_layers',
+                                             condition_config.get('environmental_layers', []))
+            print(f"✓ Model has environmental head - will extract {len(env_layers)} layers")
+            print(f"  Environmental layers: {env_layers}")
+            print(f"  Note: NDVI will be calculated from RGB post-hoc")
     
     # Get latent size
     im_size = dataset_config['patch_size_m'] // dataset_config['res']
@@ -339,6 +419,7 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     
     all_samples = []
     all_segmentations = [] if has_seg_head else None
+    all_env_predictions = [] if has_env_head else None
     
     for sample_idx in range(num_samples):
         print(f"\nGenerating sample {sample_idx + 1}/{num_samples}")
@@ -361,26 +442,48 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
             t = torch.tensor([i]).long().to(device)
             
             with torch.no_grad():
-                # Conditional prediction (with optional segmentation)
-                if has_seg_head:
-                    noise_pred_cond, seg_pred_cond = model(xt, t, cond_input=cond_input, return_segmentation=True)
+                # Conditional prediction (with optional auxiliary outputs)
+                if has_seg_head or has_env_head:
+                    outputs_cond = model(xt, t, cond_input=cond_input, return_segmentation=True)
+                    noise_pred_cond = outputs_cond[0]
+                    seg_pred_cond = outputs_cond[1] if len(outputs_cond) > 1 else None
+                    env_pred_cond = outputs_cond[2] if len(outputs_cond) > 2 else None
                 else:
                     noise_pred_cond = model(xt, t, cond_input=cond_input)
+                    seg_pred_cond = None
+                    env_pred_cond = None
                 
                 # Classifier-free guidance
                 if guidance_scale > 1:
-                    if has_seg_head:
-                        noise_pred_uncond, seg_pred_uncond = model(xt, t, cond_input=uncond_input, return_segmentation=True)
-                        # Apply guidance to both noise and segmentation
+                    if has_seg_head or has_env_head:
+                        outputs_uncond = model(xt, t, cond_input=uncond_input, return_segmentation=True)
+                        noise_pred_uncond = outputs_uncond[0]
+                        seg_pred_uncond = outputs_uncond[1] if len(outputs_uncond) > 1 else None
+                        env_pred_uncond = outputs_uncond[2] if len(outputs_uncond) > 2 else None
+                        
+                        # Apply guidance to noise
                         noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
-                        seg_pred = seg_pred_uncond + guidance_scale * (seg_pred_cond - seg_pred_uncond)
+                        
+                        # Apply guidance to OSM segmentation
+                        if seg_pred_cond is not None and seg_pred_uncond is not None:
+                            seg_pred = seg_pred_uncond + guidance_scale * (seg_pred_cond - seg_pred_uncond)
+                        else:
+                            seg_pred = seg_pred_cond
+                        
+                        # Apply guidance to environmental predictions
+                        if env_pred_cond is not None and env_pred_uncond is not None:
+                            env_pred = env_pred_uncond + guidance_scale * (env_pred_cond - env_pred_uncond)
+                        else:
+                            env_pred = env_pred_cond
                     else:
                         noise_pred_uncond = model(xt, t, cond_input=uncond_input)
                         noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                        seg_pred = None
+                        env_pred = None
                 else:
                     noise_pred = noise_pred_cond
-                    if has_seg_head:
-                        seg_pred = seg_pred_cond
+                    seg_pred = seg_pred_cond
+                    env_pred = env_pred_cond
                 
                 # Sample previous timestep with inpainting constraint
                 xt, x0_pred = scheduler.sample_prev_timestep_inpainting(
@@ -395,10 +498,14 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
         
         all_samples.append(generated_img)
         
-        # Store final segmentation prediction
-        if has_seg_head:
+        # Store final auxiliary predictions
+        if has_seg_head and seg_pred is not None:
             seg_final = torch.sigmoid(seg_pred)  # Convert logits to probabilities
             all_segmentations.append(seg_final)
+        
+        if has_env_head and env_pred is not None:
+            # Environmental predictions are continuous values (no sigmoid)
+            all_env_predictions.append(env_pred)
     
     # Stack all samples
     all_samples = torch.cat(all_samples, dim=0)  # [num_samples, C, H, W]
@@ -454,14 +561,16 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     
     print(f"✓ Saved {num_samples} individual samples")
     
-    # Save segmentation masks if available
-    if has_seg_head and all_segmentations:
+    # Save auxiliary predictions if available
+    if (has_seg_head and all_segmentations) or (has_env_head and all_env_predictions):
         save_samples_with_masks(
             all_samples,
             all_segmentations,
+            all_env_predictions,
             out_dir,
             run_idx,
             osm_layers,
+            env_layers,
             guidance_scale
         )
     

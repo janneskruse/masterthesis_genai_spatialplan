@@ -44,6 +44,9 @@ ldm_params: # latent diffusion model parameters
     
     # Environmental layers to use
     environmental_layers: ['ndvi', 'landsat_surface_temp_b10_masked']
+  
+    # Environmental layers to predict (output heads) - NDVI calculated from RGB post-hoc
+    environmental_prediction_layers: ['landsat_surface_temp_b10_masked']
     
     # Image conditioning config (for spatial conditions)
     image_condition_config:
@@ -95,6 +98,10 @@ train_params:
   mask_loss_weight: 2.0  # Weight loss inside mask region higher
   boundary_loss_weight: 1.5  # Extra weight for boundary pixels
   temperature_loss_weight: 0.0  # Will increase gradually during training
+
+  # Auxiliary prediction loss weights
+  seg_loss_weight: 0.1  # OSM segmentation loss weight (BCE)
+  env_loss_weight: 0.1  # Environmental prediction loss weight (MSE)
   
   # Classifier-free guidance scale for sampling
   cf_guidance_scale: 7.5  # Higher = more conditioning influence

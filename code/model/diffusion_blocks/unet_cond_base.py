@@ -134,16 +134,35 @@ class Unet(nn.Module):
         
         # Segmentation head for reconstructing OSM masks
         self.segmentation_head = None
-        if self.condition_config is not None and 'osm_features' in self.condition_config.get('condition_types', []):
-            num_osm_classes = len(self.condition_config.get('osm_layers', []))
-            if num_osm_classes > 0:
-                # Separate head for segmentation output
-                self.segmentation_head = nn.Sequential(
-                    nn.GroupNorm(self.norm_channels, self.conv_out_channels),
-                    nn.SiLU(),
-                    nn.Conv2d(self.conv_out_channels, num_osm_classes, kernel_size=3, padding=1)
-                )
-                print(f"✓ Initialized segmentation head with {num_osm_classes} OSM classes")
+        self.environmental_head = None
+        
+        if self.condition_config is not None:
+            condition_types = self.condition_config.get('condition_types', [])
+            
+            # OSM feature prediction head
+            if 'osm_features' in condition_types:
+                num_osm_classes = len(self.condition_config.get('osm_layers', []))
+                if num_osm_classes > 0:
+                    self.segmentation_head = nn.Sequential(
+                        nn.GroupNorm(self.norm_channels, self.conv_out_channels),
+                        nn.SiLU(),
+                        nn.Conv2d(self.conv_out_channels, num_osm_classes, kernel_size=3, padding=1)
+                    )
+                    print(f"✓ Initialized OSM segmentation head with {num_osm_classes} classes")
+            
+            # Environmental layer prediction head
+            if 'environmental' in condition_types:
+                # Use prediction layers (subset of conditioning layers)
+                env_pred_layers = self.condition_config.get('environmental_prediction_layers', 
+                                                           self.condition_config.get('environmental_layers', []))
+                num_env_classes = len(env_pred_layers)
+                if num_env_classes > 0:
+                    self.environmental_head = nn.Sequential(
+                        nn.GroupNorm(self.norm_channels, self.conv_out_channels),
+                        nn.SiLU(),
+                        nn.Conv2d(self.conv_out_channels, num_env_classes, kernel_size=3, padding=1)
+                    )
+                    print(f"✓ Initialized environmental prediction head with {num_env_classes} layers: {env_pred_layers}")
     
     def _compute_expected_conditioning_channels(self) -> int:
         """
@@ -183,11 +202,14 @@ class Unet(nn.Module):
             x: Input tensor [B, C, H, W]
             t: Timestep [B] or int
             cond_input: Conditioning dictionary
-            return_segmentation: If True, return both RGB and segmentation predictions
+            return_segmentation: If True, return auxiliary predictions (OSM, environmental)
             
         Returns:
             If return_segmentation=False: noise prediction [B, C, H, W]
-            If return_segmentation=True: (noise prediction, segmentation logits)
+            If return_segmentation=True: (noise_pred, osm_seg, env_pred)
+                - noise_pred: [B, C, H, W]
+                - osm_seg: [B, num_osm, H, W] or None
+                - env_pred: [B, num_env, H, W] or None
         """
         # Shapes assuming downblocks are [C1, C2, C3, C4]
         # Shapes assuming midblocks are [C4, C4, C3]
@@ -250,10 +272,26 @@ class Unet(nn.Module):
         rgb_out = self.conv_out(rgb_out)
         # rgb_out B x C x H x W
         
-        # Optional segmentation output
-        if return_segmentation and self.segmentation_head is not None:
-            seg_out = self.segmentation_head(out)
-            # seg_out B x num_osm_classes x H x W
-            return rgb_out, seg_out
+        # Optional auxiliary predictions
+        if return_segmentation:
+            outputs = [rgb_out]
+            
+            # OSM segmentation
+            if self.segmentation_head is not None:
+                seg_out = self.segmentation_head(out)
+                # seg_out B x num_osm_classes x H x W
+                outputs.append(seg_out)
+            else:
+                outputs.append(None)
+            
+            # Environmental predictions
+            if self.environmental_head is not None:
+                env_out = self.environmental_head(out)
+                # env_out B x num_env_classes x H x W
+                outputs.append(env_out)
+            else:
+                outputs.append(None)
+            
+            return tuple(outputs)  # (rgb_out, seg_out, env_out)
         
         return rgb_out
