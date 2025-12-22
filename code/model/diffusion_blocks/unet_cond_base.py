@@ -131,6 +131,19 @@ class Unet(nn.Module):
         
         self.norm_out = nn.GroupNorm(self.norm_channels, self.conv_out_channels)
         self.conv_out = nn.Conv2d(self.conv_out_channels, im_channels, kernel_size=3, padding=1)
+        
+        # Segmentation head for reconstructing OSM masks
+        self.segmentation_head = None
+        if self.condition_config is not None and 'osm_features' in self.condition_config.get('condition_types', []):
+            num_osm_classes = len(self.condition_config.get('osm_layers', []))
+            if num_osm_classes > 0:
+                # Separate head for segmentation output
+                self.segmentation_head = nn.Sequential(
+                    nn.GroupNorm(self.norm_channels, self.conv_out_channels),
+                    nn.SiLU(),
+                    nn.Conv2d(self.conv_out_channels, num_osm_classes, kernel_size=3, padding=1)
+                )
+                print(f"✓ Initialized segmentation head with {num_osm_classes} OSM classes")
     
     def _compute_expected_conditioning_channels(self) -> int:
         """
@@ -162,7 +175,20 @@ class Unet(nn.Module):
         
         return total_channels
     
-    def forward(self, x, t, cond_input=None):
+    def forward(self, x, t, cond_input=None, return_segmentation=False):
+        """
+        Forward pass through U-Net.
+        
+        Args:
+            x: Input tensor [B, C, H, W]
+            t: Timestep [B] or int
+            cond_input: Conditioning dictionary
+            return_segmentation: If True, return both RGB and segmentation predictions
+            
+        Returns:
+            If return_segmentation=False: noise prediction [B, C, H, W]
+            If return_segmentation=True: (noise prediction, segmentation logits)
+        """
         # Shapes assuming downblocks are [C1, C2, C3, C4]
         # Shapes assuming midblocks are [C4, C4, C3]
         # Shapes assuming downsamples are [True, True, False]
@@ -217,8 +243,17 @@ class Unet(nn.Module):
             down_out = down_outs.pop()
             out = up(out, down_out, t_emb, context_hidden_states)
             # out [B x C2 x H/4 x W/4, B x C1 x H/2 x W/2, B x 16 x H x W]
-        out = self.norm_out(out)
-        out = nn.SiLU()(out)
-        out = self.conv_out(out)
-        # out B x C x H x W
-        return out
+        
+        # RGB output (noise prediction)
+        rgb_out = self.norm_out(out)
+        rgb_out = nn.SiLU()(rgb_out)
+        rgb_out = self.conv_out(rgb_out)
+        # rgb_out B x C x H x W
+        
+        # Optional segmentation output
+        if return_segmentation and self.segmentation_head is not None:
+            seg_out = self.segmentation_head(out)
+            # seg_out B x num_osm_classes x H x W
+            return rgb_out, seg_out
+        
+        return rgb_out

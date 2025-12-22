@@ -219,6 +219,11 @@ def train():
     
     # Loss weights
     mask_loss_weight = train_config.get('mask_loss_weight', 2.0)
+    seg_loss_weight = train_config.get('seg_loss_weight', 0.1)
+    
+    # Check if model has segmentation head
+    has_seg_head = hasattr(model.module if hasattr(model, 'module') else model, 'segmentation_head')
+    has_seg_head = has_seg_head and (model.module.segmentation_head if hasattr(model, 'module') else model.segmentation_head) is not None
     
     # Conditioning dropout probability
     cond_drop_prob = get_config_value(
@@ -233,6 +238,8 @@ def train():
         print(f"✓ Batch size per GPU: {train_config['ldm_batch_size']}")
         print(f"✓ Effective batch size: {train_config['ldm_batch_size'] * world_size}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
+        print(f"✓ Segmentation loss weight: {seg_loss_weight}")
+        print(f"✓ Segmentation head enabled: {has_seg_head}")
         print(f"✓ Conditioning dropout: {cond_drop_prob}")
     
     ########## Training Loop #############
@@ -346,21 +353,47 @@ def train():
             # Keep known region (unmasked) fixed --> only noise the masked region
             noisy_im = mask_latent * noisy_im + (1 - mask_latent) * im
             
-            # Predict noise
-            noise_pred = model(noisy_im, t, cond_input=cond_input)
+            # Predict noise (and optionally segmentation)
+            if has_seg_head:
+                noise_pred, seg_pred = model(noisy_im, t, cond_input=cond_input, return_segmentation=True)
+            else:
+                noise_pred = model(noisy_im, t, cond_input=cond_input)
             
-            # # Compute weighted loss
-            # loss = compute_inpainting_loss(
-            #     noise_pred,
-            #     noise,
-            #     mask_latent,
-            #     mask_loss_weight
-            # )
-            
-            # masked loss
+            # Compute noise prediction loss (masked)
             noise_masked = mask_latent * noise
             noise_pred_masked = mask_latent * noise_pred
             loss = torchF.mse_loss(noise_pred_masked, noise_masked)
+            
+            # Add segmentation loss if enabled
+            if has_seg_head and 'image' in cond_input and 'meta' in cond_input:
+                # Extract ground truth OSM masks from conditioning
+                osm_layers = condition_config.get('osm_layers', [])
+                if len(osm_layers) > 0:
+                    # Find OSM channels in spatial conditioning
+                    osm_indices = []
+                    for layer_name in osm_layers:
+                        channel_name = f'osm:{layer_name}'
+                        try:
+                            idx = spatial_names.index(channel_name)
+                            osm_indices.append(idx)
+                        except ValueError:
+                            pass
+                    
+                    if len(osm_indices) > 0:
+                        # Extract ground truth OSM masks
+                        osm_gt = cond_input['image'][:, osm_indices, :, :]
+                        
+                        # Downsample to latent resolution if needed
+                        if seg_pred.shape[-2:] != osm_gt.shape[-2:]:
+                            osm_gt = torchF.interpolate(osm_gt, size=seg_pred.shape[-2:], mode='nearest')
+                        
+                        # Binary cross-entropy loss for masks (only in masked region)
+                        seg_loss = torchF.binary_cross_entropy_with_logits(
+                            seg_pred * mask_latent,
+                            osm_gt * mask_latent
+                        )
+                        
+                        loss = loss + seg_loss_weight * seg_loss
             
             losses.append(loss.item())
             loss.backward()

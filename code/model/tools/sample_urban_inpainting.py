@@ -33,12 +33,111 @@ from helpers.indexed_outputs import get_next_run_idx
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
+def create_mask_overlay(rgb, masks, layer_names, alpha=0.5):
+    """
+    Create visualization with colored masks overlaid on RGB image.
+    
+    Args:
+        rgb: RGB tensor [3, H, W] in range [0, 1]
+        masks: Segmentation masks [num_classes, H, W] in range [0, 1]
+        layer_names: List of mask layer names
+        alpha: Overlay transparency
+        
+    Returns:
+        Overlay image [3, H, W]
+    """
+    colors = {
+        'buildings': torch.tensor([1.0, 0.0, 0.0]),  # Red
+        'streets': torch.tensor([0.8, 0.8, 0.0]),    # Yellow
+        'water': torch.tensor([0.0, 0.5, 1.0]),      # Blue
+        'vegetation': torch.tensor([0.0, 1.0, 0.0]), # Green
+    }
+    
+    overlay = rgb.clone()
+    
+    for idx, layer_name in enumerate(layer_names):
+        if idx >= masks.shape[0]:
+            break
+        
+        if layer_name in colors:
+            color = colors[layer_name].view(3, 1, 1).to(rgb.device)
+            mask = masks[idx:idx+1, :, :]  # [1, H, W]
+            
+            # Upsample mask to RGB resolution if needed
+            if mask.shape[-2:] != rgb.shape[-2:]:
+                mask = F.interpolate(
+                    mask.unsqueeze(0),
+                    size=rgb.shape[-2:],
+                    mode='bilinear',
+                    align_corners=False
+                ).squeeze(0)
+            
+            # Blend: overlay = rgb * (1 - alpha*mask) + color * alpha*mask
+            overlay = overlay * (1 - alpha * mask) + color * alpha * mask
+    
+    return torch.clamp(overlay, 0, 1)
+
+
+def save_samples_with_masks(
+    rgb_samples,
+    seg_masks,
+    out_dir,
+    run_idx,
+    osm_layer_names,
+    guidance_scale
+):
+    """
+    Save RGB samples with segmentation masks.
+    
+    Args:
+        rgb_samples: List of RGB tensors [1, 3, H, W]
+        seg_masks: List of segmentation tensors [1, num_classes, H, W] or None
+        out_dir: Output directory
+        run_idx: Run index for filenames
+        osm_layer_names: List of OSM layer names
+        guidance_scale: Guidance scale used
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    
+    for idx, rgb in enumerate(rgb_samples):
+        # Save RGB
+        rgb_path = os.path.join(out_dir, f'sample_{idx}_rgb_guidance{guidance_scale}_idx{run_idx}.png')
+        save_image(rgb, rgb_path)
+        
+        if seg_masks is not None and idx < len(seg_masks):
+            masks = seg_masks[idx]  # [1, num_classes, H, W]
+            
+            # Save individual masks
+            for mask_idx, layer_name in enumerate(osm_layer_names):
+                if mask_idx >= masks.shape[1]:
+                    break
+                mask = masks[:, mask_idx:mask_idx+1, :, :]  # [1, 1, H, W]
+                mask_path = os.path.join(
+                    out_dir,
+                    f'sample_{idx}_{layer_name}_guidance{guidance_scale}_idx{run_idx}.png'
+                )
+                save_image(mask, mask_path)
+            
+            # Create and save overlay
+            rgb_single = rgb.squeeze(0)  # [3, H, W]
+            masks_single = masks.squeeze(0)  # [num_classes, H, W]
+            overlay = create_mask_overlay(rgb_single, masks_single, osm_layer_names, alpha=0.4)
+            overlay_path = os.path.join(
+                out_dir,
+                f'sample_{idx}_overlay_guidance{guidance_scale}_idx{run_idx}.png'
+            )
+            save_image(overlay, overlay_path)
+    
+    print(f"✓ Saved {len(rgb_samples)} samples with segmentation masks")
+
+
 def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
                      autoencoder_model_config, diffusion_config, dataset_config,
                      big_data_storage_path, vae,
                      num_samples=4, guidance_scale=7.5,
                      overwrite_samples=False,
-                     clamp_sampling=True):
+                     clamp_sampling=True,
+                     return_segmentation=False):
     """
     Sample urban layouts using inpainting diffusion model.
     
@@ -53,10 +152,23 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
         vae: Trained VAE model
         num_samples: Number of samples to generate
         guidance_scale: Classifier-free guidance scale
+        return_segmentation: Whether to extract segmentation masks
     """ 
     
     
     model.eval()
+    
+    # Check if model has segmentation head
+    has_seg_head = hasattr(model, 'segmentation_head') and model.segmentation_head is not None
+    if return_segmentation and not has_seg_head:
+        print("⚠ Warning: return_segmentation=True but model has no segmentation head")
+        return_segmentation = False
+    
+    if has_seg_head:
+        print(f"✓ Model has segmentation head - will extract OSM masks")
+        condition_config = get_config_value(diffusion_model_config, 'condition_config', None)
+        osm_layers = condition_config.get('osm_layers', []) if condition_config else []
+        print(f"  OSM layers: {osm_layers}")
     
     # Get latent size
     im_size = dataset_config['patch_size_m'] // dataset_config['res']
@@ -226,6 +338,7 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     print("="*50)
     
     all_samples = []
+    all_segmentations = [] if has_seg_head else None
     
     for sample_idx in range(num_samples):
         print(f"\nGenerating sample {sample_idx + 1}/{num_samples}")
@@ -248,17 +361,26 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
             t = torch.tensor([i]).long().to(device)
             
             with torch.no_grad():
-                # Conditional prediction
-                noise_pred_cond = model(xt, t, cond_input=cond_input)
+                # Conditional prediction (with optional segmentation)
+                if has_seg_head:
+                    noise_pred_cond, seg_pred_cond = model(xt, t, cond_input=cond_input, return_segmentation=True)
+                else:
+                    noise_pred_cond = model(xt, t, cond_input=cond_input)
                 
                 # Classifier-free guidance
                 if guidance_scale > 1:
-                    noise_pred_uncond = model(xt, t, cond_input=uncond_input)
-                    noise_pred = noise_pred_uncond + guidance_scale * (
-                        noise_pred_cond - noise_pred_uncond
-                    )
+                    if has_seg_head:
+                        noise_pred_uncond, seg_pred_uncond = model(xt, t, cond_input=uncond_input, return_segmentation=True)
+                        # Apply guidance to both noise and segmentation
+                        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                        seg_pred = seg_pred_uncond + guidance_scale * (seg_pred_cond - seg_pred_uncond)
+                    else:
+                        noise_pred_uncond = model(xt, t, cond_input=uncond_input)
+                        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
                 else:
                     noise_pred = noise_pred_cond
+                    if has_seg_head:
+                        seg_pred = seg_pred_cond
                 
                 # Sample previous timestep with inpainting constraint
                 xt, x0_pred = scheduler.sample_prev_timestep_inpainting(
@@ -272,6 +394,11 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
                 generated_img = torch.clamp(generated_img, -1., 1.)
         
         all_samples.append(generated_img)
+        
+        # Store final segmentation prediction
+        if has_seg_head:
+            seg_final = torch.sigmoid(seg_pred)  # Convert logits to probabilities
+            all_segmentations.append(seg_final)
     
     # Stack all samples
     all_samples = torch.cat(all_samples, dim=0)  # [num_samples, C, H, W]
@@ -320,12 +447,23 @@ def sample_inpainting(model, scheduler, train_config, diffusion_model_config,
     np.save(mask_save_path, mask_full.cpu().numpy().squeeze())
     print(f"✓ Saved mask to {mask_save_path}")
     
-    # Also save individual samples with run index
+    # Save individual samples (without run index for backward compatibility)
     for idx, sample in enumerate(all_samples):
         individual_path = os.path.join(out_dir, f'sample_{idx}_idx{run_idx}.png')
         save_image(sample, individual_path)
     
     print(f"✓ Saved {num_samples} individual samples")
+    
+    # Save segmentation masks if available
+    if has_seg_head and all_segmentations:
+        save_samples_with_masks(
+            all_samples,
+            all_segmentations,
+            out_dir,
+            run_idx,
+            osm_layers,
+            guidance_scale
+        )
     
     return all_samples
 
