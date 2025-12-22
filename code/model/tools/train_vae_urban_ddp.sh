@@ -28,7 +28,7 @@ source activate genaiSpatialplan
 # Install package in editable mode for proper imports
 cd /home/sc.uni-leipzig.de/${USER}/masterthesis_genai_spatialplan
 pip install -e . --quiet
-cd -
+cd - # return to previous directory
 
 # Get IPv4 address explicitly
 export MASTER_ADDR=$(hostname -I | awk '{print $1}')
@@ -60,3 +60,6 @@ srun bash -c "
 echo "=================================================="
 echo "Job finished at: $(date)"
 echo "=================================================="
+
+# hand in diffusion training shell script to slurm
+sbatch train_vae_urban_ddp.sh --config $CONFIG_PATH
