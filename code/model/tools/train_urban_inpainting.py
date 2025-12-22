@@ -173,6 +173,12 @@ def train():
     
     # Loss weights
     mask_loss_weight = train_config.get('mask_loss_weight', 2.0)
+    seg_loss_weight = train_config.get('seg_loss_weight', 0.1)
+    env_loss_weight = train_config.get('env_loss_weight', 0.1)
+    
+    # Check if model has auxiliary prediction heads
+    has_seg_head = hasattr(model, 'segmentation_head') and model.segmentation_head is not None
+    has_env_head = hasattr(model, 'environmental_head') and model.environmental_head is not None
     
     # Conditioning dropout probability
     cond_drop_prob = get_config_value(
@@ -185,6 +191,10 @@ def train():
     print(f"✓ Learning rate: {train_config['ldm_lr']}")
     print(f"✓ Batch size: {train_config['ldm_batch_size']}")
     print(f"✓ Mask loss weight: {mask_loss_weight}")
+    print(f"✓ OSM segmentation loss weight: {seg_loss_weight}")
+    print(f"✓ Environmental loss weight: {env_loss_weight}")
+    print(f"✓ OSM segmentation head enabled: {has_seg_head}")
+    print(f"✓ Environmental head enabled: {has_env_head}")
     print(f"✓ Conditioning dropout: {cond_drop_prob}")
     
     ########## Training Loop #############
@@ -250,6 +260,7 @@ def train():
                             mode='nearest'
                         )
                     except (ValueError, KeyError):
+                        print("⚠ 'inpaint_mask' not found in spatial conditioning names.")
                         # No mask found, use uniform weighting
                         mask_latent = torch.ones((im.shape[0], 1, im.shape[2], im.shape[3])).to(device)
                 else:
@@ -266,7 +277,7 @@ def train():
                 print(f"Mask shape: {mask_latent.shape}, Latent shape: {im.shape}")
                 print(f"Mask unique values: {torch.unique(mask_latent)}")
                 if 'image' in cond_input and 'meta' in cond_input:
-                    print(f"Spatial conditioning channels: {cond_input['meta']['spatial_names']}")
+                    print(f"Spatial conditioning channels: {spatial_names}")
                     print(f"Spatial conditioning shape: {cond_input['image'].shape}")
                 print(f"{'='*50}\n")
             
@@ -287,21 +298,83 @@ def train():
             # Keep known region (unmasked) fixed --> only noise the masked region
             noisy_im = mask_latent * noisy_im + (1 - mask_latent) * im
             
-            # Predict noise
-            noise_pred = model(noisy_im, t, cond_input=cond_input)
+            # Predict noise (and optionally auxiliary outputs)
+            if has_seg_head or has_env_head:
+                outputs = model(noisy_im, t, cond_input=cond_input, return_segmentation=True)
+                noise_pred = outputs[0]
+                seg_pred = outputs[1] if len(outputs) > 1 else None
+                env_pred = outputs[2] if len(outputs) > 2 else None
+            else:
+                noise_pred = model(noisy_im, t, cond_input=cond_input)
+                seg_pred = None
+                env_pred = None
             
-            # # Compute weighted loss
-            # loss = compute_inpainting_loss(
-            #     noise_pred,
-            #     noise,
-            #     mask_latent,
-            #     mask_loss_weight
-            # )
-            
-            # masked loss
+            # Compute noise prediction loss (masked)
             noise_masked = mask_latent * noise
             noise_pred_masked = mask_latent * noise_pred
             loss = torchF.mse_loss(noise_pred_masked, noise_masked)
+            
+            # Add OSM segmentation loss if enabled
+            if has_seg_head and seg_pred is not None and 'image' in cond_input and 'meta' in cond_input:
+                osm_layers = condition_config.get('osm_layers', [])
+                if len(osm_layers) > 0:
+                    # Find OSM channels in spatial conditioning
+                    osm_indices = []
+                    for layer_name in osm_layers:
+                        channel_name = f'osm:{layer_name}'
+                        try:
+                            idx = spatial_names.index(channel_name)
+                            osm_indices.append(idx)
+                        except ValueError:
+                            pass
+                    
+                    if len(osm_indices) > 0:
+                        # Extract ground truth OSM masks
+                        osm_gt = cond_input['image'][:, osm_indices, :, :]
+                        
+                        # Downsample to latent resolution if needed
+                        if seg_pred.shape[-2:] != osm_gt.shape[-2:]:
+                            osm_gt = torchF.interpolate(osm_gt, size=seg_pred.shape[-2:], mode='nearest')
+                        
+                        # Binary cross-entropy loss for masks (only in masked region)
+                        seg_loss = torchF.binary_cross_entropy_with_logits(
+                            seg_pred * mask_latent,
+                            osm_gt * mask_latent
+                        )
+                        
+                        loss = loss + seg_loss_weight * seg_loss
+            
+            # Add environmental prediction loss if enabled
+            if has_env_head and env_pred is not None and 'image' in cond_input and 'meta' in cond_input:
+                # Use prediction layers (subset of conditioning layers)
+                env_pred_layers = condition_config.get('environmental_prediction_layers',
+                                                      condition_config.get('environmental_layers', []))
+                if len(env_pred_layers) > 0:
+                    # Find environmental channels in spatial conditioning (only for prediction layers)
+                    env_indices = []
+                    for layer_name in env_pred_layers:
+                        channel_name = f'environmental:{layer_name}'
+                        try:
+                            idx = spatial_names.index(channel_name)
+                            env_indices.append(idx)
+                        except ValueError:
+                            pass
+                    
+                    if len(env_indices) > 0:
+                        # Extract ground truth environmental data
+                        env_gt = cond_input['image'][:, env_indices, :, :]
+                        
+                        # Downsample to latent resolution if needed
+                        if env_pred.shape[-2:] != env_gt.shape[-2:]:
+                            env_gt = torchF.interpolate(env_gt, size=env_pred.shape[-2:], mode='bilinear', align_corners=False)
+                        
+                        # MSE loss for continuous environmental values (only in masked region)
+                        env_loss = torchF.mse_loss(
+                            env_pred * mask_latent,
+                            env_gt * mask_latent
+                        )
+                        
+                        loss = loss + env_loss_weight * env_loss
             
             losses.append(loss.item())
             loss.backward()
