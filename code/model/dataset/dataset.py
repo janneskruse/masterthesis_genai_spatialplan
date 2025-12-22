@@ -391,9 +391,13 @@ class UrbanInpaintingDataset(Dataset):
         spatial_names = []
         
         if 'inpainting' in self.condition_types:
-            masked_image = img_patch * (1.0 - inpaint_mask)
-            rgb_names = ['blue', 'green', 'red']
-            self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
+            # Only include masked RGB if explicitly requested
+            if 'masked_rgb' in self.condition_types:
+                masked_image = img_patch * (1.0 - inpaint_mask)
+                rgb_names = ['blue', 'green', 'red']
+                self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
+            
+            # Always include mask for inpainting
             self._append_spatial(spatial, spatial_names, inpaint_mask, 'inpaint_mask')
         
         if 'osm_features' in self.condition_types:
@@ -931,10 +935,13 @@ class UrbanInpaintingDataset(Dataset):
 
         # inpainting context
         if 'inpainting' in self.condition_types:
-            masked_image = img_patch * (1.0 - inpaint_mask)
-            # RGB channels for masked image
-            rgb_names = ['blue', 'green', 'red']
-            self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
+            # Only include masked RGB if explicitly requested
+            if 'masked_rgb' in self.condition_types:
+                masked_image = img_patch * (1.0 - inpaint_mask)
+                rgb_names = ['blue', 'green', 'red']
+                self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
+            
+            # Always include mask for inpainting
             self._append_spatial(spatial, spatial_names, inpaint_mask, 'inpaint_mask')
 
         # OSM
@@ -969,20 +976,6 @@ class UrbanInpaintingDataset(Dataset):
             return im_tensor
         else:
             return im_tensor, cond_inputs
-        
-        # # Return based on whether using latents
-        # if self.use_latents:
-        #     # Placeholder - implement latent loading logic
-        #     latent = self.latent_maps[index]
-        #     if len(self.condition_types) == 0:
-        #         return latent
-        #     else:
-        #         return latent, cond_inputs
-        # else:
-        #     if len(self.condition_types) == 0:
-        #         return im_tensor
-        #     else:
-        #         return im_tensor, cond_inputs
 
 
     def _prepare_latent_conditioning(
@@ -1022,9 +1015,13 @@ class UrbanInpaintingDataset(Dataset):
         downsampled_channels = []
         
         for idx, channel_name in enumerate(spatial_names):
+            if not 'masked_rgb' in self.condition_types and 'masked_image' in channel_name.lower():
+                continue
+            
             channel = full_cond[idx:idx+1, :, :]  # [1, H, W]
             
-            # Use nearest interpolation for mask to preserve binary values
+            # Use nearest interpolation for mask to preserve binary values,
+            # bilinear for continuous features
             if 'mask' in channel_name.lower():
                 mode = 'nearest'
             else:

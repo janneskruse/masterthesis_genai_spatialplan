@@ -29,7 +29,7 @@ ldm_params: # latent diffusion model parameters
   
   # Conditioning configuration
   condition_config:
-    condition_types: ['inpainting', 'osm_features', 'environmental']
+    condition_types: ['inpainting', 'osm_features', 'environmental'] # "masked_rgb"
     
     # Inpainting hole configuration
     hole_config:
