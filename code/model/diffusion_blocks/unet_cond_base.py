@@ -63,6 +63,16 @@ class Unet(nn.Module):
                                           self.t_emb_dim)
         
         if self.image_cond:
+            # Compute expected input channels from condition_config
+            expected_channels = self._compute_expected_conditioning_channels()
+            
+            # Validate or override configured channels
+            if expected_channels != self.im_cond_input_ch:
+                print(f"⚠ Warning: Configured image_condition_input_channels={self.im_cond_input_ch}, "
+                      f"but computed={expected_channels} based on condition_types.")
+                print(f"  Using computed value: {expected_channels}")
+                self.im_cond_input_ch = expected_channels
+            
             # Map the mask image to a N channel image and
             # concat that with input across channel dimension
             self.cond_conv_in = nn.Conv2d(in_channels=self.im_cond_input_ch,
@@ -121,6 +131,36 @@ class Unet(nn.Module):
         
         self.norm_out = nn.GroupNorm(self.norm_channels, self.conv_out_channels)
         self.conv_out = nn.Conv2d(self.conv_out_channels, im_channels, kernel_size=3, padding=1)
+    
+    def _compute_expected_conditioning_channels(self) -> int:
+        """
+        Compute expected number of image conditioning channels based on condition_config.
+        
+        Returns:
+            Total channels: masked_rgb (3 if enabled) + mask (1) + osm (N) + env (M)
+        """
+        if not self.condition_config:
+            return 0
+        
+        total_channels = 0
+        condition_types = self.condition_config.get('condition_types', [])
+        
+        if 'inpainting' in condition_types:
+            # Add masked RGB if explicitly included
+            if 'masked_rgb' in condition_types:
+                total_channels += 3  # RGB channels
+            # Add mask channel
+            total_channels += 1  # Binary mask
+        
+        if 'osm_features' in condition_types:
+            osm_layers = self.condition_config.get('osm_layers', [])
+            total_channels += len(osm_layers)
+        
+        if 'environmental' in condition_types:
+            env_layers = self.condition_config.get('environmental_layers', [])
+            total_channels += len(env_layers)
+        
+        return total_channels
     
     def forward(self, x, t, cond_input=None):
         # Shapes assuming downblocks are [C1, C2, C3, C4]

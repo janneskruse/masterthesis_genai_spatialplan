@@ -1043,6 +1043,30 @@ class UrbanInpaintingDataset(Dataset):
         return cond_inputs
 
     
+    def _compute_conditioning_channels(self) -> int:
+        """
+        Compute total number of image conditioning input channels.
+        
+        Returns:
+            Total channels: masked_rgb (3 if enabled) + mask (1) + osm (N) + env (M)
+        """
+        total_channels = 0
+        
+        if 'inpainting' in self.condition_types:
+            # Add masked RGB channels if enabled
+            if 'masked_rgb' in self.condition_types:
+                total_channels += 3  # RGB channels
+            # Add mask channel
+            total_channels += 1  # Binary mask
+        
+        if 'osm_features' in self.condition_types:
+            total_channels += len(self.osm_layers)
+        
+        if 'environmental' in self.condition_types:
+            total_channels += len(self.environmental_layers)
+        
+        return total_channels
+    
     def _print_summary(self):
         """Print dataset configuration summary"""
         print(f"\n{'='*60}")
@@ -1054,8 +1078,22 @@ class UrbanInpaintingDataset(Dataset):
         print(f"Using latents: {self.use_latents}")
         print(f"Patch size: {self.patch_size}x{self.patch_size}")
         print(f"Conditioning types: {self.condition_types}")
+        
+        # Print computed conditioning channels
+        total_channels = self._compute_conditioning_channels()
+        print(f"\nConditioning channels breakdown:")
+        if 'inpainting' in self.condition_types:
+            if 'masked_rgb' in self.condition_types:
+                print(f"  - Masked RGB: 3 channels")
+            print(f"  - Inpainting mask: 1 channel")
+        if 'osm_features' in self.condition_types:
+            print(f"  - OSM features ({', '.join(self.osm_layers)}): {len(self.osm_layers)} channels")
+        if 'environmental' in self.condition_types:
+            print(f"  - Environmental ({', '.join(self.environmental_layers)}): {len(self.environmental_layers)} channels")
+        print(f"  → Total input channels: {total_channels}")
+        
         if self.use_cached_patches:
-            print(f"Cache directory: {self.cache_dir}")
+            print(f"\nCache directory: {self.cache_dir}")
         print(f"{'='*60}\n")
     
     def save_stats(self, save_path):

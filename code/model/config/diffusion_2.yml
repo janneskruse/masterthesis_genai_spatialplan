@@ -47,8 +47,8 @@ ldm_params: # latent diffusion model parameters
     
     # Image conditioning config (for spatial conditions)
     image_condition_config:
-      # Total channels: masked_img(3) + mask(1) + osm_layers(3) + env_layers(2) = 9
-      image_condition_input_channels: 9  # Will be computed dynamically
+      # Total channels: mask(1) + osm_layers(4) + env_layers(2) = 7
+      image_condition_input_channels: 7  # Will be computed dynamically, this logs just for proof
       image_condition_output_channels: 32  # Project to this many channels
 
       # Conditioning dropout for classifier-free guidance
