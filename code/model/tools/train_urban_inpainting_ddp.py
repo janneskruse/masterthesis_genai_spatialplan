@@ -402,6 +402,24 @@ def train():
                         )
                         
                         loss = loss + seg_loss_weight * seg_loss
+                    else:
+                        if is_main:
+                            print(f"⚠ No OSM indices found for segmentation loss on idx {batch_idx} in epoch {epoch_idx}.")
+                            print(f"   Spatial names: {spatial_names}")
+                            print(f"   Meta: {cond_input['meta']}")
+                            print(f"   OSM layers: {osm_layers}")
+                        # Dummy loss to ensure gradients flow through seg head
+                        seg_loss = (seg_pred * 0.0).sum()
+                        loss = loss + seg_loss
+                else:
+                    if is_main:
+                        print(f"⚠ No OSM layers specified in config for segmentation loss on idx {batch_idx} in epoch {epoch_idx}.")
+                        print(f"   Spatial names: {spatial_names}")
+                        print(f"   Meta: {cond_input['meta']}")
+                        print(f"   OSM layers: {osm_layers}")
+                    # Dummy loss to ensure gradients flow through seg head
+                    seg_loss = (seg_pred * 0.0).sum()
+                    loss = loss + seg_loss
             
             # Add environmental prediction loss if enabled
             if has_env_head and env_pred is not None and 'image' in cond_input and 'meta' in cond_input:
@@ -434,6 +452,24 @@ def train():
                         )
                         
                         loss = loss + env_loss_weight * env_loss
+                    else:
+                        if is_main:
+                            print(f"⚠ No environmental indices found for environmental loss on idx {batch_idx} in epoch {epoch_idx}.")
+                            print(f"   Spatial names: {spatial_names}")
+                            print(f"   Meta: {cond_input['meta']}")
+                            print(f"   Environmental layers: {env_pred_layers}")
+                        # Dummy loss to ensure gradients flow through env head
+                        env_loss = (env_pred * 0.0).sum()
+                        loss = loss + env_loss
+                else:
+                    if is_main:
+                        print(f"⚠ No environmental layers specified in config for environmental loss on idx {batch_idx} in epoch {epoch_idx}.")
+                        print(f"   Spatial names: {spatial_names}")
+                        print(f"   Meta: {cond_input['meta']}")
+                        print(f"   Environmental layers: {env_pred_layers}")
+                    # Dummy loss to ensure gradients flow through env head
+                    env_loss = (env_pred * 0.0).sum()
+                    loss = loss + env_loss
             
             losses.append(loss.item())
             loss.backward()
