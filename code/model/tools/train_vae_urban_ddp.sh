@@ -62,4 +62,4 @@ echo "Job finished at: $(date)"
 echo "=================================================="
 
 # hand in diffusion training shell script to slurm
-sbatch train_vae_urban_ddp.sh --config $CONFIG_PATH
+sbatch train_urban_inpainting_ddp.sh --config $CONFIG_PATH
