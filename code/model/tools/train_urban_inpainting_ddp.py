@@ -430,7 +430,7 @@ def train():
                     # Find environmental channels in spatial conditioning (only for prediction layers)
                     env_indices = []
                     for layer_name in env_pred_layers:
-                        channel_name = f'environmental:{layer_name}'
+                        channel_name = f'env:{layer_name}'
                         try:
                             idx = spatial_names.index(channel_name)
                             env_indices.append(idx)
