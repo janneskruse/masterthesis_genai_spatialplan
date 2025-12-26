@@ -26,6 +26,7 @@ ldm_params: # latent diffusion model parameters
   num_down_layers: 2
   num_mid_layers: 2
   num_up_layers: 2
+  learn_inpainting: True
   
   # Conditioning configuration
   condition_config:
@@ -99,7 +100,7 @@ train_params:
   boundary_loss_weight: 1.5  # Extra weight for boundary pixels
   temperature_loss_weight: 0.0  # Will increase gradually during training
 
-  # Auxiliary prediction loss weights with warmup
+  # Auxiliary prediction loss weights
   seg_loss_weight_initial: 0.1  # OSM segmentation loss weight start (BCE)
   seg_loss_weight_final: 0.5    # OSM segmentation loss weight end (BCE)
   env_loss_weight_initial: 0.1  # Environmental prediction loss weight start (MSE)
@@ -111,7 +112,7 @@ train_params:
   clamp_sampling: True # whether to clamp sampling outputs to [-1, 1]
   
   # file/folder names
-  task_name: 'diffusion_2'
+  task_name: 'diffusion_3'
   autoencoder_ckpt_name: 'vae_urban_ddp_ckpt.pth' #'vae_urban_ckpt.pth'
   latents_dir_name: 'vae_ddp_latents'
   ldm_ckpt_name: 'ddpm_urban_inpainting_ckpt.pth'

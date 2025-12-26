@@ -217,10 +217,12 @@ def train():
     
     optimizer = Adam(model.parameters(), lr=adjusted_lr)
     
-    # Loss weights
+    # Loss weights with warmup
     mask_loss_weight = train_config.get('mask_loss_weight', 2.0)
-    seg_loss_weight = train_config.get('seg_loss_weight', 0.1)
-    env_loss_weight = train_config.get('env_loss_weight', 0.1)
+    seg_loss_weight_initial = train_config.get('seg_loss_weight_initial', 0.1)
+    seg_loss_weight_final = train_config.get('seg_loss_weight_final', 0.5)
+    env_loss_weight_initial = train_config.get('env_loss_weight_initial', 0.1)
+    env_loss_weight_final = train_config.get('env_loss_weight_final', 0.3)
     
     # Check if model has auxiliary prediction heads
     model_unwrapped = model.module if hasattr(model, 'module') else model
@@ -240,8 +242,8 @@ def train():
         print(f"✓ Batch size per GPU: {train_config['ldm_batch_size']}")
         print(f"✓ Effective batch size: {train_config['ldm_batch_size'] * world_size}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
-        print(f"✓ OSM segmentation loss weight: {seg_loss_weight}")
-        print(f"✓ Environmental loss weight: {env_loss_weight}")
+        print(f"✓ OSM loss weight warmup: {seg_loss_weight_initial:.2f} → {seg_loss_weight_final:.2f}")
+        print(f"✓ Env loss weight warmup: {env_loss_weight_initial:.2f} → {env_loss_weight_final:.2f}")
         print(f"✓ OSM segmentation head enabled: {has_seg_head}")
         print(f"✓ Environmental head enabled: {has_env_head}")
         print(f"✓ Conditioning dropout: {cond_drop_prob}")
@@ -255,6 +257,12 @@ def train():
     global_step = 0
     
     for epoch_idx in range(num_epochs):
+        # Calculate loss weights with warmup for this epoch
+        epoch_progress = epoch_idx / num_epochs
+        seg_loss_weight = seg_loss_weight_initial + epoch_progress * (seg_loss_weight_final - seg_loss_weight_initial)
+        env_loss_weight = env_loss_weight_initial + epoch_progress * (env_loss_weight_final - env_loss_weight_initial)
+        
+        
         # Set epoch for distributed sampler
         if sampler is not None:
             sampler.set_epoch(epoch_idx)
