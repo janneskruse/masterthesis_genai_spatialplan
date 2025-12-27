@@ -32,27 +32,37 @@ from helpers.load_configs import load_configs
 # Load CUDA
 load_cuda()
 
-def compute_inpainting_loss(noise_pred, noise, mask_latent, mask_loss_weight=2.0):
+def apply_cond_dropout(cond_input, spatial_names, drop_prob, drop_groups=("osm", "env")):
+    if 'image' not in cond_input:
+        return cond_input
+    if np.random.rand() >= drop_prob:
+        return cond_input
+
+    x = cond_input['image']
+    keep = torch.ones((x.shape[1],), device=x.device, dtype=x.dtype)
+
+    for i, name in enumerate(spatial_names):
+        # 'inpaint_mask', 'masked_image:blue' (or whatever in _append_spatial names),
+        # 'osm:buildings', 'env:...'
+        if any(name.startswith(g + ":") for g in drop_groups):
+            keep[i] = 0.0
+
+    cond_input['image'] = x * keep.view(1, -1, 1, 1)
+    return cond_input
+
+
+def compute_noise_loss(noise_pred, noise, mask_latent, loss_type, mask_loss_weight=8.0, outside_weight=0.0):
     """
-    Compute loss with higher weight in masked region.
-    
-    Args:
-        noise_pred: Predicted noise [B, C, H, W]
-        noise: Ground truth noise [B, C, H, W]
-        mask_latent: Mask in latent space [B, 1, H, W], 1=regenerate, 0=keep
-        mask_loss_weight: Weight multiplier for masked region
-    
-    Returns:
-        Weighted MSE loss
+    loss_type: "masked" or "weighted"
+    outside_weight is important in hard mode (usually 0.0).
     """
-    # Basic MSE loss
-    loss = torchF.mse_loss(noise_pred, noise, reduction='none')
-    
-    # Apply mask weighting: higher weight where mask==1
-    mask_weight = 1.0 + (mask_loss_weight - 1.0) * mask_latent
-    weighted_loss = loss * mask_weight
-    
-    return weighted_loss.mean()
+    if loss_type == "masked":
+        return torchF.mse_loss(noise_pred * mask_latent, noise * mask_latent)
+
+    # weighted full-image MSE
+    per_pix = torchF.mse_loss(noise_pred, noise, reduction='none')
+    w = outside_weight * (1.0 - mask_latent) + mask_loss_weight * mask_latent
+    return (per_pix * w).mean()
 
 
 def train():
@@ -230,15 +240,18 @@ def train():
     has_env_head = hasattr(model_unwrapped, 'environmental_head') and model_unwrapped.environmental_head is not None
     
     # Conditioning dropout probability
-    cond_drop_prob = get_config_value(
-        condition_config.get('image_condition_config', {}),
-        'cond_drop_prob',
-        0.1
-    )
+    inpainting_cfg = train_config.get('inpainting', {})
+    cond_cfg = inpainting_cfg.get('cfg', {})
+    cond_drop_prob = cond_cfg.get('drop_prob', 0.1)
+    drop_groups = tuple(cond_cfg.get('drop_groups', ["osm", "env"]))
     
-    # use inpainting loss
-    learn_inpainting = diffusion_model_config.get('learn_inpainting', False)
-    use_inpainting_loss = diffusion_model_config.get('use_inpainting_loss', False)
+    mode = inpainting_cfg.get('mode', 'hard')         # "hard" | "sdlike"
+    loss_type = inpainting_cfg.get('loss', 'masked')  # "masked" | "weighted"
+    mask_loss_weight = inpainting_cfg.get('mask_loss_weight', 8.0)
+    if mode == "hard" and loss_type == "weighted":
+        outside_weight = inpainting_cfg.get('outside_weight', 0.0)  # default 0.0, good
+    elif mode == "sdlike" and loss_type == "weighted":
+        outside_weight = inpainting_cfg.get('outside_weight', 1.0)  # default 1.0 makes sense
     
     
     if is_main:
@@ -305,11 +318,6 @@ def train():
                     if isinstance(cond_input[key], torch.Tensor):
                         cond_input[key] = cond_input[key].to(device)
                 
-                # Apply conditioning dropout for classifier-free guidance
-                if 'image' in cond_input and np.random.rand() < cond_drop_prob:
-                    # Replace with zeros (unconditional)
-                    cond_input['image'] = torch.zeros_like(cond_input['image'])
-                
                 # Get mask for loss weighting from spatial image
                 if 'image' in cond_input and 'meta' in cond_input:
                     if isinstance(cond_input['meta'], list):
@@ -341,6 +349,8 @@ def train():
             else:
                 mask_latent = torch.ones((im.shape[0], 1, im.shape[2], im.shape[3])).to(device)
             
+            cond_input = apply_cond_dropout(cond_input, spatial_names, cond_drop_prob, drop_groups)
+            
             if is_main and global_step == 0:
                 print(f"\n{'='*50}")
                 print("Mask Validation (First Batch)")
@@ -365,10 +375,14 @@ def train():
             ).to(device)
             
             # Add noise to images according to timestep
-            noisy_im = scheduler.add_noise(im, noise, t)
+            noisy_full = scheduler.add_noise(im, noise, t)
             
-            # Keep known region (unmasked) fixed --> only noise the masked region
-            noisy_im = mask_latent * noisy_im + (1 - mask_latent) * im
+            if mode == "hard":
+                # Keep known region (unmasked) fixed --> only noise the masked region
+                noisy_im = mask_latent * noisy_full + (1 - mask_latent) * im
+            else:  # "sdlike"
+                # whole image is noised, and the inpainting constraint comes via conditioning + sampling clamp
+                noisy_im = noisy_full
             
             # Predict noise (and optionally auxiliary outputs)
             if has_seg_head or has_env_head:
@@ -382,12 +396,10 @@ def train():
                 env_pred = None
             
             # Compute noise prediction loss with inpainting weighting
-            if use_inpainting_loss:
-                loss = compute_inpainting_loss(noise_pred, noise, mask_latent, mask_loss_weight)
-            else:
-                noise_masked = mask_latent * noise
-                noise_pred_masked = mask_latent * noise_pred
-                loss = torchF.mse_loss(noise_pred_masked, noise_masked)
+            loss = compute_noise_loss(noise_pred, noise, mask_latent, loss_type,
+                                    mask_loss_weight=mask_loss_weight,
+                                    outside_weight=outside_weight)
+
             
             # Add OSM segmentation loss if enabled
             if has_seg_head and seg_pred is not None and 'image' in cond_input and 'meta' in cond_input:
