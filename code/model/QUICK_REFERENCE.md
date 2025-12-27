@@ -4,7 +4,7 @@
 
 ```bash
 cd code/model
-python tools/run_pipeline.py --config config/diffusion_1.yml
+python tools/run_pipeline.py --config diffusion_1.yml
 ```
 
 ---
@@ -27,10 +27,10 @@ For **significantly faster training** on HPC clusters with multiple GPUs:
 ### Usage
 ```bash
 # Submit VAE training (automatically chains to diffusion training)
-sbatch tools/train_vae_urban_ddp.sh config/diffusion_1.yml
+sbatch tools/train_vae_urban_ddp.sh diffusion_1.yml
 
 # Or submit diffusion training only (if VAE checkpoint exists)
-sbatch tools/train_urban_inpainting_ddp.sh config/diffusion_1.yml
+sbatch tools/train_urban_inpainting_ddp.sh diffusion_1.yml
 
 # Monitor progress
 squeue -u $USER
@@ -40,8 +40,8 @@ tail -f log/train_vae_urban_ddp.out-<job_id>
 ### For Local Laptop Training
 **Use standard (non-DDP) scripts** for single GPU or CPU training:
 ```bash
-python tools/train_vae_urban.py --config config/diffusion_1.yml
-python tools/train_urban_inpainting.py --config config/diffusion_1.yml
+python tools/train_vae_urban.py --config diffusion_1.yml
+python tools/train_urban_inpainting.py --config diffusion_1.yml
 ```
 
 ---
@@ -50,7 +50,7 @@ python tools/train_urban_inpainting.py --config config/diffusion_1.yml
 
 ### 1. Validate Dataset
 ```bash
-python tools/validate_dataset.py --config config/diffusion_1.yml --num_samples 5
+python tools/validate_dataset.py --config diffusion_1.yml --num_samples 5
 ```
 **Check:** `urban_layout_inpainting/dataset_validation/` for visualizations
 
@@ -60,12 +60,12 @@ python tools/validate_dataset.py --config config/diffusion_1.yml --num_samples 5
 
 **Standard (laptop/single GPU):**
 ```bash
-python tools/train_vae_urban.py --config config/diffusion_1.yml
+python tools/train_vae_urban.py --config diffusion_1.yml
 ```
 
 **Distributed Data Parallel (HPC cluster with SLURM):**
 ```bash
-sbatch tools/train_vae_urban_ddp.sh config/diffusion_1.yml
+sbatch tools/train_vae_urban_ddp.sh diffusion_1.yml
 ```
 - Uses 4x A30 GPUs (configurable in .sh script)
 - Significantly faster training (~3 hours vs 8-12 hours)
@@ -79,12 +79,12 @@ sbatch tools/train_vae_urban_ddp.sh config/diffusion_1.yml
 
 **Standard (laptop/single GPU):**
 ```bash
-python tools/train_urban_inpainting.py --config config/diffusion_1.yml
+python tools/train_urban_inpainting.py --config diffusion_1.yml
 ```
 
 **Distributed Data Parallel (HPC cluster with SLURM):**
 ```bash
-sbatch tools/train_urban_inpainting_ddp.sh config/diffusion_1.yml
+sbatch tools/train_urban_inpainting_ddp.sh diffusion_1.yml
 ```
 - Uses 4x A30 GPUs (configurable in .sh script)
 - Reduces training time by ~75% (6 hours vs 24+ hours)
@@ -96,7 +96,7 @@ sbatch tools/train_urban_inpainting_ddp.sh config/diffusion_1.yml
 
 ### 4. Generate Samples (5 minutes)
 ```bash
-python tools/sample_urban_inpainting.py --config config/diffusion_1.yml --num_samples 8
+python tools/sample_urban_inpainting.py --config diffusion_1.yml --num_samples 8
 ```
 **Check:** `urban_layout_inpainting/inpainting_samples/`
 

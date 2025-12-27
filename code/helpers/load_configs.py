@@ -15,9 +15,9 @@ def add_config_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
     Returns:
         The same parser with config arguments added
     """
-    parser.add_argument('--config', type=str, default='code/model/config/diffusion_1.yml', 
+    parser.add_argument('--config', type=str, default='diffusion_1.yml', 
                        help='Path to the experiment config file')
-    parser.add_argument('--data_config', type=str, default='code/data_acquisition/config.yml', 
+    parser.add_argument('--data_config', type=str, default='config.yml', 
                        help='Path to the data config file')
     return parser
 
@@ -58,11 +58,11 @@ def load_configs(parser: Optional[argparse.ArgumentParser] = None) -> Dict:
         repo_dir = p.read().strip()
         p.close()
     
-    with open(f"{repo_dir}/{args.config}", 'r') as stream:
+    with open(f"{repo_dir}/code/model/config/{args.config}", 'r') as stream:
         config = yaml.safe_load(stream)
         # config = json.loads(json.dumps(config))  # Convert None to null
         
-    with open(f"{repo_dir}/{args.data_config}", 'r') as stream:
+    with open(f"{repo_dir}/code/data_acquisition/{args.data_config}", 'r') as stream:
         data_config = yaml.safe_load(stream)        
     
     config['repo_dir'] = repo_dir
