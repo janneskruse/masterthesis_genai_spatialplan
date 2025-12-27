@@ -236,6 +236,11 @@ def train():
         0.1
     )
     
+    # use inpainting loss
+    learn_inpainting = diffusion_model_config.get('learn_inpainting', False)
+    use_inpainting_loss = diffusion_model_config.get('use_inpainting_loss', False)
+    
+    
     if is_main:
         print(f"\n✓ Training for {num_epochs} epochs")
         print(f"✓ Learning rate: {adjusted_lr}")
@@ -376,10 +381,13 @@ def train():
                 seg_pred = None
                 env_pred = None
             
-            # Compute noise prediction loss (masked)
-            noise_masked = mask_latent * noise
-            noise_pred_masked = mask_latent * noise_pred
-            loss = torchF.mse_loss(noise_pred_masked, noise_masked)
+            # Compute noise prediction loss with inpainting weighting
+            if use_inpainting_loss:
+                loss = compute_inpainting_loss(noise_pred, noise, mask_latent, mask_loss_weight)
+            else:
+                noise_masked = mask_latent * noise
+                noise_pred_masked = mask_latent * noise_pred
+                loss = torchF.mse_loss(noise_pred_masked, noise_masked)
             
             # Add OSM segmentation loss if enabled
             if has_seg_head and seg_pred is not None and 'image' in cond_input and 'meta' in cond_input:
@@ -481,6 +489,10 @@ def train():
             
             losses.append(loss.item())
             loss.backward()
+            
+            # Clip gradients to prevent instability
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
             optimizer.step()
             
             global_step += 1
