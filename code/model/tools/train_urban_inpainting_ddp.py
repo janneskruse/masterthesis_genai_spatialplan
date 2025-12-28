@@ -248,10 +248,11 @@ def train():
     mode = inpainting_cfg.get('mode', 'hard')         # "hard" | "sdlike"
     loss_type = inpainting_cfg.get('loss', 'masked')  # "masked" | "weighted"
     mask_loss_weight = inpainting_cfg.get('mask_loss_weight', 8.0)
+    outside_weight = 1.0
     if mode == "hard" and loss_type == "weighted":
-        outside_weight = inpainting_cfg.get('outside_weight', 0.0)  # default 0.0, good
+        outside_weight = inpainting_cfg.get('outside_weight', 0.0)
     elif mode == "sdlike" and loss_type == "weighted":
-        outside_weight = inpainting_cfg.get('outside_weight', 1.0)  # default 1.0 makes sense
+        outside_weight = inpainting_cfg.get('outside_weight', 1.0)
     
     
     if is_main:
@@ -260,6 +261,9 @@ def train():
         print(f"✓ Batch size per GPU: {train_config['ldm_batch_size']}")
         print(f"✓ Effective batch size: {train_config['ldm_batch_size'] * world_size}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
+        print(f"✓ Inpainting mode: {mode}")
+        print(f"✓ Loss type: {loss_type}")
+        print(f"✓ Outside weight: {outside_weight}")
         print(f"✓ OSM loss weight warmup: {seg_loss_weight_initial:.2f} → {seg_loss_weight_final:.2f}")
         print(f"✓ Env loss weight warmup: {env_loss_weight_initial:.2f} → {env_loss_weight_final:.2f}")
         print(f"✓ OSM segmentation head enabled: {has_seg_head}")
