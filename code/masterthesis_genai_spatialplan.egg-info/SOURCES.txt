@@ -50,6 +50,7 @@ code/model/diffusion_blocks/lpips.py
 code/model/diffusion_blocks/unet_cond_base.py
 code/model/diffusion_blocks/vae.py
 code/model/diffusion_blocks/vqvae.py
+code/model/lst_predictor/predictor.py
 code/model/scheduler/__init__.py
 code/model/scheduler/linear_noise_scheduler.py
 code/model/tools/infer_vqvae.py

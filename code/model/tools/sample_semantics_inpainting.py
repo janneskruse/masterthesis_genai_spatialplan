@@ -4,16 +4,11 @@
 ###### import libraries ######
 # Standard libraries
 import os
-import sys
 import argparse
 import random
-import yaml
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
-
-# Visualization
-from PIL import Image
 
 # Data handling
 import torch
@@ -28,10 +23,7 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import get_semantic_channels
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
-
-# Import LST Predictor
-sys.path.append(os.path.join(os.path.dirname(__file__)))
-from train_lst_predictor_from_semantics import LSTPredictor
+from model.lst_predictor.predictor import LSTPredictor
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -256,9 +248,10 @@ def sample_semantics(
     # Load dataset to get conditioning examples
     # Note: task_name should be from base train_config, not semantic_train_config
     task_name = train_config.get('task_name', 'urban_inpainting')
-    cache_dir = Path(big_data_storage_path) / "processed" / task_name
+    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "semantic"
     dataset = UrbanInpaintingDataset(
         split='val',
+        mode='semantic',
         use_latents=False,
         latent_path=None,
         use_cached_patches=True,
