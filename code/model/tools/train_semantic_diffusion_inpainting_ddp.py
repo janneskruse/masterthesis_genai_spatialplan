@@ -145,7 +145,7 @@ def train():
     latent_path = f'{big_data_storage_path}/results/{train_config["task_name"]}/{latent_dir_name}'
     use_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
     
-    cache_dir = f"{big_data_storage_path}/processed/{train_config.get('task_name', 'urban_inpainting')}"
+    cache_dir = f"{big_data_storage_path}/processed/{train_config.get('task_name', 'urban_inpainting')}/semantic"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     # Create output directory
@@ -179,6 +179,7 @@ def train():
     
     urban_dataset = UrbanInpaintingDataset(
         split='train',
+        mode='semantic',
         use_latents=use_latents,
         latent_path=latent_path if use_latents else None,
         use_cached_patches=use_cached_patches,

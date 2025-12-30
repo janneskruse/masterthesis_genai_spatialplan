@@ -395,7 +395,7 @@ def train_vae(mode: str = 'satellite'):
     if world_size > 1:
         dist.barrier()
     
-    cache_dir = f"{big_data_storage_path}/processed/{task_name}"
+    cache_dir = f"{big_data_storage_path}/processed/{task_name}/{mode}"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     ########## Load Dataset #############
@@ -407,6 +407,7 @@ def train_vae(mode: str = 'satellite'):
     # For VAE training, we don't use latents
     urban_dataset = UrbanInpaintingDataset(
         split='train',
+        mode=mode,
         use_latents=False,
         latent_path=None,
         use_cached_patches=use_cached_patches,

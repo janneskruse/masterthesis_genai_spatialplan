@@ -22,7 +22,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 # Local imports
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.diffusion_blocks.vae import VAE
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
@@ -174,7 +173,7 @@ def train_lst_predictor():
     if world_size > 1:
         dist.barrier()
     
-    cache_dir = f"{big_data_storage_path}/processed/{task_name}"
+    cache_dir = f"{big_data_storage_path}/processed/{task_name}/semantic_patches"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     ########## Load Dataset #############
@@ -185,6 +184,7 @@ def train_lst_predictor():
     
     urban_dataset = UrbanInpaintingDataset(
         split='train',
+        mode='semantic',
         use_latents=False,
         latent_path=None,
         use_cached_patches=use_cached_patches,
