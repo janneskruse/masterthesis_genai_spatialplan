@@ -20,6 +20,7 @@ from torch.utils.data.dataset import Dataset
 from model.utils.diffusion_utils import load_latents
 from model.utils.read_yaml import get_nested
 from model.utils.diffusion_utils import load_single_latent
+from model.utils.data_utils import apply_range_filter
 from helpers.load_configs import load_configs
 from model.dataset.compare import reconcile_patches_with_latents
 
@@ -123,8 +124,14 @@ class UrbanInpaintingDataset(Dataset):
             'type': 'random_square',
             'size_px': 64
         })
-        self.osm_layers = get_nested(condition_config, ['osm_layers'], ['buildings', 'streets', 'water'])
-        self.environmental_layers = get_nested(condition_config, ['environmental_layers'], ['ndvi', 'landsat_surface_temp_b10_masked'])
+        
+        # Parse layer configurations (supports both string and dict formats)
+        self.osm_layers, self.osm_layer_configs = self._parse_layer_config(
+            get_nested(condition_config, ['osm_layers'], ['buildings', 'streets', 'water'])
+        )
+        self.environmental_layers, self.env_layer_configs = self._parse_layer_config(
+            get_nested(condition_config, ['environmental_layers'], ['ndvi', 'landsat_surface_temp_b10_masked'])
+        )
         
         # Select regions based on split
         train_regions = dataset_config.get('train_regions', ['Dresden', 'Hamburg', 'Stuttgart'])
@@ -402,35 +409,53 @@ class UrbanInpaintingDataset(Dataset):
         
         if 'osm_features' in self.condition_types:
             osm_layers = []
+            osm_layer_names = []  # Track which layers are included
+            
             for layer_name in self.osm_layers:
                 if layer_name in data_layers and data_layers[layer_name] is not None:
                     layer_patch = data_layers[layer_name].isel(
                         y=slice(y, y+ps),
                         x=slice(x, x+ps)
                     ).values
-                    layer_patch = self._normalize_layer(layer_patch, layer_name)
+                    
+                    # Apply normalization and filters
+                    layer_patch = self._apply_layer_transform(layer_patch, layer_name, 'osm')
                     layer_patch = self._to_chw(layer_patch)
                     osm_layers.append(layer_patch)
+                    
+                    # Use custom key if specified, otherwise use layer name
+                    layer_config = self.osm_layer_configs.get(layer_name, {})
+                    display_name = layer_config.get('key', layer_name)
+                    osm_layer_names.append(display_name)
             
             if osm_layers:
                 osm_features = np.concatenate(osm_layers, axis=0)
-                self._append_spatial(spatial, spatial_names, osm_features, 'osm', channel_names=self.osm_layers)
+                self._append_spatial(spatial, spatial_names, osm_features, 'osm', channel_names=osm_layer_names)
         
         if 'environmental' in self.condition_types:
             env_layers = []
+            env_layer_names = []  # Track which layers are included
+            
             for layer_name in self.environmental_layers:
                 if layer_name in data_layers and data_layers[layer_name] is not None:
                     layer_patch = data_layers[layer_name].isel(
                         y=slice(y, y+ps),
                         x=slice(x, x+ps)
                     ).values
-                    layer_patch = self._normalize_layer(layer_patch, layer_name)
+                    
+                    # Apply normalization and filters
+                    layer_patch = self._apply_layer_transform(layer_patch, layer_name, 'env')
                     layer_patch = self._to_chw(layer_patch)
                     env_layers.append(layer_patch)
+                    
+                    # Use custom key if specified, otherwise use layer name
+                    layer_config = self.env_layer_configs.get(layer_name, {})
+                    display_name = layer_config.get('key', layer_name)
+                    env_layer_names.append(display_name)
             
             if env_layers:
                 env_features = np.concatenate(env_layers, axis=0)
-                self._append_spatial(spatial, spatial_names, env_features, 'env', channel_names=self.environmental_layers)
+                self._append_spatial(spatial, spatial_names, env_features, 'env', channel_names=env_layer_names)
         
         if spatial:
             cond_inputs['image'] = torch.cat(spatial, dim=0)
@@ -449,6 +474,75 @@ class UrbanInpaintingDataset(Dataset):
             'conditioning': cond_inputs if len(self.condition_types) > 0 else None
         }
         
+    def _apply_layer_transform(self, data, layer_name, layer_type='osm'):
+        """
+        Apply transformations to layer data including normalization and range filters.
+        
+        Args:
+            data: numpy array of layer data
+            layer_name: name of the layer
+            layer_type: 'osm' or 'env'
+            
+        Returns:
+            Transformed data array
+        """
+        # Get layer config
+        layer_configs = self.osm_layer_configs if layer_type == 'osm' else self.env_layer_configs
+        layer_config = layer_configs.get(layer_name, {})
+        
+        # First normalize the layer
+        data = self._normalize_layer(data, layer_name)
+        
+        # Apply range filters if specified
+        if 'filters' in layer_config and layer_config['filters']:
+            data = apply_range_filter(data, layer_config['filters'])
+        
+        return data
+    
+    def _parse_layer_config(self, layers_config: List) -> tuple[list[str], dict]:
+        """
+        Parse layer configuration supporting both string and dict formats.
+        
+        String format: ['buildings', 'streets']
+        Dict format: [{'vegetation': {'layer': 'ndvi', 'gte': 0.2, 'predict': True}}]
+        
+        Returns:
+            tuple: (layer_names, layer_configs)
+                - layer_names: List of layer names for accessing data
+                - layer_configs: Dict mapping layer names to their configs (filters, etc.)
+        """
+        layer_names = []
+        layer_configs = {}
+        
+        if not layers_config:
+            return [], {}
+        
+        for item in layers_config:
+            if isinstance(item, str):
+                # Simple string format
+                layer_names.append(item)
+                layer_configs[item] = {'layer': item, 'predict': True}
+            elif isinstance(item, dict):
+                # Dict format with metadata
+                for layer_key, layer_config in item.items():
+                    if isinstance(layer_config, dict):
+                        # Get the actual data layer name
+                        data_layer = layer_config.get('layer', layer_key)
+                        layer_names.append(data_layer)
+                        
+                        # Store full config including filters and metadata
+                        layer_configs[data_layer] = {
+                            'layer': data_layer,
+                            'key': layer_key,  # Original key (e.g., 'vegetation')
+                            'predict': layer_config.get('predict', True),
+                            'filters': {
+                                k: v for k, v in layer_config.items() 
+                                if k in ['gte', 'lte', 'gt', 'lt', 'eq']
+                            }
+                        }
+        
+        return layer_names, layer_configs
+    
     def _estimate_cache_size(self) -> int:
         """Estimate cache directory size in MB"""
         total_size = 0
@@ -783,15 +877,24 @@ class UrbanInpaintingDataset(Dataset):
             
             if 'osm_features' in self.condition_types:
                 osm_layers = []
+                osm_layer_names = []  # Track which layers are included
+                
                 for layer_name in self.osm_layers:
                     if layer_name in data_layers and data_layers[layer_name] is not None:
                         layer_patch = data_layers[layer_name].isel(
                             y=slice(y, y+ps),
                             x=slice(x, x+ps)
                         ).values
-                        layer_patch = self._normalize_layer(layer_patch, layer_name)
+                        
+                        # Apply normalization and filters
+                        layer_patch = self._apply_layer_transform(layer_patch, layer_name, 'osm')
                         layer_patch = self._to_chw(layer_patch)
                         osm_layers.append(layer_patch)
+                        
+                        # Use custom key if specified, otherwise use layer name
+                        layer_config = self.osm_layer_configs.get(layer_name, {})
+                        display_name = layer_config.get('key', layer_name)
+                        osm_layer_names.append(display_name)
                 
                 if osm_layers:
                     osm_features = np.concatenate(osm_layers, axis=0)
@@ -803,19 +906,28 @@ class UrbanInpaintingDataset(Dataset):
                         mode='bilinear',
                         align_corners=False
                     ).squeeze(0)
-                    self._append_spatial(spatial, spatial_names, osm_features.numpy(), 'osm', channel_names=self.osm_layers)
+                    self._append_spatial(spatial, spatial_names, osm_features.numpy(), 'osm', channel_names=osm_layer_names)
             
             if 'environmental' in self.condition_types:
                 env_layers = []
+                env_layer_names = []  # Track which layers are included
+                
                 for layer_name in self.environmental_layers:
                     if layer_name in data_layers and data_layers[layer_name] is not None:
                         layer_patch = data_layers[layer_name].isel(
                             y=slice(y, y+ps),
                             x=slice(x, x+ps)
                         ).values
-                        layer_patch = self._normalize_layer(layer_patch, layer_name)
+                        
+                        # Apply normalization and filters
+                        layer_patch = self._apply_layer_transform(layer_patch, layer_name, 'env')
                         layer_patch = self._to_chw(layer_patch)
                         env_layers.append(layer_patch)
+                        
+                        # Use custom key if specified, otherwise use layer name
+                        layer_config = self.env_layer_configs.get(layer_name, {})
+                        display_name = layer_config.get('key', layer_name)
+                        env_layer_names.append(display_name)
                 
                 if env_layers:
                     env_features = np.concatenate(env_layers, axis=0)
@@ -827,7 +939,7 @@ class UrbanInpaintingDataset(Dataset):
                         mode='bilinear',
                         align_corners=False
                     ).squeeze(0)
-                    self._append_spatial(spatial, spatial_names, env_features.numpy(), 'env', channel_names=self.environmental_layers)
+                    self._append_spatial(spatial, spatial_names, env_features.numpy(), 'env', channel_names=env_layer_names)
             
             if spatial:
                 cond_inputs['image'] = torch.cat(spatial, dim=0)

@@ -1,0 +1,271 @@
+# Configuration for Two-Stage Semantic Urban Inpainting
+# Stage 1: Generate semantic layouts (buildings/roads/vegetation/height) with LST control
+# Stage 2: Render satellite imagery from semantics
+
+cluster: True
+
+# ===========================================================================
+# DATASET PARAMETERS
+# ===========================================================================
+
+dataset_params:
+  big_data_storage_path: "/work/zt75vipu-master/data"
+  train_regions: ['Dresden', 'Hamburg', 'Stuttgart']
+  eval_regions: ['Leipzig']
+  zarr_name: "input_config_ge25_cc10_2019_2024_clipped.zarr"
+  res: 3  # resolution in meters
+  patch_size_m: 800  # patch size in meters
+  im_channels: 3  # RGB satellite (for Stage 2)
+  min_valid_percent: 90
+  stride_overlap: 2  # 50% overlap
+
+# ============================================================================
+# AUTOENCODER PARAMETERS
+# ============================================================================
+  
+autoencoder_params:
+  semantic:
+    # Semantic VAE (Stage 1 autoencoder)
+    tanh_activation: False  # Binary masks + height, no tanh
+    z_channels: 4
+    down_channels: [32, 64, 128, 128]
+    mid_channels: [128, 128]
+    down_sample: [True, True, True]
+    attn_down: [False, False, False]
+    norm_channels: 32
+    num_heads: 2
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+  satellite:
+    tanh_activation: True
+    tanh_scaling: 0.95
+    z_channels: 4
+    down_channels: [32, 64, 128, 128]
+    mid_channels: [128, 128]
+    down_sample: [True, True, True]
+    attn_down: [False, False, False]
+    norm_channels: 32
+    num_heads: 2
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+
+
+
+# ============================================================================
+# DIFFUSION MODEL PARAMETERS
+# ============================================================================
+
+# Common diffusion parameters for both stages
+diffusion_params:
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+
+# LDM parameters for both stages
+ldm_params:
+  semantic: 
+    # Semantic U-Net (Stage 1 diffusion model)
+    down_channels: [32, 64, 128, 256]
+    mid_channels: [256, 256, 128]
+    down_sample: [True, True, False]
+    attn_down: [True, True, False]
+    time_emb_dim: 128
+    norm_channels: 32
+    num_heads: 4
+    conv_out_channels: 128
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+    
+    # Conditioning for semantic generation
+    condition_config:
+      condition_types: ['inpainting', 'image']
+
+      osm_layers: ['buildings', 'streets', 'buildings_heights' ] # 'water'
+      
+      environmental_layers: [
+        ndvi: {
+          predict: False,
+          layer: 'ndvi'
+        },
+        vegetation: {
+          predict: True,
+          layer: 'ndvi',
+          gte: 0.2,
+          # lte: 0.4
+        },
+        lst: {
+          predict: False,
+          lst: True,
+          layer:'landsat_surface_temp_b10_masked'
+        }
+      ]
+      
+      # Inpainting hole configuration
+      hole_config:
+        type: 'street_blocks'
+        max_coverage_percent: 25
+        size_px: 80
+        min_size_px: 40
+        max_size_px: 120
+      
+      # Image conditioning channels
+      # mask(1) + context_semantics(4) + LST_target(1) + NDVI(1) = 7
+      image_condition_config:
+        image_condition_input_channels: 7
+        image_condition_output_channels: 32
+        cond_drop_prob: 0.1
+
+  satellite:
+    # Satellite U-Net (Stage 2 diffusion model)
+    down_channels: [32, 64, 128, 256]
+    mid_channels: [256, 256, 128]
+    down_sample: [True, True, False]
+    attn_down: [True, True, False]
+    time_emb_dim: 128
+    norm_channels: 32
+    num_heads: 4
+    conv_out_channels: 128
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+    
+    # Conditioning for satellite rendering
+    condition_config:
+      condition_types: ['inpainting', 'osm_features', 'environmental']
+      
+      # Inpainting hole configuration
+      hole_config:
+        type: 'street_blocks'
+        max_coverage_percent: 25
+        size_px: 80
+        min_size_px: 40
+        max_size_px: 120
+      
+      # OSM layers (from Stage 1 generated semantics)
+      osm_layers: ['buildings', 'streets', 'water']
+      
+      # Environmental layers
+      environmental_layers: ['ndvi', 'landsat_surface_temp_b10_masked']
+      
+      # Prediction heads (optional for Stage 2, usually disabled)
+      environmental_prediction_layers: []  # Empty for Stage 2
+      
+      # Image conditioning config
+      # masked_rgb(3) + mask(1) + generated_semantics(4) + env_layers(2) = 10
+      image_condition_config:
+        image_condition_input_channels: 10
+        image_condition_output_channels: 32
+        cond_drop_prob: 0.1
+
+
+# ============================================================================
+# TRAINING PARAMETERS
+# ============================================================================
+
+train_params:
+  # ========== General Settings ==========
+  seed: 42
+  num_workers: 4
+  save_latents: True
+
+  # File/folder names
+  task_name: 'two_stage_1'
+  
+  # Sampling parameters
+  num_samples: 16
+  num_grid_rows: 4
+  cf_guidance_scale: 7.5
+  overwrite_samples: False
+  clamp_sampling: True
+
+  # LST predictor training
+  lst_predictor_epochs: 50
+  lst_predictor_batch_size: 16
+  lst_predictor_lr: 0.0001
+  lst_predictor_ckpt_name: 'lst_predictor_best.pth'
+  lst_predictor_use_ndvi: True  # Include NDVI as input to LST predictor
+  lst_predictor_hidden_dims: [64, 128, 256]
+  lst_predictor_loss: 'huber'  # 'l1', 'l2', 'huber'
+  lst_predictor_mask_weighting: True
+  lst_predictor_mask_weight: 3.0
+
+  semantic:
+    # Semantic VAE training
+    autoencoder_epochs: 50
+    autoencoder_batch_size: 4
+    autoencoder_lr: 0.0001
+    disc_start: 10000
+    disc_weight: 0.5
+    perceptual_weight: 1
+    kl_weight: 0.000001
+    penalize_out_of_range: True
+    autoencoder_img_save_steps: 64
+    use_discriminator: False
+    use_perceptual: False
+
+    # Semantic diffusion training
+    ldm_epochs: 300
+    ldm_batch_size: 4
+    ldm_lr: 0.00001
+  
+    # Semantic inpainting parameters
+    inpainting:
+      mode: 'hard'  # 'hard' or 'sdlike'
+      loss: 'masked'  # 'masked' or 'weighted'
+      mask_loss_weight: 8.0
+      outside_weight: 0.0  # For hard mode
+      cfg: # classifier-free guidance
+        drop_prob: 0.1
+        drop_groups: ['osm', 'env']
+
+    # Stage 1 checkpoints
+    autoencoder_ckpt_name: 'semantic_vae_ddp_ckpt.pth'
+    latents_dir_name: 'semantic_vae_ddp_latents'
+    autoencoder_samples_dir_name: 'semantic_vae_ddp_samples'
+    stats_dir_name: 'semantic_vae_ddp_stats'
+    ldm_ckpt_name: 'semantic_ldm_ddp_ckpt.pth'
+
+  satellite:
+    # Satellite VAE training
+    autoencoder_epochs: 50
+    autoencoder_batch_size: 2
+    autoencoder_lr: 0.0001
+    disc_start: 10000
+    disc_weight: 0.5
+    perceptual_weight: 1
+    kl_weight: 0.000001
+    penalize_out_of_range: True
+    autoencoder_img_save_steps: 64
+  
+    # Satellite diffusion training
+    ldm_epochs: 400
+    ldm_batch_size: 4
+    ldm_lr: 0.00001
+    ldm_img_save_steps: 1000
+  
+    # Inpainting parameters for satellite
+    inpainting:
+      mode: 'hard'
+      loss: 'masked'
+      mask_loss_weight: 8.0
+      outside_weight: 0.0
+      cfg:
+        drop_prob: 0.1
+        drop_groups: ['osm', 'env']
+  
+    # Auxiliary prediction loss weights
+    seg_loss_weight_initial: 0.1
+    seg_loss_weight_final: 0.5
+    env_loss_weight_initial: 0.1
+    env_loss_weight_final: 0.3
+
+    # Stage 2 checkpoints (satellite)
+    autoencoder_ckpt_name: 'vae_urban_ddp_ckpt.pth'
+    latents_dir_name: 'vae_ddp_latents'
+    autoencoder_samples_dir_name: 'vae_ddp_samples'
+    stats_dir_name: 'vae_ddp_stats'
+    ldm_ckpt_name: 'ddpm_urban_inpainting_ckpt.pth'
+  

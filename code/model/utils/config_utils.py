@@ -38,3 +38,47 @@ def validate_class_conditional_input(cond_input, x, num_classes):
         "Shape of class condition input must match (Batch Size, )"
 def get_config_value(config, key, default_value):
     return config[key] if key in config else default_value
+
+
+def get_semantic_channels(condition_config):
+    """
+    Extract semantic channel names from condition config.
+    
+    Handles two formats:
+    1. Simple string: ['buildings', 'streets'] -> ['osm:buildings', 'osm:streets']
+    2. Dict with predict flag: {vegetation: {predict: True, layer: 'ndvi', gte: 0.2}}
+       -> ['env:vegetation'] (only if predict=True)
+    
+    Args:
+        condition_config: Configuration dict containing osm_layers and environmental_layers
+        
+    Returns:
+        List of semantic channel names with prefixes (osm: or env:)
+    """
+    semantic_channels = []
+    
+    # Process OSM layers (simple format)
+    osm_layers = condition_config.get('osm_layers', [])
+    for layer in osm_layers:
+        if isinstance(layer, str):
+            # Simple string format - add with osm: prefix
+            semantic_channels.append(f'osm:{layer}')
+        elif isinstance(layer, dict):
+            # Dict format with predict flag
+            for layer_name, layer_config in layer.items():
+                if isinstance(layer_config, dict) and layer_config.get('predict', True):
+                    semantic_channels.append(f'osm:{layer_name}')
+    
+    # Process environmental layers (can be dict format with filters)
+    env_layers = condition_config.get('environmental_layers', [])
+    for layer in env_layers:
+        if isinstance(layer, str):
+            # Simple string format - add with env: prefix
+            semantic_channels.append(f'env:{layer}')
+        elif isinstance(layer, dict):
+            # Dict format with predict flag and optional filters
+            for layer_name, layer_config in layer.items():
+                if isinstance(layer_config, dict) and layer_config.get('predict', True):
+                    semantic_channels.append(f'env:{layer_name}')
+    
+    return semantic_channels

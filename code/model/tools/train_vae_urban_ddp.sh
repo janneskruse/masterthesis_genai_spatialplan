@@ -54,7 +54,7 @@ echo "=================================================="
 srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    python3 -u train_vae_urban_ddp.py --config $CONFIG_PATH
+    python3 -u train_vae_.py --config $CONFIG_PATH --mode satellite
 "
 
 echo "=================================================="
