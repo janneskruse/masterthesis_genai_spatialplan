@@ -42,7 +42,8 @@ class UrbanInpaintingDataset(Dataset):
                  use_latents=False, 
                  latent_path=None,
                  use_cached_patches: bool = True,
-                 cache_dir: Optional[str] = None
+                 cache_dir: Optional[str] = None,
+                 mode: str = 'satellite',
         ):
         """
         :param split: 'train' or 'val'
@@ -50,6 +51,7 @@ class UrbanInpaintingDataset(Dataset):
         :param latent_path: path to latent files
         :param use_cached_patches: whether to use cached patches
         :param cache_dir: directory for cached patches
+        :param mode: 'semantic' or 'satellite' - determines which stage configs to use
         """
         
         ###### Setup config variables #######
@@ -63,6 +65,19 @@ class UrbanInpaintingDataset(Dataset):
         self.config = config
         self.data_config = data_config
         self.dataset_config = dataset_config
+        self.mode = mode
+        
+        # Get mode-specific configs
+        ldm_config = config.get('ldm_params', {})
+        autoencoder_config = config.get('autoencoder_params', {})
+        
+        # Select configs based on mode
+        if mode == 'semantic':
+            self.ldm_config = ldm_config.get('semantic', ldm_config)
+            self.autoencoder_config = autoencoder_config.get('semantic', autoencoder_config)
+        else:  # satellite
+            self.ldm_config = ldm_config.get('satellite', ldm_config)
+            self.autoencoder_config = autoencoder_config.get('satellite', autoencoder_config)
         
         # Basic parameters
         big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
@@ -79,16 +94,14 @@ class UrbanInpaintingDataset(Dataset):
         self.use_latents = bool(use_latents)
         # If using latents, need to account for both VAE and U-Net downsampling
         if use_latents:
-            # Calculate downsampling factor for latent space
-            autoencoder_config = config.get('autoencoder_params', {})
-            down_sample = autoencoder_config.get('down_sample', [True, True, True])
+            # Calculate downsampling factor for latent space using mode-specific config
+            down_sample = self.autoencoder_config.get('down_sample', [True, True, True])
             self.latent_downsample_factor = 2 ** sum([1 for ds in down_sample if ds])
         else:
             self.latent_downsample_factor = 1
         
-        # Get U-Net downsampling factor
-        ldm_config = config.get('ldm_params', {})
-        num_down_layers = len(ldm_config.get('down_channels', [64, 128, 256, 512]))
+        # Get U-Net downsampling factor using mode-specific config
+        num_down_layers = len(self.ldm_config.get('down_channels', [64, 128, 256, 512]))
         unet_downsample_factor = 2 ** num_down_layers
         
         # Total required divisibility
@@ -110,14 +123,10 @@ class UrbanInpaintingDataset(Dataset):
         self.im_channels = im_channels
         self.min_valid_percent = min_valid_percent
 
-        # Conditioning configuration
-        ldm_config = config.get('ldm_params', None)
-        if ldm_config is None:
-            raise ValueError("LDM configuration not found in config file")
-        
-        condition_config = get_nested(config, ['ldm_params', 'condition_config'])
+        # Conditioning configuration (from mode-specific ldm_config)
+        condition_config = self.ldm_config.get('condition_config', None)
         if condition_config is None:
-            raise ValueError("Conditioning configuration not found in config file")
+            raise ValueError(f"Conditioning configuration not found for mode '{mode}'")
 
         self.condition_types = condition_config.get('condition_types', [])
         self.hole_config = condition_config.get('hole_config', {
@@ -150,7 +159,7 @@ class UrbanInpaintingDataset(Dataset):
         # Cache directory setup
         if cache_dir is None:
             task_name = config['train_params']['task_name']
-            cache_dir = Path(big_data_storage_path) / "processed" / task_name
+            cache_dir = Path(big_data_storage_path) / "processed" / task_name / self.mode
             
         self.cache_dir = Path(cache_dir)
         self.use_cached_patches = use_cached_patches
@@ -1184,8 +1193,9 @@ class UrbanInpaintingDataset(Dataset):
         print(f"\n{'='*60}")
         print(f"Dataset Configuration Summary")
         print(f"{'='*60}")
+        print(f"Stage/Mode: {self.mode.upper()}")
         print(f"Split: {self.split}")
-        print(f"Mode: {'Cached patches' if self.use_cached_patches else 'On-the-fly Xarray'}")
+        print(f"Loading mode: {'Cached patches' if self.use_cached_patches else 'On-the-fly Xarray'}")
         print(f"Total patches: {len(self.patches)}")
         print(f"Using latents: {self.use_latents}")
         print(f"Patch size: {self.patch_size}x{self.patch_size}")
