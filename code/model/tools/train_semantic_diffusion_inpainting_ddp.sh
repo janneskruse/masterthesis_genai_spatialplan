@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --time=3:00:00
-#SBATCH --job-name="train_vae_urban_ddp"
+#SBATCH --job-name="train_semantic_diffusion_inpainting_ddp"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
@@ -17,7 +17,7 @@
 if [ "$1" = "--config" ] && [ -n "$2" ]; then
     CONFIG_PATH=$2
 else
-    CONFIG_PATH=${1:-diffusion_1.yml}
+    CONFIG_PATH=${1:-two_stage_1.yml}
 fi
 
 mkdir -p log
@@ -54,7 +54,7 @@ echo "=================================================="
 srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    python3 -u train_vae_ddp.py --config $CONFIG_PATH --mode satellite
+    python3 -u train_semantic_diffusion_inpainting_ddp.py --config $CONFIG_PATH
 "
 
 echo "=================================================="
@@ -62,4 +62,4 @@ echo "Job finished at: $(date)"
 echo "=================================================="
 
 # hand in diffusion training shell script to slurm
-sbatch train_urban_inpainting_ddp.sh --config $CONFIG_PATH
+sbatch train_lst_predictor_ddp.sh --config $CONFIG_PATH
