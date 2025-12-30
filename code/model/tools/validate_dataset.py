@@ -152,16 +152,18 @@ def visualize_sample(sample_data, save_path=None):
     plt.close()
 
 
-def validate_dataset(num_samples=5, config=None):
+def validate_dataset(num_samples=5, config=None, mode='semantic'):
     """
     Validate dataset loading and visualize samples.
     
     Args:
         num_samples: Number of samples to visualize
         config: Configuration dict (if None, will load from load_configs)
+        mode: 'semantic' or 'satellite' - which stage to validate
     """
+    stage_name = "Semantic (Stage 1)" if mode == 'semantic' else "Satellite (Stage 2)"
     print("="*50)
-    print("Dataset Validation")
+    print(f"Dataset Validation - {stage_name}")
     print("="*50)
     
     ###### setup config variables #######
@@ -172,17 +174,32 @@ def validate_dataset(num_samples=5, config=None):
     
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
-    print("\n✓ Loaded configuration")
+    # Load mode-specific configs
+    ldm_config = config['ldm_params']
+    autoencoder_config = config['autoencoder_params']
+    train_config = config['train_params']
+    
+    if mode == 'semantic':
+        mode_ldm_config = ldm_config['semantic']
+        mode_autoencoder_config = autoencoder_config['semantic']
+        mode_train_config = train_config['semantic']
+    else:  # satellite
+        mode_ldm_config = ldm_config['satellite']
+        mode_autoencoder_config = autoencoder_config['satellite']
+        mode_train_config = train_config['satellite']
+    
+    print(f"\n✓ Loaded configuration for {stage_name}")
     
     # Create dataset
-    print("\nLoading dataset...")
+    print(f"\nLoading {mode} dataset...")
     try:
         dataset = UrbanInpaintingDataset(
             split='train',
             use_latents=False,
-            latent_path=None
+            latent_path=None,
+            mode=mode
         )
-        print(f"✓ Successfully loaded dataset!")
+        print(f"✓ Successfully loaded {mode} dataset!")
     except Exception as e:
         print(f"✗ Error loading dataset: {e}")
         import traceback
@@ -207,7 +224,8 @@ def validate_dataset(num_samples=5, config=None):
     print("="*50)
     
     # Create output directory
-    output_dir = f"{big_data_storage_path}/results/{config['train_params'].get('task_name', 'urban_inpainting')}/dataset_validation"
+    task_name = train_config.get('task_name', 'urban_inpainting')
+    output_dir = f"{big_data_storage_path}/results/{task_name}/dataset_validation_{mode}"
     os.makedirs(output_dir, exist_ok=True)
     
     for i in range(min(num_samples, len(dataset))):
@@ -269,6 +287,13 @@ if __name__ == '__main__':
         default=5,
         help='Number of samples to visualize'
     )
+    parser.add_argument(
+        '--mode',
+        type=str,
+        default='semantic',
+        choices=['semantic', 'satellite'],
+        help='Dataset mode/stage to validate: semantic (Stage 1) or satellite (Stage 2)'
+    )
     
     # Parse arguments
     args = parser.parse_args()
@@ -277,4 +302,4 @@ if __name__ == '__main__':
     config = load_configs(parser)
     
     # Run validation
-    validate_dataset(args.num_samples, config)
+    validate_dataset(args.num_samples, config, args.mode)
