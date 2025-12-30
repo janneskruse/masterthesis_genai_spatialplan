@@ -83,7 +83,15 @@ ldm_params:
     condition_config:
       condition_types: ['inpainting', 'image']
 
-      osm_layers: ['buildings', 'streets', 'buildings_heights' ] # 'water'
+      osm_layers: [
+        'buildings', 
+        'streets',  
+        street_blocks: {
+          predict: False,
+          layer: 'street_blocks'
+        },
+        buildings_heights' 
+      ] # 'water'
       
       environmental_layers: [
         ndvi: {
@@ -144,8 +152,16 @@ ldm_params:
         min_size_px: 40
         max_size_px: 120
       
-      # OSM layers (from Stage 1 generated semantics)
-      osm_layers: ['buildings', 'streets', 'water']
+      # OSM layers
+      osm_layers: [
+        'buildings', 
+        'streets',  
+        street_blocks: {
+          predict: False,
+          layer: 'street_blocks'
+        },
+        buildings_heights' 
+      ] # 'water'
       
       # Environmental layers
       environmental_layers: ['ndvi', 'landsat_surface_temp_b10_masked']
