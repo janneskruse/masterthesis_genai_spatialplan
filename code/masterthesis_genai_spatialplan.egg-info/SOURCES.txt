@@ -59,12 +59,16 @@ code/model/tools/sample_ddpm_class_cond.py
 code/model/tools/sample_ddpm_text_cond.py
 code/model/tools/sample_ddpm_text_image_cond.py
 code/model/tools/sample_ddpm_vqvae.py
+code/model/tools/sample_satellite_from_semantics.py
+code/model/tools/sample_semantics_inpainting.py
 code/model/tools/sample_urban_inpainting.py
 code/model/tools/train_ddpm_cond.py
 code/model/tools/train_ddpm_vqvae.py
+code/model/tools/train_lst_predictor_ddp.py
+code/model/tools/train_semantic_diffusion_inpainting_ddp.py
 code/model/tools/train_urban_inpainting.py
 code/model/tools/train_urban_inpainting_ddp.py
-code/model/tools/train_vae_urban.py
+code/model/tools/train_vae_ddp.py
 code/model/tools/train_vae_urban_ddp.py
 code/model/tools/train_vqvae.py
 code/model/tools/validate_dataset.py
