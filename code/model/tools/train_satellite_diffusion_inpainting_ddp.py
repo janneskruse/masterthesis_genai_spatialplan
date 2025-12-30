@@ -23,7 +23,6 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.diffusion_blocks.unet_cond_base import Unet
 from model.diffusion_blocks.vae import VAE
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
-from model.utils.config_utils import get_config_value
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
@@ -81,24 +80,38 @@ def train():
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
     if is_main:
-        print("="*50)
-        print("Urban Inpainting DDP Training Configuration")
-        print("="*50)
+        print(f"\n{'='*60}")
+        print("Satellite Diffusion DDP Training (Stage 2)")
+        print(f"{'='*60}")
+        print(f"✓ World size: {world_size}")
+        print(f"✓ Rank: {rank}")
+        print(f"✓ Local rank: {local_rank}")
+        print(f"\n{'='*50}")
+        print("Configuration")
+        print(f"{'='*50}")
         print(yaml.dump(config, default_flow_style=False))
     
     diffusion_config = config['diffusion_params']
     dataset_config = config['dataset_params']
-    diffusion_model_config = config['ldm_params']
-    autoencoder_model_config = config['autoencoder_params']
+    ldm_config = config['ldm_params']
+    autoencoder_config = config['autoencoder_params']
     train_config = config['train_params']
     
-    latent_path = f'{big_data_storage_path}/results/{train_config["task_name"]}/{train_config.get("latents_dir_name", "vae_ddp_latents")}'
+    # Get satellite-specific configs
+    satellite_ldm_config = ldm_config.get('satellite', ldm_config)
+    satellite_autoencoder_config = autoencoder_config.get('satellite', autoencoder_config)
+    satellite_train_config = train_config.get('satellite', train_config)
+    
+    latent_path = f'{big_data_storage_path}/results/{train_config["task_name"]}/{satellite_train_config.get("latents_dir_name", "satellite_vae_ddp_latents")}'
     use_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
-    cache_dir = f"{big_data_storage_path}/processed/{train_config.get('task_name', 'urban_inpainting')}"
+    
+    # Task name from base config, mode-specific cache
+    task_name = train_config.get('task_name', 'urban_inpainting')
+    cache_dir = f"{big_data_storage_path}/processed/{task_name}/satellite"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     # Create output directory
-    out_dir = f"{big_data_storage_path}/results/{train_config.get('task_name', 'urban_inpainting')}"
+    out_dir = f"{big_data_storage_path}/results/{task_name}"
     
     if is_main:
         os.makedirs(out_dir, exist_ok=True)
@@ -118,16 +131,17 @@ def train():
         print(f"\n✓ Created noise scheduler with {diffusion_config['num_timesteps']} timesteps")
     
     ########## Load Dataset #############
-    condition_config = get_config_value(diffusion_model_config, 'condition_config', None)
-    assert condition_config is not None, "Condition config required for urban inpainting"
+    condition_config = satellite_ldm_config.get('condition_config', None)
+    assert condition_config is not None, "Condition config required for satellite diffusion"
     
     if is_main:
-        print("\n" + "="*50)
-        print("Loading Urban Dataset")
-        print("="*50)
+        print(f"\n{'='*50}")
+        print("Loading Urban Dataset for Satellite Training")
+        print(f"{'='*50}")
     
     urban_dataset = UrbanInpaintingDataset(
         split='train',
+        mode='satellite',
         use_latents=use_latents,
         latent_path=latent_path if use_latents else None,
         use_cached_patches=use_cached_patches,
@@ -151,7 +165,7 @@ def train():
     
     data_loader = DataLoader(
         urban_dataset,
-        batch_size=train_config['ldm_batch_size'],
+        batch_size=satellite_train_config.get('ldm_batch_size', 4),
         shuffle=(sampler is None),
         num_workers=0,  # Set to 0 for DDP to avoid issues
         pin_memory=True,
@@ -161,14 +175,14 @@ def train():
     
     ########## Create Model #############
     if is_main:
-        print("\n" + "="*50)
+        print(f"\n{'='*50}")
         print("Initializing Models")
-        print("="*50)
+        print(f"{'='*50}")
     
     # Instantiate the U-Net model
     model = Unet(
-        im_channels=autoencoder_model_config['z_channels'],
-        model_config=diffusion_model_config
+        im_channels=satellite_autoencoder_config['z_channels'],
+        model_config=satellite_ldm_config
     ).to(device)
     
     # Wrap with DDP
@@ -196,14 +210,14 @@ def train():
         
         vae = VAE(
             im_channels=dataset_config['im_channels'],
-            model_config=autoencoder_model_config
+            model_config=satellite_autoencoder_config
         ).to(device)
         vae.eval()
         
         # Load VAE checkpoint if exists
         vae_path = os.path.join(
-            train_config['task_name'],
-            train_config.get('autoencoder_ckpt_name', 'vae_urban_ddp_ckpt.pth')
+            out_dir,
+            satellite_train_config.get('autoencoder_ckpt_name', 'vae_urban_ddp_ckpt.pth')
         )
         if os.path.exists(vae_path):
             if is_main:
@@ -217,10 +231,10 @@ def train():
             param.requires_grad = False
     
     ########## Training Setup #############
-    num_epochs = train_config['ldm_epochs']
+    num_epochs = satellite_train_config.get('ldm_epochs', 400)
     
     # Scale learning rate with world size (linear scaling rule)
-    base_lr = train_config['ldm_lr']
+    base_lr = satellite_train_config.get('ldm_lr', 0.00001)
     adjusted_lr = base_lr * world_size
     if is_main and world_size > 1:
         print(f"\n✓ Scaled learning rate: {base_lr} -> {adjusted_lr} (x{world_size})")
@@ -228,19 +242,18 @@ def train():
     optimizer = Adam(model.parameters(), lr=adjusted_lr)
     
     # Loss weights with warmup
-    mask_loss_weight = train_config.get('mask_loss_weight', 2.0)
-    seg_loss_weight_initial = train_config.get('seg_loss_weight_initial', 0.1)
-    seg_loss_weight_final = train_config.get('seg_loss_weight_final', 0.5)
-    env_loss_weight_initial = train_config.get('env_loss_weight_initial', 0.1)
-    env_loss_weight_final = train_config.get('env_loss_weight_final', 0.3)
+    seg_loss_weight_initial = satellite_train_config.get('seg_loss_weight_initial', 0.1)
+    seg_loss_weight_final = satellite_train_config.get('seg_loss_weight_final', 0.5)
+    env_loss_weight_initial = satellite_train_config.get('env_loss_weight_initial', 0.1)
+    env_loss_weight_final = satellite_train_config.get('env_loss_weight_final', 0.3)
     
     # Check if model has auxiliary prediction heads
     model_unwrapped = model.module if hasattr(model, 'module') else model
     has_seg_head = hasattr(model_unwrapped, 'segmentation_head') and model_unwrapped.segmentation_head is not None
     has_env_head = hasattr(model_unwrapped, 'environmental_head') and model_unwrapped.environmental_head is not None
     
-    # Conditioning dropout probability
-    inpainting_cfg = train_config.get('inpainting', {})
+    # Conditioning dropout probability from satellite config
+    inpainting_cfg = satellite_train_config.get('inpainting', {})
     cond_cfg = inpainting_cfg.get('cfg', {})
     cond_drop_prob = cond_cfg.get('drop_prob', 0.1)
     drop_groups = tuple(cond_cfg.get('drop_groups', ["osm", "env"]))
@@ -256,10 +269,11 @@ def train():
     
     
     if is_main:
+        batch_size = satellite_train_config.get('ldm_batch_size', 4)
         print(f"\n✓ Training for {num_epochs} epochs")
-        print(f"✓ Learning rate: {adjusted_lr}")
-        print(f"✓ Batch size per GPU: {train_config['ldm_batch_size']}")
-        print(f"✓ Effective batch size: {train_config['ldm_batch_size'] * world_size}")
+        print(f"✓ Learning rate: {adjusted_lr} from base {base_lr}")
+        print(f"✓ Batch size per GPU: {batch_size}")
+        print(f"✓ Effective batch size: {batch_size * world_size}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
         print(f"✓ Inpainting mode: {mode}")
         print(f"✓ Loss type: {loss_type}")
@@ -534,7 +548,7 @@ def train():
             
             checkpoint_path = os.path.join(
                 out_dir,
-                train_config.get('ldm_ckpt_name', 'ddpm_urban_inpainting_ddp_ckpt.pth')
+                satellite_train_config.get('ldm_ckpt_name', 'ddpm_urban_inpainting_ckpt.pth')
             )
             torch.save(model_unwrapped.state_dict(), checkpoint_path)
             
@@ -555,10 +569,14 @@ def train():
     training_time = time.time() - training_start_time
     
     if is_main:
-        print('\n' + "="*50)
-        print('✓ Training Complete!')
-        print(f'✓ Total training time: {training_time/3600:.2f} hours')
-        print("="*50)
+        hours = int(training_time // 3600)
+        minutes = int((training_time % 3600) // 60)
+        seconds = int(training_time % 60)
+        
+        print(f"\n{'='*60}")
+        print(f"✓ Satellite Diffusion Training Complete at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}!")
+        print(f"✓ Total Training Time: {hours}h {minutes}m {seconds}s ({training_time:.2f} seconds)")
+        print(f"{'='*60}")
     
     # Cleanup
     cleanup_distributed()
