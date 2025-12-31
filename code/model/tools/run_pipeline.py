@@ -9,6 +9,7 @@ import subprocess
 import sys
 import os
 import argparse
+from pathlib import Path
 
 # local imports
 from helpers.load_configs import load_configs
@@ -44,30 +45,20 @@ def main():
     
     # Add pipeline-specific arguments
     parser.add_argument(
-        '--skip-validation',
+        '--validate-dataset',
         action='store_true',
-        help='Skip dataset validation'
+        help='Validate the dataset before training',
+        default=False
     )
     parser.add_argument(
-        '--skip-vae',
+        '--skip-semantic-vae',
         action='store_true',
-        help='Skip VAE training (if already trained)'
+        help='Skip Semantic VAE training (if already trained)'
     )
     parser.add_argument(
-        '--skip-diffusion',
+        '--skip-satellite-vae',
         action='store_true',
-        help='Skip diffusion training (if already trained)'
-    )
-    parser.add_argument(
-        '--sample-only',
-        action='store_true',
-        help='Only run sampling (skip training)'
-    )
-    parser.add_argument(
-        '--num-samples',
-        type=int,
-        default=8,
-        help='Number of samples to generate'
+        help='Skip Satellite VAE training (if already trained)'
     )
     
     # Parse arguments
@@ -81,6 +72,8 @@ def main():
     # Load configs using the parser
     config = load_configs(parser)
     # data_config = config['data_config']
+    big_data_storage_path = config['dataset_params']['big_data_storage_path']
+    task_name = config['train_config']['task_name']
     
     cluster_run = get_config_value(config, 'cluster', default=False)
     
@@ -93,38 +86,69 @@ def main():
     success = True
     
     # Step 1: Validate dataset
-    if not args.skip_validation and not args.sample_only:
+    if args.validate_dataset:
         cmd = f"python tools/validate_dataset.py --config {args.config} --num_samples 3"
         success = run_command(cmd, "Dataset Validation")
         if not success:
             print("\n⚠️  Dataset validation failed. Please fix dataset issues before continuing.")
             return 1
     
-    # Step 2: Train VAE
-    if not args.skip_vae and not args.sample_only:
+    # Step 2: Create patches
+    cache_dir_base = Path(big_data_storage_path) / "processed" / task_name
+    cache_dir_semantic = cache_dir_base / "semantic"
+    cache_dir_satellite = cache_dir_base / "satellite"
+    
+    if not cache_dir_semantic.exists() or len(os.listdir(cache_dir_semantic)) == 0 or \
+       not cache_dir_satellite.exists() or len(os.listdir(cache_dir_satellite)) == 0:
+        cmd = f"python tools/prepare_patches.py --config {args.config}"
+        success = run_command(cmd, "Create Patches")
+        if not success:
+            print("\n⚠️  Patch preparation failed. Check error messages above.")
+            return 1
+    
+    # Step 2: Submit pipelines
+    if not args.skip_semantic_vae:
         if cluster_run:
-            cmd = f"sbatch tools/train_vae_urban_ddp.sh {args.config}"
+            cmd = f"sbatch tools/train_semantic_vae_ddp.sh --config {args.config}"
         else:
-            cmd = f"python tools/train_vae_urban.py --config {args.config}"
-        success = run_command(cmd, "VAE Training")
+            cmd = f"python tools/train_semantic_vae.py --config {args.config}"
+        success = run_command(cmd, "Semantic VAE Training")
         if not success:
-            print("\n⚠️  VAE training failed. Check error messages above.")
+            print("\n⚠️  Semantic VAE training failed. Check error messages above.")
+            return 1
+    else: # submit diffusion training directly if VAE training is skipped
+        print("\n⚠️  Skipping Semantic VAE training as per user request.")
+        print("    Proceeding to Semantic Diffusion training step.\n")
+        if cluster_run:
+            cmd = f"sbatch tools/train_semantic_diffusion_inpainting_ddp.sh --config {args.config}"
+        else:
+            cmd = f"python tools/train_semantic_diffusion_inpainting.py --config {args.config}"
+        success = run_command(cmd, "Semantic Diffusion Training")
+        if not success:
+            print("\n⚠️  Semantic Diffusion training failed. Check error messages above.")
             return 1
     
-    # Step 3: Train Diffusion Model
-    if not args.skip_diffusion and not args.sample_only:
-        cmd = f"python tools/train_urban_inpainting.py --config {args.config}"
-        success = run_command(cmd, "Diffusion Model Training")
+    if not args.skip_satellite_vae:
+        if cluster_run:
+            cmd = f"sbatch tools/train_satellite_vae_ddp.sh --config {args.config}"
+        else:
+            cmd = f"python tools/train_satellite_vae.py --config {args.config}"
+        success = run_command(cmd, "Satellite VAE Training")
         if not success:
-            print("\n⚠️  Diffusion training failed. Check error messages above.")
+            print("\n⚠️  Satellite VAE training failed. Check error messages above.")
             return 1
-    
-    # Step 4: Generate Samples
-    cmd = f"python tools/sample_urban_inpainting.py --config {args.config} --num_samples {args.num_samples}"
-    success = run_command(cmd, "Sample Generation")
-    if not success:
-        print("\n⚠️  Sampling failed. Check error messages above.")
-        return 1
+    else:
+        print("\n⚠️  Skipping Satellite VAE training as per user request.\n")   
+        print("    Proceeding to Satellite Diffusion training step.\n")
+        if cluster_run:
+            cmd = f"sbatch tools/train_satellite_diffusion_inpainting_ddp.sh --config {args.config}"
+        else:
+            cmd = f"python tools/train_satellite_diffusion_inpainting.py --config {args.config}"
+        success = run_command(cmd, "Satellite Diffusion Training")
+        if not success:
+            print("\n⚠️  Satellite Diffusion training failed. Check error messages above.")
+            return 1
+        
     
     # Success!
     print("\n" + "="*60)
