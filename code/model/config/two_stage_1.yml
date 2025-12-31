@@ -81,7 +81,7 @@ ldm_params:
     
     # Conditioning for semantic generation
     condition_config:
-      condition_types: ['inpainting', 'image']
+      condition_types: ['inpainting', 'osm_features', 'environmental']
 
       osm_layers: [
         'buildings', 
@@ -120,9 +120,8 @@ ldm_params:
         max_size_px: 120
       
       # Image conditioning channels
-      # mask(1) + context_semantics(4) + LST_target(1) + NDVI(1) = 7
       image_condition_config:
-        image_condition_input_channels: 7
+        image_condition_input_channels: 8 # this is determined automatically and just logs for proof
         image_condition_output_channels: 32
         cond_drop_prob: 0.1
 
@@ -142,7 +141,7 @@ ldm_params:
     
     # Conditioning for satellite rendering
     condition_config:
-      condition_types: ['inpainting', 'osm_features', 'environmental']
+      condition_types: ['inpainting', 'osm_features', 'environmental', 'masked_rgb']
       
       # Inpainting hole configuration
       hole_config:
