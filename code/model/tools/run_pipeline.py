@@ -98,8 +98,20 @@ def main():
     cache_dir_semantic = cache_dir_base / "semantic"
     cache_dir_satellite = cache_dir_base / "satellite"
     
-    if not cache_dir_semantic.exists() or len(os.listdir(cache_dir_semantic)) == 0 or \
-       not cache_dir_satellite.exists() or len(os.listdir(cache_dir_satellite)) == 0:
+    # Check if cache directories exist and have files
+    print("\nChecking for existing cached patches...")
+    print(f"Semantic cache dir: {cache_dir_semantic}")
+    print(f"Satellite cache dir: {cache_dir_satellite}")
+    semantic_has_files = cache_dir_semantic.exists() and len(list(cache_dir_semantic.glob("*.pt"))) > 0
+    satellite_has_files = cache_dir_satellite.exists() and len(list(cache_dir_satellite.glob("*.pt"))) > 0
+    
+    if not semantic_has_files or not satellite_has_files:
+        print("\nCached patches not found or incomplete.")
+        if not semantic_has_files:
+            print(" - Semantic cached patches missing.")
+        if not satellite_has_files:
+            print(" - Satellite cached patches missing.")
+        print("Starting patch preparation step...")
         cmd = f"python tools/prepare_patches.py --config {args.config}"
         success = run_command(cmd, "Create Patches")
         if not success:
