@@ -73,7 +73,7 @@ def main():
     config = load_configs(parser)
     # data_config = config['data_config']
     big_data_storage_path = config['dataset_params']['big_data_storage_path']
-    task_name = config['train_config']['task_name']
+    task_name = config['train_params']['task_name']
     
     cluster_run = get_config_value(config, 'cluster', default=False)
     
