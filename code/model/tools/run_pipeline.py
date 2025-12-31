@@ -75,7 +75,7 @@ def main():
     big_data_storage_path = config['dataset_params']['big_data_storage_path']
     task_name = config['train_params']['task_name']
     
-    cluster_run = get_config_value(config, 'cluster', default=False)
+    cluster_run = config.get('cluster', False)
     
     # Change to model directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
