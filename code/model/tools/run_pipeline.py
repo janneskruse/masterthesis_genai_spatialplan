@@ -78,16 +78,16 @@ def main():
     cluster_run = config.get('cluster', False)
     
     # Change to model directory
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    model_dir = os.path.dirname(script_dir)
-    os.chdir(model_dir)
-    print(f"Working directory: {os.getcwd()}\n")
+    # script_dir = os.path.dirname(os.path.abspath(__file__))
+    # model_dir = os.path.dirname(script_dir)
+    # os.chdir(model_dir)
+    # print(f"Working directory: {os.getcwd()}\n")
     
     success = True
     
     # Step 1: Validate dataset
     if args.validate_dataset:
-        cmd = f"python tools/validate_dataset.py --config {args.config} --num_samples 3"
+        cmd = f"python validate_dataset.py --config {args.config} --num_samples 3"
         success = run_command(cmd, "Dataset Validation")
         if not success:
             print("\n⚠️  Dataset validation failed. Please fix dataset issues before continuing.")
@@ -112,7 +112,7 @@ def main():
         if not satellite_has_files:
             print(" - Satellite cached patches missing.")
         print("Starting patch preparation step...")
-        cmd = f"python tools/prepare_patches.py --config {args.config}"
+        cmd = f"python prepare_patches.py --config {args.config}"
         success = run_command(cmd, "Create Patches")
         if not success:
             print("\n⚠️  Patch preparation failed. Check error messages above.")
@@ -121,9 +121,9 @@ def main():
     # Step 2: Submit pipelines
     if not args.skip_semantic_vae:
         if cluster_run:
-            cmd = f"sbatch tools/train_semantic_vae_ddp.sh --config {args.config}"
+            cmd = f"sbatch train_semantic_vae_ddp.sh --config {args.config}"
         else:
-            cmd = f"python tools/train_semantic_vae.py --config {args.config}"
+            cmd = f"python train_semantic_vae.py --config {args.config}"
         success = run_command(cmd, "Semantic VAE Training")
         if not success:
             print("\n⚠️  Semantic VAE training failed. Check error messages above.")
@@ -132,9 +132,9 @@ def main():
         print("\n⚠️  Skipping Semantic VAE training as per user request.")
         print("    Proceeding to Semantic Diffusion training step.\n")
         if cluster_run:
-            cmd = f"sbatch tools/train_semantic_diffusion_inpainting_ddp.sh --config {args.config}"
+            cmd = f"sbatch train_semantic_diffusion_inpainting_ddp.sh --config {args.config}"
         else:
-            cmd = f"python tools/train_semantic_diffusion_inpainting.py --config {args.config}"
+            cmd = f"python train_semantic_diffusion_inpainting.py --config {args.config}"
         success = run_command(cmd, "Semantic Diffusion Training")
         if not success:
             print("\n⚠️  Semantic Diffusion training failed. Check error messages above.")
@@ -142,9 +142,9 @@ def main():
     
     if not args.skip_satellite_vae:
         if cluster_run:
-            cmd = f"sbatch tools/train_satellite_vae_ddp.sh --config {args.config}"
+            cmd = f"sbatch train_satellite_vae_ddp.sh --config {args.config}"
         else:
-            cmd = f"python tools/train_satellite_vae.py --config {args.config}"
+            cmd = f"python train_satellite_vae.py --config {args.config}"
         success = run_command(cmd, "Satellite VAE Training")
         if not success:
             print("\n⚠️  Satellite VAE training failed. Check error messages above.")
@@ -153,9 +153,9 @@ def main():
         print("\n⚠️  Skipping Satellite VAE training as per user request.\n")   
         print("    Proceeding to Satellite Diffusion training step.\n")
         if cluster_run:
-            cmd = f"sbatch tools/train_satellite_diffusion_inpainting_ddp.sh --config {args.config}"
+            cmd = f"sbatch train_satellite_diffusion_inpainting_ddp.sh --config {args.config}"
         else:
-            cmd = f"python tools/train_satellite_diffusion_inpainting.py --config {args.config}"
+            cmd = f"python train_satellite_diffusion_inpainting.py --config {args.config}"
         success = run_command(cmd, "Satellite Diffusion Training")
         if not success:
             print("\n⚠️  Satellite Diffusion training failed. Check error messages above.")
@@ -170,7 +170,7 @@ def main():
     print("  - VAE samples: vae_samples/")
     print("  - Inpainting samples: inpainting_samples/")
     print("\nTo generate more samples:")
-    print(f"  python tools/sample_urban_inpainting.py --config {args.config} --num_samples 16")
+    print(f"  python sample_urban_inpainting.py --config {args.config} --num_samples 16")
     print()
     
     return 0
