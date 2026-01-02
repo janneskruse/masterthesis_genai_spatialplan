@@ -164,7 +164,10 @@ def main():
     
     # Success!
     print("\n" + "="*60)
-    print("🎉 PIPELINE COMPLETED SUCCESSFULLY!")
+    if cluster_run:
+        print("🎉 PIPELINE SUBMITTED TO CLUSTER SUCCESSFULLY!")
+    else:
+        print("🎉 PIPELINE COMPLETED SUCCESSFULLY!")
     print("="*60)
     print("\nCheck outputs in: urban_layout_inpainting/")
     print("  - VAE samples: vae_samples/")
