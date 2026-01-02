@@ -402,6 +402,7 @@ def train_vae(mode: str = 'satellite'):
     if is_main:
         print(f"\n{'='*50}")
         print(f"Loading Urban Dataset for {mode.capitalize()} Training")
+        print(f"  Cache directory: {cache_dir} (use_cached_patches={use_cached_patches})")
         print(f"{'='*50}")
     
     # For VAE training, we don't use latents
