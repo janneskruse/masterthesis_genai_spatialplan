@@ -338,7 +338,8 @@ def train():
             if 'image' in cond_input and 'meta' in cond_input:
                 semantic_tensor = []
                 meta = cond_input['meta']
-                spatial_names = meta.get('spatial_names', [])
+                # meta is a list of dicts (one per batch item), get spatial_names from first item
+                spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
                 
                 # Extract semantic channels (non-context versions for target)
                 for sem_ch in semantic_channels:
@@ -360,10 +361,14 @@ def train():
             
             semantic_input = semantic_input.float().to(device)
             
-            # Get inpainting mask from metadata
+            # Get inpainting mask from image channels
             mask_full = None
-            if 'meta' in cond_input and 'inpainting_mask' in cond_input['meta']:
-                mask_full = cond_input['meta']['inpainting_mask'].to(device)
+            if 'image' in cond_input and 'meta' in cond_input:
+                try:
+                    mask_idx = spatial_names.index('inpaint_mask')
+                    mask_full = cond_input['image'][:, mask_idx:mask_idx+1, :, :].to(device)
+                except (ValueError, IndexError):
+                    mask_full = None
             
             # Encode semantics to latent space
             if use_latents:

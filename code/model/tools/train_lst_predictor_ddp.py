@@ -250,7 +250,8 @@ def train_lst_predictor():
                 mask = None
                 
                 meta = cond_input['meta']
-                spatial_names = meta.get('spatial_names', [])
+                # meta is a list of dicts (one per batch item), get spatial_names from first item
+                spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
                 
                 # Extract semantic channels
                 for sem_ch in semantic_channels:
@@ -278,9 +279,12 @@ def train_lst_predictor():
                             ndvi_channel = cond_input['image'][:, idx:idx+1, :, :]
                             break
                 
-                # Extract inpainting mask
-                if 'inpainting_mask' in meta:
-                    mask = meta['inpainting_mask']
+                # Extract inpainting mask from image channels
+                try:
+                    mask_idx = spatial_names.index('inpaint_mask')
+                    mask = cond_input['image'][:, mask_idx:mask_idx+1, :, :]
+                except (ValueError, IndexError):
+                    mask = None
                 
                 # Build input tensor
                 semantic_input = torch.cat(semantic_tensor, dim=1)

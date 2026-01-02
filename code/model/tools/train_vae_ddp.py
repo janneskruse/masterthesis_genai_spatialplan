@@ -151,7 +151,8 @@ def save_latents_distributed(
                 if 'image' in cond_input and 'meta' in cond_input:
                     semantic_tensor = []
                     meta = cond_input['meta']
-                    spatial_names = meta.get('spatial_names', [])
+                    # meta is a list of dicts (one per batch item), get spatial_names from first item
+                    spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
                     
                     for sem_ch in semantic_channels:
                         found = False
@@ -562,7 +563,8 @@ def train_vae(mode: str = 'satellite'):
                 if 'image' in cond_input and 'meta' in cond_input:
                     semantic_tensor = []
                     meta = cond_input['meta']
-                    spatial_names = meta.get('spatial_names', [])
+                    # meta is a list of dicts (one per batch item), get spatial_names from first item
+                    spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
                     
                     # Extract semantic channels based on configuration
                     for sem_ch in semantic_channels:
