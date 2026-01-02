@@ -337,12 +337,12 @@ def train_vae(mode: str = 'satellite'):
         print(yaml.dump(config, default_flow_style=False))
     
     dataset_config = config['dataset_params']
-    train_config = config['train_params']
+    train_config_global = config['train_params']
     
     # Mode-specific configuration
     autoencoder_config = config['autoencoder_params'][mode]
     ldm_config = config.get('ldm_params', {})
-    train_config = train_config.get(mode, train_config)
+    train_config = train_config_global.get(mode, train_config_global)
     num_epochs = train_config.get('autoencoder_epochs', 50)
     batch_size = train_config.get('autoencoder_batch_size', 4)
     base_lr = train_config.get('autoencoder_lr', 0.0001)
@@ -382,7 +382,7 @@ def train_vae(mode: str = 'satellite'):
         semantic_channels = None
     
     # Create output directories
-    task_name = train_config.get('task_name', 'urban_inpainting')
+    task_name = train_config_global.get('task_name', 'urban_inpainting')
     out_dir = f"{big_data_storage_path}/results/{task_name}"
     latent_dir = os.path.join(out_dir, latent_dir_name)
     samples_dir = os.path.join(out_dir, samples_dir_name)
@@ -790,7 +790,7 @@ def train_vae(mode: str = 'satellite'):
             dist.barrier()
     
     ########## Save Latents ##########
-    if train_config.get('save_latents', True):
+    if train_config_global.get('save_latents', True):
         # Save latents in distributed manner
         latent_count = save_latents_distributed(
             model=model,
