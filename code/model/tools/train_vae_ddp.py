@@ -357,7 +357,7 @@ def train_vae(mode: str = 'satellite'):
     latent_dir_name = train_config.get('latents_dir_name', f'{mode}_vae_ddp_latents')
     samples_dir_name = train_config.get('autoencoder_samples_dir_name', f'{mode}_vae_ddp_samples')
     stats_name = train_config.get('stats_dir_name', f'{mode}_vae_ddp_stats')
-    checkpoint_name = train_config.get('autoencoder_checkpoint_name', f'{mode}_vae_ddp_ckpt.pth')
+    checkpoint_name = train_config.get('autoencoder_ckpt_name', f'{mode}_vae_ddp_ckpt.pth')
     
     if mode == 'semantic':
         # Get semantic channels from condition config

@@ -278,7 +278,7 @@ train_params:
     env_loss_weight_final: 0.3
 
     # Stage 2 checkpoints (satellite)
-    autoencoder_ckpt_name: 'vae_urban_ddp_ckpt.pth'
+    autoencoder_ckpt_name: 'satellite_vae_ddp_ckpt.pth'
     latents_dir_name: 'vae_ddp_latents'
     autoencoder_samples_dir_name: 'vae_ddp_samples'
     stats_dir_name: 'vae_ddp_stats'
