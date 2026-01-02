@@ -825,6 +825,11 @@ if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser(description='Train VAE DDP for Urban Inpainting')
+    
+    # Add config file arguments
+    from helpers.load_configs import add_config_arguments
+    add_config_arguments(parser)
+    
     parser.add_argument('--mode', type=str, default='satellite', choices=['semantic', 'satellite'],
                         help='Mode of VAE to train: "semantic" or "satellite"')
     
