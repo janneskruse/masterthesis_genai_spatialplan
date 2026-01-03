@@ -105,10 +105,11 @@ class PosWeightEMA:
         Returns:
             Updated positive weight for this channel
         """
-        pos = targets.mean().clamp(eps, 1 - eps)
-        pw = ((1 - pos) / pos).detach()
-        self.val[ch_idx] = self.m * self.val[ch_idx] + (1 - self.m) * pw
-        return self.val[ch_idx]
+        with torch.no_grad():  # Prevent gradients from flowing through EMA update
+            pos = targets.mean().clamp(eps, 1 - eps)
+            pw = ((1 - pos) / pos)
+            self.val[ch_idx] = self.m * self.val[ch_idx] + (1 - self.m) * pw
+        return self.val[ch_idx].detach()  # Return detached value
 
 
 def parse_args():
