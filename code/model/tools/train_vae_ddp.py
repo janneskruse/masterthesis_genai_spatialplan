@@ -109,7 +109,7 @@ class PosWeightEMA:
             pos = targets.mean().clamp(eps, 1 - eps)
             pw = ((1 - pos) / pos)
             self.val[ch_idx] = self.m * self.val[ch_idx] + (1 - self.m) * pw
-        return self.val[ch_idx].detach()  # Return detached value
+        return self.val[ch_idx].detach().clone()  # Return detached value as snapshot that won't change later
 
 
 def parse_args():
