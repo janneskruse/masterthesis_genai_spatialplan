@@ -107,7 +107,7 @@ ldm_params:
         lst: {
           predict: False,
           lst: True,
-          layer:'landsat_surface_temp_b10_masked'
+          layer: 'landsat_surface_temp_b10_masked'
         }
       ]
       
