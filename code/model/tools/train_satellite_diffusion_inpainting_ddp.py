@@ -329,7 +329,7 @@ def train():
             
             ########## Handle Conditional Input ##########
             if cond_input is not None:
-                # Move all tensors in cond_input to device
+                # Move all tensors in cond_input to device (GPU)
                 for key in cond_input:
                     if key == 'meta':
                         continue  # Skip metadata

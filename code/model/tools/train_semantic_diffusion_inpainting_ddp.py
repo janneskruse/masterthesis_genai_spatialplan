@@ -345,8 +345,7 @@ def train():
                 for sem_ch in semantic_channels:
                     found = False
                     for idx, name in enumerate(spatial_names):
-                        # Match channel without '_context' suffix
-                        if sem_ch == name or (sem_ch in name and '_context' not in name):
+                        if sem_ch == name:
                             semantic_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
                             found = True
                             break

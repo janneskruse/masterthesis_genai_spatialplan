@@ -72,7 +72,7 @@ class UrbanInpaintingDataset(Dataset):
         autoencoder_config = config.get('autoencoder_params', {})
         
         # Select configs based on mode
-        if mode == 'semantic':
+        if self.mode == 'semantic':
             self.ldm_config = ldm_config.get('semantic', ldm_config)
             self.autoencoder_config = autoencoder_config.get('semantic', autoencoder_config)
         else:  # satellite
@@ -126,7 +126,7 @@ class UrbanInpaintingDataset(Dataset):
         # Conditioning configuration (from mode-specific ldm_config)
         condition_config = self.ldm_config.get('condition_config', None)
         if condition_config is None:
-            raise ValueError(f"Conditioning configuration not found for mode '{mode}'")
+            raise ValueError(f"Conditioning configuration not found for mode '{self.mode}'")
 
         self.condition_types = condition_config.get('condition_types', [])
         self.hole_config = condition_config.get('hole_config', {

@@ -154,12 +154,9 @@ ldm_params:
       # OSM layers
       osm_layers: [
         'buildings', 
-        'streets',  
-        street_blocks: {
-          predict: False,
-          layer: 'street_blocks'
-        },
-        buildings_heights' 
+        'streets',
+        'street_blocks',
+        'buildings_heights' 
       ] # 'water'
       
       # Environmental layers
