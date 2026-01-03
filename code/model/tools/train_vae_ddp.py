@@ -694,12 +694,18 @@ def train_vae(mode: str = 'satellite'):
                     for sem_ch in semantic_channels:
                         found = False
                         for idx, name in enumerate(spatial_names):
+                            if name == sem_ch:
+                                semantic_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
+                                found = True
+                                break
                             if sem_ch in name or name in sem_ch:
                                 semantic_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
                                 found = True
                                 break
                         
                         if not found:
+                            if is_main:
+                                print(f"⚠ Warning: Semantic channel '{sem_ch}' not found in conditioning input. Filling with zeros.")
                             # Channel not found, create zeros
                             B, _, H, W = cond_input['image'].shape
                             semantic_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
