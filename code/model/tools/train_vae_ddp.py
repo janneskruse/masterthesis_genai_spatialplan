@@ -886,9 +886,10 @@ def train_vae(mode: str = 'satellite'):
                         # Create comparison grid
                         comparison = torch.cat([sample_im, sample_recon], dim=0)
                         grid = make_grid(comparison, nrow=8, padding=2, pad_value=1.0)
-                    
-                    save_path = os.path.join(samples_dir, f'recon_step_{global_step}.png')
-                    save_image(grid, save_path)
+                        
+                        # Save satellite reconstruction
+                        save_path = os.path.join(samples_dir, f'recon_step_{global_step}.png')
+                        save_image(grid, save_path)
         
         # Synchronize epoch metrics across GPUs
         if world_size > 1:
