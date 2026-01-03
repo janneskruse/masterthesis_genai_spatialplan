@@ -216,7 +216,8 @@ train_params:
     disc_weight: 0.5
     perceptual_weight: 1
     kl_weight: 0.000001
-    binary_channel_weight: 2.0
+    binary_channel_weight: 1.0
+    dice_weight: 0.5  # Tune 0.25-1.0 for thin structures (streets)
     continuous_channel_weight: 1.0
     penalize_out_of_range: False
     autoencoder_img_save_steps: 64

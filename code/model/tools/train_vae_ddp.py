@@ -36,6 +36,81 @@ from helpers.load_configs import load_configs
 load_cuda()
 
 
+def bce_with_logits_pos_weight(logits, targets, pos_weight=None, eps=1e-6):
+    """
+    Binary cross-entropy with logits and class-imbalance weighting.
+    
+    Args:
+        logits: [B,1,H,W] raw decoder output (unbounded)
+        targets: [B,1,H,W] in {0,1}
+        pos_weight: Optional pre-computed positive weight (scalar or tensor)
+        eps: Small epsilon for numerical stability
+        
+    Returns:
+        BCE loss with logits and optional positive weighting
+    """
+    targets = targets.clamp(0.0, 1.0)
+    
+    if pos_weight is None:
+        # Compute per-batch positive weight
+        pos = targets.mean().clamp(eps, 1 - eps)
+        pos_weight = ((1 - pos) / pos).detach()  # scalar
+    
+    return F.binary_cross_entropy_with_logits(
+        logits, targets, pos_weight=pos_weight, reduction='mean'
+    )
+
+
+def dice_loss_from_logits(logits, targets, eps=1e-6):
+    """
+    Dice loss for thin structures (streets, vegetation edges).
+    Applies sigmoid to logits before computing overlap.
+    
+    Args:
+        logits: [B,1,H,W] raw decoder output
+        targets: [B,1,H,W] in {0,1}
+        eps: Small epsilon for numerical stability
+        
+    Returns:
+        Dice loss (1 - Dice coefficient)
+    """
+    targets = targets.clamp(0.0, 1.0)
+    probs = torch.sigmoid(logits)
+    
+    intersection = (probs * targets).sum(dim=(2, 3))
+    union = probs.sum(dim=(2, 3)) + targets.sum(dim=(2, 3))
+    dice = 1 - (2 * intersection + eps) / (union + eps)
+    
+    return dice.mean()
+
+
+class PosWeightEMA:
+    """
+    Exponential moving average tracker for positive weights per channel.
+    Stabilizes class-imbalance weighting across small batches.
+    """
+    def __init__(self, num_channels, momentum=0.95, init=1.0, device='cpu'):
+        self.m = momentum
+        self.val = torch.full((num_channels,), float(init), device=device)
+    
+    def update(self, ch_idx, targets, eps=1e-6):
+        """
+        Update EMA for a specific channel.
+        
+        Args:
+            ch_idx: Channel index
+            targets: Target tensor for this channel [B,1,H,W]
+            eps: Small epsilon for numerical stability
+            
+        Returns:
+            Updated positive weight for this channel
+        """
+        pos = targets.mean().clamp(eps, 1 - eps)
+        pw = ((1 - pos) / pos).detach()
+        self.val[ch_idx] = self.m * self.val[ch_idx] + (1 - self.m) * pw
+        return self.val[ch_idx]
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Train VAE for urban inpainting')
@@ -224,17 +299,25 @@ def save_latents_distributed(
     return latent_count
 
 
-def compute_semantic_reconstruction_loss(recon, target, semantic_channels, binary_weight=1.0, continuous_weight=1.0):
+def compute_semantic_reconstruction_loss(
+    recon, target, semantic_channels, 
+    binary_weight=1.0, continuous_weight=1.0, 
+    dice_weight=0.5, posw_ema=None
+):
     """
     Compute reconstruction loss for semantic tensor.
     
     Args:
-        recon: Reconstructed semantic tensor [B, C, H, W]
+        recon: Reconstructed semantic tensor [B, C, H, W] (logits for binary channels)
         target: Target semantic tensor [B, C, H, W]
         semantic_channels: List of channel names
+        binary_weight: Weight for binary channel losses
+        continuous_weight: Weight for continuous channel losses
+        dice_weight: Weight for Dice loss (applied to binary channels)
+        posw_ema: Optional PosWeightEMA tracker for stable class weighting
         
     Returns:
-        Dictionary with losses per channel type
+        Dictionary with losses per channel type, total loss tensor
     """
     losses = {}
     binary_loss = 0.0
@@ -247,14 +330,28 @@ def compute_semantic_reconstruction_loss(recon, target, semantic_channels, binar
         recon_ch = recon[:, idx:idx+1, :, :]
         target_ch = target[:, idx:idx+1, :, :]
         
-        # Binary channels use BCE loss
+        # Binary channels use BCE with logits + Dice loss
         if 'buildings' in channel_name or 'streets' in channel_name or 'vegetation' in channel_name or 'water' in channel_name:
-            # Clamp to valid probability range
-            recon_ch = torch.clamp(recon_ch, 0.0, 1.0)
-            target_ch = torch.clamp(target_ch, 0.0, 1.0)
+            # Clamp target to valid range (recon_ch is logits, no clamping)
+            target_ch = target_ch.clamp(0.0, 1.0)
             
-            loss = F.binary_cross_entropy(recon_ch, target_ch, reduction='mean')
-            losses[f'{channel_name}_bce'] = loss.item()
+            # Compute BCE with logits and class-imbalance weighting
+            if posw_ema is not None:
+                pw = posw_ema.update(idx, target_ch)
+                bce = F.binary_cross_entropy_with_logits(
+                    recon_ch, target_ch, pos_weight=pw, reduction='mean'
+                )
+            else:
+                bce = bce_with_logits_pos_weight(recon_ch, target_ch)
+            
+            # Compute Dice loss for thin structures
+            dice = dice_loss_from_logits(recon_ch, target_ch)
+            
+            # Combined loss
+            loss = bce + dice_weight * dice
+            
+            losses[f'{channel_name}_bce'] = bce.item()
+            losses[f'{channel_name}_dice'] = dice.item()
             binary_loss += loss * binary_weight
             binary_count += 1
             
@@ -362,11 +459,13 @@ def train_vae(mode: str = 'satellite'):
     stats_name = train_config.get('stats_dir_name', f'{mode}_vae_ddp_stats')
     checkpoint_name = train_config.get('autoencoder_ckpt_name', f'{mode}_vae_ddp_ckpt.pth')
     
+    dice_weight = 0.5  # default dice weight for semantic loss
     if mode == 'semantic':
         # Get semantic channels from condition config
         semantic_ldm_config = ldm_config.get('semantic', ldm_config)
         condition_config = semantic_ldm_config.get('condition_config', {})
         semantic_channels = get_semantic_channels(condition_config)
+        dice_weight = train_config.get('dice_weight', 0.5)
         
         if not semantic_channels:
             # Fallback to default
@@ -515,6 +614,18 @@ def train_vae(mode: str = 'satellite'):
     
     ########## Training Setup #############
     
+    # Initialize PosWeightEMA for semantic mode
+    posw_ema = None
+    if mode == 'semantic':
+        posw_ema = PosWeightEMA(
+            num_channels=len(semantic_channels),
+            momentum=0.95,
+            init=1.0,
+            device=device
+        )
+        if is_main:
+            print(f"\n✓ Initialized PosWeightEMA for {len(semantic_channels)} semantic channels")
+    
     # Scale learning rate with world size
     adjusted_lr = base_lr * world_size
     if is_main and world_size > 1:
@@ -539,6 +650,7 @@ def train_vae(mode: str = 'satellite'):
             print(f"✓ Out-of-bounds penalization: Enabled")
         print(f"✓ Binary channel weight: {binary_channel_weight}")
         print(f"✓ Continuous channel weight: {continuous_channel_weight}")
+        print(f"✓ Dice weight: {dice_weight}")
     
     ########## Training Loop #############
     if is_main:
@@ -601,6 +713,21 @@ def train_vae(mode: str = 'satellite'):
             
             input_tensor = input_tensor.float().to(device)
             
+            # Sanity check: print channel stats on first batch each epoch (rank 0 only)
+            if is_main and mode == 'semantic' and batch_idx == 0:
+                meta = cond_input.get('meta', None)
+                if isinstance(meta, list) and len(meta) > 0:
+                    spatial_names = meta[0].get('spatial_names', [])
+                    print(f"\n[Epoch {epoch_idx + 1}] Spatial names available: {spatial_names}")
+                
+                ch_means = input_tensor.mean(dim=(0, 2, 3)).detach().cpu().numpy()
+                ch_pos = (input_tensor > 0.5).float().mean(dim=(0, 2, 3)).detach().cpu().numpy()
+                
+                print(f"\n[Epoch {epoch_idx + 1}] Semantic channel statistics:")
+                for i, name in enumerate(semantic_channels):
+                    print(f"  {i:02d} {name:30s} mean={ch_means[i]:.4f} pos@0.5={ch_pos[i]:.4f}")
+                print()
+            
             ########## Train VAE ##########
             
             ############################
@@ -619,11 +746,13 @@ def train_vae(mode: str = 'satellite'):
             
             # Reconstruction loss
             if mode == 'semantic':
-                # Semantic reconstruction loss (channel-specific)
+                # Semantic reconstruction loss (channel-specific with logit-based losses)
                 loss_dict, recon_loss = compute_semantic_reconstruction_loss(
                     recon, input_tensor, semantic_channels,
                     binary_weight=binary_channel_weight,
-                    continuous_weight=continuous_channel_weight
+                    continuous_weight=continuous_channel_weight,
+                    dice_weight=dice_weight,
+                    posw_ema=posw_ema
                 )
             else:
                 # Satellite reconstruction loss (L1)
@@ -718,7 +847,7 @@ def train_vae(mode: str = 'satellite'):
                     n_samples = min(8, input_tensor.shape[0])
                     
                     if mode == 'semantic':
-                        # Visualize each channel separately instead of concatenating
+                        # Visualize each channel separately
                         vis_grids = []
                         
                         for ch_idx, ch_name in enumerate(semantic_channels):
@@ -726,15 +855,17 @@ def train_vae(mode: str = 'satellite'):
                             recon_ch = recon[:n_samples, ch_idx:ch_idx+1, :, :]
                             
                             if 'height' in ch_name:
+                                # Continuous height channel: normalize by max height
                                 max_height = 100.0
-                                input_ch = torch.clamp(input_ch / max_height, 0, 1)
-                                recon_ch = torch.clamp(recon_ch / max_height, 0, 1)
+                                input_vis = torch.clamp(input_ch / max_height, 0, 1)
+                                recon_vis = torch.clamp(recon_ch / max_height, 0, 1)
                             else:
-                                input_ch = torch.clamp(input_ch, 0, 1)
-                                recon_ch = torch.clamp(recon_ch, 0, 1)
+                                # Binary channels: input is 0/1, recon is logits
+                                input_vis = torch.clamp(input_ch, 0, 1)
+                                recon_vis = torch.sigmoid(recon_ch)  # Apply sigmoid to logits
                             
                             # Create comparison for this channel
-                            comparison_ch = torch.cat([input_ch, recon_ch], dim=0)
+                            comparison_ch = torch.cat([input_vis, recon_vis], dim=0)
                             grid_ch = make_grid(comparison_ch, nrow=n_samples, normalize=False, padding=2, pad_value=1.0)
                             vis_grids.append(grid_ch)
                         
