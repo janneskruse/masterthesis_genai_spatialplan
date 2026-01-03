@@ -718,34 +718,30 @@ def train_vae(mode: str = 'satellite'):
                     n_samples = min(8, input_tensor.shape[0])
                     
                     if mode == 'semantic':
-                        # Semantic visualization: normalize each channel appropriately
-                        vis_input = []
-                        vis_recon = []
+                        # Visualize each channel separately instead of concatenating
+                        vis_grids = []
                         
                         for ch_idx, ch_name in enumerate(semantic_channels):
                             input_ch = input_tensor[:n_samples, ch_idx:ch_idx+1, :, :]
                             recon_ch = recon[:n_samples, ch_idx:ch_idx+1, :, :]
                             
                             if 'height' in ch_name:
-                                # Normalize height to [0, 1] for visualization
-                                max_height = 100.0  # Assume max height of 100m
+                                max_height = 100.0
                                 input_ch = torch.clamp(input_ch / max_height, 0, 1)
                                 recon_ch = torch.clamp(recon_ch / max_height, 0, 1)
                             else:
-                                # Binary channels
                                 input_ch = torch.clamp(input_ch, 0, 1)
                                 recon_ch = torch.clamp(recon_ch, 0, 1)
                             
-                            vis_input.append(input_ch)
-                            vis_recon.append(recon_ch)
+                            # Create comparison for this channel
+                            comparison_ch = torch.cat([input_ch, recon_ch], dim=0)
+                            grid_ch = make_grid(comparison_ch, nrow=n_samples, normalize=False, padding=2, pad_value=1.0)
+                            vis_grids.append(grid_ch)
                         
-                        # Stack channels for visualization
-                        vis_input_tensor = torch.cat(vis_input, dim=1)
-                        vis_recon_tensor = torch.cat(vis_recon, dim=1)
-                        
-                        # Create comparison grid
-                        comparison = torch.cat([vis_input_tensor, vis_recon_tensor], dim=0)
-                        grid = make_grid(comparison, nrow=n_samples, normalize=False, padding=2, pad_value=1.0)
+                        # Save each channel separately
+                        for ch_idx, ch_name in enumerate(semantic_channels):
+                            save_path = os.path.join(samples_dir, f'recon_step_{global_step}_{ch_name.replace(":", "_")}.png')
+                            save_image(vis_grids[ch_idx], save_path)
                     else:
                         # Satellite visualization: normalize to [0, 1]
                         sample_im = input_tensor[:n_samples]
