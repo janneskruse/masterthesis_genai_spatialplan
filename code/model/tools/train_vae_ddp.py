@@ -224,7 +224,7 @@ def save_latents_distributed(
     return latent_count
 
 
-def compute_semantic_reconstruction_loss(recon, target, semantic_channels):
+def compute_semantic_reconstruction_loss(recon, target, semantic_channels, binary_weight=1.0, continuous_weight=1.0):
     """
     Compute reconstruction loss for semantic tensor.
     
@@ -255,7 +255,7 @@ def compute_semantic_reconstruction_loss(recon, target, semantic_channels):
             
             loss = F.binary_cross_entropy(recon_ch, target_ch, reduction='mean')
             losses[f'{channel_name}_bce'] = loss.item()
-            binary_loss += loss
+            binary_loss += loss * binary_weight
             binary_count += 1
             
         # Continuous channels (height) use MSE loss, gated by building mask
@@ -278,14 +278,14 @@ def compute_semantic_reconstruction_loss(recon, target, semantic_channels):
                 loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
             
             losses[f'{channel_name}_mse'] = loss.item()
-            continuous_loss += loss
+            continuous_loss += loss * continuous_weight
             continuous_count += 1
             
         else:
             # Default to MSE for unknown channels
             loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
             losses[f'{channel_name}_mse'] = loss.item()
-            continuous_loss += loss
+            continuous_loss += loss * continuous_weight
             continuous_count += 1
     
     # Normalize by channel count
@@ -353,6 +353,8 @@ def train_vae(mode: str = 'satellite'):
     use_discriminator = train_config.get('use_discriminator', True)
     use_perceptual = train_config.get('use_perceptual', True)
     penalize_out_of_range = train_config.get('penalize_out_of_range', False)
+    binary_channel_weight = train_config.get('binary_channel_weight', 1.0)
+    continuous_channel_weight = train_config.get('continuous_channel_weight', 1.0)
     
     # directory and naming setup
     latent_dir_name = train_config.get('latents_dir_name', f'{mode}_vae_ddp_latents')
@@ -535,6 +537,8 @@ def train_vae(mode: str = 'satellite'):
             print(f"✓ Discriminator weight: {disc_weight} (starting epoch {disc_start_epoch})")
         if penalize_out_of_range:
             print(f"✓ Out-of-bounds penalization: Enabled")
+        print(f"✓ Binary channel weight: {binary_channel_weight}")
+        print(f"✓ Continuous channel weight: {continuous_channel_weight}")
     
     ########## Training Loop #############
     if is_main:
@@ -617,7 +621,9 @@ def train_vae(mode: str = 'satellite'):
             if mode == 'semantic':
                 # Semantic reconstruction loss (channel-specific)
                 loss_dict, recon_loss = compute_semantic_reconstruction_loss(
-                    recon, input_tensor, semantic_channels
+                    recon, input_tensor, semantic_channels,
+                    binary_weight=binary_channel_weight,
+                    continuous_weight=continuous_channel_weight
                 )
             else:
                 # Satellite reconstruction loss (L1)
