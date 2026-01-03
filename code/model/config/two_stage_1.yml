@@ -90,7 +90,7 @@ ldm_params:
           predict: False,
           layer: 'street_blocks'
         },
-        buildings_heights' 
+        'buildings_heights' 
       ] # 'water'
       
       environmental_layers: [
