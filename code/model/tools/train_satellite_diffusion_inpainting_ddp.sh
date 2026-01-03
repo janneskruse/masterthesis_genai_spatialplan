@@ -57,6 +57,10 @@ srun bash -c "
     python3 -u train_satellite_diffusion_inpainting_ddp.py --config $CONFIG_PATH
 "
 
+# Capture the exit code of srun/python
+EXIT_CODE=$?
+
 echo "=================================================="
 echo "Job finished at: $(date)"
+echo "Training exit code: $EXIT_CODE"
 echo "=================================================="

@@ -57,9 +57,20 @@ srun bash -c "
     python3 -u train_semantic_diffusion_inpainting_ddp.py --config $CONFIG_PATH
 "
 
+# Capture the exit code of srun/python
+EXIT_CODE=$?
+
 echo "=================================================="
 echo "Job finished at: $(date)"
+echo "Training exit code: $EXIT_CODE"
 echo "=================================================="
 
-# hand in diffusion training shell script to slurm
-sbatch train_lst_predictor_ddp.sh --config $CONFIG_PATH
+
+# Only submit next job if training succeeded
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "Training completed successfully. Submitting LST predictor training..."
+    sbatch train_lst_predictor_ddp.sh --config $CONFIG_PATH
+else
+    echo "Training failed with exit code $EXIT_CODE. Skipping LST predictor training."
+    exit $EXIT_CODE
+fi
