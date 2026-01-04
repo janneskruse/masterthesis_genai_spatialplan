@@ -153,14 +153,35 @@ ldm_params:
       
       # OSM layers
       osm_layers: [
-        'buildings', 
-        'streets',
-        'street_blocks',
-        'buildings_heights' 
+        buildings: {
+          predict: False,
+          layer: 'buildings'
+        },
+        streets: {
+          predict: False,
+          layer: 'streets'
+        },
+        street_blocks: {
+          predict: False,
+          layer: 'street_blocks'
+        },
+        buildings_heights: {
+          predict: False,
+          layer: 'buildings_heights'
+        }
       ] # 'water'
       
       # Environmental layers
-      environmental_layers: ['ndvi', 'landsat_surface_temp_b10_masked']
+      environmental_layers: [
+        ndvi: {
+          predict: False,
+          layer: 'ndvi'
+        },
+        landsat_surface_temp_b10_masked: {
+          predict: False,
+          layer: 'landsat_surface_temp_b10_masked'
+        }
+      ]
       
       # Prediction heads (optional for Stage 2, usually disabled)
       environmental_prediction_layers: []  # Empty for Stage 2

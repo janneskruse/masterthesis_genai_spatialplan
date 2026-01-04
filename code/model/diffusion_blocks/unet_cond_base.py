@@ -137,32 +137,31 @@ class Unet(nn.Module):
         self.environmental_head = None
         
         if self.condition_config is not None:
-            condition_types = self.condition_config.get('condition_types', [])
+            # Get prediction channels using utility function
+            from model.utils.config_utils import get_prediction_channels
+            prediction_channels = get_prediction_channels(self.condition_config)
             
-            # OSM feature prediction head
-            if 'osm_features' in condition_types:
-                num_osm_classes = len(self.condition_config.get('osm_layers', []))
-                if num_osm_classes > 0:
-                    self.segmentation_head = nn.Sequential(
-                        nn.GroupNorm(self.norm_channels, self.conv_out_channels),
-                        nn.SiLU(),
-                        nn.Conv2d(self.conv_out_channels, num_osm_classes, kernel_size=3, padding=1)
-                    )
-                    print(f"✓ Initialized OSM segmentation head with {num_osm_classes} classes")
+            # Count OSM and environmental prediction channels
+            osm_pred_channels = [ch for ch in prediction_channels if ch.startswith('osm:')]
+            env_pred_channels = [ch for ch in prediction_channels if ch.startswith('env:')]
             
-            # Environmental layer prediction head
-            if 'environmental' in condition_types:
-                # Use prediction layers (subset of conditioning layers)
-                env_pred_layers = self.condition_config.get('environmental_prediction_layers', 
-                                                           self.condition_config.get('environmental_layers', []))
-                num_env_classes = len(env_pred_layers)
-                if num_env_classes > 0:
-                    self.environmental_head = nn.Sequential(
-                        nn.GroupNorm(self.norm_channels, self.conv_out_channels),
-                        nn.SiLU(),
-                        nn.Conv2d(self.conv_out_channels, num_env_classes, kernel_size=3, padding=1)
-                    )
-                    print(f"✓ Initialized environmental prediction head with {num_env_classes} layers: {env_pred_layers}")
+            # OSM feature prediction head - only if there are OSM channels to predict
+            if len(osm_pred_channels) > 0:
+                self.segmentation_head = nn.Sequential(
+                    nn.GroupNorm(self.norm_channels, self.conv_out_channels),
+                    nn.SiLU(),
+                    nn.Conv2d(self.conv_out_channels, len(osm_pred_channels), kernel_size=3, padding=1)
+                )
+                print(f"✓ Initialized OSM segmentation head with {len(osm_pred_channels)} classes: {osm_pred_channels}")
+            
+            # Environmental layer prediction head - only if there are env channels to predict
+            if len(env_pred_channels) > 0:
+                self.environmental_head = nn.Sequential(
+                    nn.GroupNorm(self.norm_channels, self.conv_out_channels),
+                    nn.SiLU(),
+                    nn.Conv2d(self.conv_out_channels, len(env_pred_channels), kernel_size=3, padding=1)
+                )
+                print(f"✓ Initialized environmental prediction head with {len(env_pred_channels)} layers: {env_pred_channels}")
     
     def _compute_expected_conditioning_channels(self) -> int:
         """

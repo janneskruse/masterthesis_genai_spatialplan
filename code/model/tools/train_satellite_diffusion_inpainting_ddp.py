@@ -26,6 +26,7 @@ from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
+from model.utils.config_utils import get_prediction_channels
 from helpers.load_configs import load_configs
 
 # Load CUDA
@@ -247,6 +248,11 @@ def train():
     env_loss_weight_initial = satellite_train_config.get('env_loss_weight_initial', 0.1)
     env_loss_weight_final = satellite_train_config.get('env_loss_weight_final', 0.3)
     
+    # Get prediction channels to determine which auxiliary heads are enabled
+    prediction_channels = get_prediction_channels(condition_config)
+    osm_pred_channels = [ch for ch in prediction_channels if ch.startswith('osm:')]
+    env_pred_channels = [ch for ch in prediction_channels if ch.startswith('env:')]
+    
     # Check if model has auxiliary prediction heads
     model_unwrapped = model.module if hasattr(model, 'module') else model
     has_seg_head = hasattr(model_unwrapped, 'segmentation_head') and model_unwrapped.segmentation_head is not None
@@ -278,10 +284,18 @@ def train():
         print(f"✓ Inpainting mode: {mode}")
         print(f"✓ Loss type: {loss_type}")
         print(f"✓ Outside weight: {outside_weight}")
-        print(f"✓ OSM loss weight warmup: {seg_loss_weight_initial:.2f} → {seg_loss_weight_final:.2f}")
-        print(f"✓ Env loss weight warmup: {env_loss_weight_initial:.2f} → {env_loss_weight_final:.2f}")
-        print(f"✓ OSM segmentation head enabled: {has_seg_head}")
-        print(f"✓ Environmental head enabled: {has_env_head}")
+        if has_seg_head:
+            print(f"✓ OSM loss weight warmup: {seg_loss_weight_initial:.2f} → {seg_loss_weight_final:.2f}")
+            print(f"✓ OSM segmentation head enabled: {has_seg_head} ({len(osm_pred_channels)} channels: {osm_pred_channels})")
+        else:
+            print(f"✓ OSM segmentation head enabled: False")
+        
+        if has_env_head:
+            print(f"✓ Env loss weight warmup: {env_loss_weight_initial:.2f} → {env_loss_weight_final:.2f}")
+            print(f"✓ Environmental head enabled: {has_env_head} ({len(env_pred_channels)} channels: {env_pred_channels})")
+        else:
+            print(f"✓ Environmental head enabled: False")
+        
         print(f"✓ Conditioning dropout: {cond_drop_prob}")
     
     ########## Training Loop #############
