@@ -1,10 +1,15 @@
 # adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+# Import libraries
+# Data Science/ML
 import torch
 from einops import einsum
 import torch.nn as nn
+
+# Local imports
 from model.diffusion_blocks.blocks import get_time_embedding
 from model.diffusion_blocks.blocks import DownBlock, MidBlock, UpBlockUnet
 from model.utils.config_utils import *
+from model.utils.config_utils import get_prediction_channels
 
 
 class Unet(nn.Module):
@@ -138,7 +143,6 @@ class Unet(nn.Module):
         
         if self.condition_config is not None:
             # Get prediction channels using utility function
-            from model.utils.config_utils import get_prediction_channels
             prediction_channels = get_prediction_channels(self.condition_config)
             
             # Count OSM and environmental prediction channels
