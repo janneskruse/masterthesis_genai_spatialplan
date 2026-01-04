@@ -29,7 +29,7 @@ from model.diffusion_blocks.lpips import LPIPS
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
-from model.utils.config_utils import get_semantic_channels
+from model.utils.config_utils import get_prediction_channels
 from helpers.load_configs import load_configs
 
 # Load CUDA
@@ -465,7 +465,7 @@ def train_vae(mode: str = 'satellite'):
         # Get semantic channels from condition config
         semantic_ldm_config = ldm_config.get('semantic', ldm_config)
         condition_config = semantic_ldm_config.get('condition_config', {})
-        semantic_channels = get_semantic_channels(condition_config)
+        semantic_channels = get_prediction_channels(condition_config)
         dice_weight = train_config.get('dice_weight', 0.5)
         
         if not semantic_channels:

@@ -25,7 +25,7 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.diffusion_blocks.unet_cond_base import Unet
 from model.diffusion_blocks.vae import VAE
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
-from model.utils.config_utils import get_semantic_channels
+from model.utils.config_utils import get_prediction_channels
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
@@ -127,7 +127,7 @@ def train():
     
     # Extract semantic channels from condition config
     condition_config = semantic_ldm_config.get('condition_config', {})
-    semantic_channels = get_semantic_channels(condition_config)
+    semantic_channels = get_prediction_channels(condition_config)
     
     if not semantic_channels:
         # Fallback to default

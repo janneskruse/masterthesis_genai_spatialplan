@@ -25,7 +25,7 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
-from model.utils.config_utils import get_semantic_channels
+from model.utils.config_utils import get_prediction_channels
 from helpers.load_configs import load_configs
 from model.lst_predictor.predictor import LSTPredictor
 
@@ -70,7 +70,7 @@ def train_lst_predictor():
     semantic_train_config = train_config.get('semantic', train_config)
     
     # Get semantic channels from condition config
-    semantic_channels = get_semantic_channels(condition_config)
+    semantic_channels = get_prediction_channels(condition_config)
     
     if not semantic_channels:
         # Fallback to default

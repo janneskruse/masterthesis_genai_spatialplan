@@ -40,9 +40,9 @@ def get_config_value(config, key, default_value):
     return config[key] if key in config else default_value
 
 
-def get_semantic_channels(condition_config):
+def get_prediction_channels(condition_config):
     """
-    Extract semantic channel names from condition config.
+    Extract prediction channel names from condition config.
     
     Handles two formats:
     1. Simple string: ['buildings', 'streets'] -> ['osm:buildings', 'osm:streets']
@@ -53,32 +53,32 @@ def get_semantic_channels(condition_config):
         condition_config: Configuration dict containing osm_layers and environmental_layers
         
     Returns:
-        List of semantic channel names with prefixes (osm: or env:)
+        List of prediction channel names with prefixes (osm: or env:)
     """
-    semantic_channels = []
+    prediction_channels = []
     
     # Process OSM layers (simple format)
     osm_layers = condition_config.get('osm_layers', [])
     for layer in osm_layers:
         if isinstance(layer, str):
             # Simple string format - add with osm: prefix
-            semantic_channels.append(f'osm:{layer}')
+            prediction_channels.append(f'osm:{layer}')
         elif isinstance(layer, dict):
             # Dict format with predict flag
             for layer_name, layer_config in layer.items():
                 if isinstance(layer_config, dict) and layer_config.get('predict', True):
-                    semantic_channels.append(f'osm:{layer_name}')
+                    prediction_channels.append(f'osm:{layer_name}')
     
     # Process environmental layers (can be dict format with filters)
     env_layers = condition_config.get('environmental_layers', [])
     for layer in env_layers:
         if isinstance(layer, str):
             # Simple string format - add with env: prefix
-            semantic_channels.append(f'env:{layer}')
+            prediction_channels.append(f'env:{layer}')
         elif isinstance(layer, dict):
             # Dict format with predict flag and optional filters
             for layer_name, layer_config in layer.items():
                 if isinstance(layer_config, dict) and layer_config.get('predict', True):
-                    semantic_channels.append(f'env:{layer_name}')
+                    prediction_channels.append(f'env:{layer_name}')
     
-    return semantic_channels
+    return prediction_channels

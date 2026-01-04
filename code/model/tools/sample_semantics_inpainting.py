@@ -20,7 +20,7 @@ from model.diffusion_blocks.unet_cond_base import Unet
 from model.diffusion_blocks.vae import VAE
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.utils.config_utils import get_semantic_channels
+from model.utils.config_utils import get_prediction_channels
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 from model.lst_predictor.predictor import LSTPredictor
@@ -217,7 +217,7 @@ def sample_semantics(
     
     # Get semantic channels from condition config
     condition_config = diffusion_model_config.get('condition_config', {})
-    semantic_channels = get_semantic_channels(condition_config)
+    semantic_channels = get_prediction_channels(condition_config)
     
     if not semantic_channels:
         # Fallback to default
@@ -489,7 +489,7 @@ def infer(args, config):
     
     # Get semantic channels from condition config
     condition_config = semantic_ldm_config.get('condition_config', {})
-    semantic_channels = get_semantic_channels(condition_config)
+    semantic_channels = get_prediction_channels(condition_config)
     
     if not semantic_channels:
         # Fallback to default
