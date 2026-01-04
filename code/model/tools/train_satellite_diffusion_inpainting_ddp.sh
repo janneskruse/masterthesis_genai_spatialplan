@@ -17,7 +17,7 @@
 if [ "$1" = "--config" ] && [ -n "$2" ]; then
     CONFIG_PATH=$2
 else
-    CONFIG_PATH=${1:-diffusion_1.yml}
+    CONFIG_PATH=${1:-two_stage_1.yml}
 fi
 
 mkdir -p log
