@@ -51,7 +51,7 @@ echo "Passing config: $CONFIG_PATH"
 echo "=================================================="
 
 # Enable detailed PyTorch distributed debugging
-export TORCH_DISTRIBUTED_DEBUG=DETAIL
+# export TORCH_DISTRIBUTED_DEBUG=DETAIL
 
 
 # Launch with srun and set CUDA_VISIBLE_DEVICES per process
