@@ -451,16 +451,10 @@ def train():
                     sample_steps = min(50, scheduler.num_timesteps)
                     step_size = scheduler.num_timesteps // sample_steps
                     
-                    # Prepare conditioning for sampling
+                    # Prepare conditioning for sampling (slice all keys to num_samples)
                     sample_cond = {}
                     for key in cond_input:
-                        if key == 'image':
-                            sample_cond[key] = cond_input[key][:num_samples]
-                        elif key == 'meta':
-                            sample_cond[key] = {
-                                k: v[:num_samples] if isinstance(v, torch.Tensor) else v 
-                                for k, v in cond_input[key].items()
-                            }
+                        sample_cond[key] = cond_input[key][:num_samples]
                     
                     for i in reversed(range(0, scheduler.num_timesteps, step_size)):
                         t_sample = torch.full((num_samples,), i, device=device, dtype=torch.long)
