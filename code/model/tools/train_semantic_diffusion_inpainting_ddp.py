@@ -230,7 +230,7 @@ def train():
             model,
             device_ids=[local_rank],
             output_device=local_rank,
-            find_unused_parameters=False
+            find_unused_parameters=True
         )
         if is_main:
             print("✓ Wrapped model in DistributedDataParallel")
@@ -371,12 +371,11 @@ def train():
             
             # Encode semantics to latent space
             if use_latents:
-                # Assume latents are pre-computed (for faster training)
-                # In this case, im already contains the latent
+                # precomputed latents
                 im_latent = im.float().to(device)
             else:
                 with torch.no_grad():
-                    im_latent = vae.encoder(semantic_input)
+                    _, im_latent, _, _ = vae.encoder(semantic_input)
             
             # Downsample mask to latent resolution
             if mask_full is not None:
