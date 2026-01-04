@@ -183,9 +183,6 @@ ldm_params:
         }
       ]
       
-      # Prediction heads (optional for Stage 2, usually disabled)
-      environmental_prediction_layers: []  # Empty for Stage 2
-      
       # Image conditioning config
       # masked_rgb(3) + mask(1) + generated_semantics(4) + env_layers(2) = 10
       image_condition_config:

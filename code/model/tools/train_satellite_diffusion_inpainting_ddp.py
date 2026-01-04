@@ -484,16 +484,14 @@ def train():
             
             # Add environmental prediction loss if enabled
             if has_env_head and env_pred is not None and 'image' in cond_input and 'meta' in cond_input:
-                # Use prediction layers (subset of conditioning layers)
-                env_pred_layers = condition_config.get('environmental_prediction_layers',
-                                                      condition_config.get('environmental_layers', []))
-                if len(env_pred_layers) > 0:
-                    # Find environmental channels in spatial conditioning (only for prediction layers)
+                # Use prediction channels (from get_prediction_channels)
+                if len(env_pred_channels) > 0:
+                    # Find environmental channels in spatial conditioning (only for prediction channels)
                     env_indices = []
-                    for layer_name in env_pred_layers:
-                        channel_name = f'env:{layer_name}'
+                    for pred_channel in env_pred_channels:
+                        # pred_channel is like 'env:vegetation', need to find it in spatial_names
                         try:
-                            idx = spatial_names.index(channel_name)
+                            idx = spatial_names.index(pred_channel)
                             env_indices.append(idx)
                         except ValueError:
                             pass
@@ -518,16 +516,16 @@ def train():
                             print(f"⚠ No environmental indices found for environmental loss on idx {batch_idx} in epoch {epoch_idx}.")
                             print(f"   Spatial names: {spatial_names}")
                             print(f"   Meta: {cond_input['meta']}")
-                            print(f"   Environmental layers: {env_pred_layers}")
+                            print(f"   Environmental prediction channels: {env_pred_channels}")
                         # Dummy loss to ensure gradients flow through env head
                         env_loss = (env_pred * 0.0).sum()
                         loss = loss + env_loss
                 else:
                     if is_main:
-                        print(f"⚠ No environmental layers specified in config for environmental loss on idx {batch_idx} in epoch {epoch_idx}.")
+                        print(f"⚠ No environmental channels specified for prediction on idx {batch_idx} in epoch {epoch_idx}.")
                         print(f"   Spatial names: {spatial_names}")
                         print(f"   Meta: {cond_input['meta']}")
-                        print(f"   Environmental layers: {env_pred_layers}")
+                        print(f"   Environmental prediction channels: {env_pred_channels}")
                     # Dummy loss to ensure gradients flow through env head
                     env_loss = (env_pred * 0.0).sum()
                     loss = loss + env_loss
