@@ -136,7 +136,8 @@ def train():
     # We'll handle spatial conditioning via image_cond
     model = Unet(
         im_channels=autoencoder_model_config['z_channels'],
-        model_config=diffusion_model_config
+        model_config=diffusion_model_config,
+        mode='satellite'
     ).to(device)
     model.train()
     

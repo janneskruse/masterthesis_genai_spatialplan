@@ -18,8 +18,15 @@ class Unet(nn.Module):
     Down blocks, Midblocks and Uplocks
     """
     
-    def __init__(self, im_channels, model_config):
+    def __init__(self, im_channels, model_config, mode='satellite'):
+        """
+        Args:
+            im_channels: Number of input channels
+            model_config: Model configuration dict
+            mode: 'semantic' or 'satellite'. Auxiliary prediction heads only enabled in 'semantic' mode.
+        """
         super().__init__()
+        self.mode = mode
         self.down_channels = model_config['down_channels']
         self.mid_channels = model_config['mid_channels']
         self.t_emb_dim = model_config['time_emb_dim']
@@ -141,7 +148,8 @@ class Unet(nn.Module):
         self.segmentation_head = None
         self.environmental_head = None
         
-        if self.condition_config is not None:
+        # Only allow auxiliary prediction heads in semantic mode
+        if self.mode == 'semantic' and self.condition_config is not None:
             # Get prediction channels using utility function
             prediction_channels = get_prediction_channels(self.condition_config)
             

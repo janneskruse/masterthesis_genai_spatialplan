@@ -534,7 +534,8 @@ def infer(args, config):
     # Load Semantic Diffusion Model
     model = Unet(
         im_channels=semantic_autoencoder_config['z_channels'],
-        model_config=semantic_ldm_config
+        model_config=semantic_ldm_config,
+        mode='semantic'
     ).to(device)
     model.eval()
     

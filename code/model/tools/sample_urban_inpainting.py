@@ -610,7 +610,8 @@ def infer(args, config):
     # Load U-Net
     model = Unet(
         im_channels=autoencoder_model_config['z_channels'],
-        model_config=diffusion_model_config
+        model_config=diffusion_model_config,
+        mode='satellite'
     ).to(device)
     
     model_path = os.path.join(

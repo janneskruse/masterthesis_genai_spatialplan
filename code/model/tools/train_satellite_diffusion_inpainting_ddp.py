@@ -183,7 +183,8 @@ def train():
     # Instantiate the U-Net model
     model = Unet(
         im_channels=satellite_autoencoder_config['z_channels'],
-        model_config=satellite_ldm_config
+        model_config=satellite_ldm_config,
+        mode='satellite'
     ).to(device)
     
     # Wrap with DDP

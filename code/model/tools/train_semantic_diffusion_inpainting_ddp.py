@@ -221,7 +221,8 @@ def train():
     # Instantiate the U-Net model for semantic diffusion
     model = Unet(
         im_channels=semantic_autoencoder_config['z_channels'],
-        model_config=semantic_ldm_config
+        model_config=semantic_ldm_config,
+        mode='semantic'
     ).to(device)
     
     # Wrap with DDP
