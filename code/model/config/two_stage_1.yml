@@ -303,5 +303,5 @@ train_params:
     latents_dir_name: 'vae_ddp_latents'
     autoencoder_samples_dir_name: 'vae_ddp_samples'
     stats_dir_name: 'vae_ddp_stats'
-    ldm_ckpt_name: 'ddpm_urban_inpainting_ckpt.pth'
+    ldm_ckpt_name: 'satellite_ldm_ddp_ckpt.pth'
   

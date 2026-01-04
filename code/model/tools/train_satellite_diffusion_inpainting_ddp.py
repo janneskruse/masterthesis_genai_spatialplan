@@ -562,7 +562,7 @@ def train():
             
             checkpoint_path = os.path.join(
                 out_dir,
-                satellite_train_config.get('ldm_ckpt_name', 'ddpm_urban_inpainting_ckpt.pth')
+                satellite_train_config.get('ldm_ckpt_name', 'satellite_ldm_ddp_ckpt.pth')
             )
             torch.save(model_unwrapped.state_dict(), checkpoint_path)
             
@@ -570,7 +570,7 @@ def train():
             if (epoch_idx + 1) % 10 == 0:
                 periodic_path = os.path.join(
                     out_dir,
-                    f'ddpm_urban_inpainting_ddp_epoch_{epoch_idx + 1}.pth'
+                    f'satellite_ldm_ddp_epoch_{epoch_idx + 1}.pth'
                 )
                 torch.save(model_unwrapped.state_dict(), periodic_path)
                 print(f'✓ Saved checkpoint: {periodic_path}')
