@@ -148,8 +148,8 @@ class Unet(nn.Module):
         self.segmentation_head = None
         self.environmental_head = None
         
-        # Only allow auxiliary prediction heads in semantic mode
-        if self.mode == 'semantic' and self.condition_config is not None:
+        # Only allow auxiliary prediction heads in satellite mode
+        if self.mode == 'satellite' and self.condition_config is not None:
             # Get prediction channels using utility function
             prediction_channels = get_prediction_channels(self.condition_config)
             
