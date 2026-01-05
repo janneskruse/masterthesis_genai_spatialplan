@@ -181,7 +181,8 @@ def apply_lst_guidance(
 
 def sample_semantics(
     model, 
-    scheduler, 
+    scheduler,
+    repo_dir, 
     train_config, 
     diffusion_model_config,
     autoencoder_model_config, 
@@ -265,8 +266,8 @@ def sample_semantics(
     use_cached_patches = cache_dir.exists()
     
     # Check if latents exist for val split
-    out_dir = f"{big_data_storage_path}/results/{task_name}"
-    latent_path = os.path.join(out_dir, "semantic_vae_latents.pt")
+    data_dir = f"{big_data_storage_path}/results/{task_name}"
+    latent_path = os.path.join(data_dir, "semantic_vae_latents.pt")
     use_latents = os.path.exists(latent_path)
     
     if use_latents:
@@ -515,7 +516,7 @@ def sample_semantics(
     semantic_samples = torch.clamp(semantic_samples, 0, 1)
     
     # Save results
-    out_dir = f"{big_data_storage_path}/results/{task_name}/semantic_output"
+    out_dir = f"{repo_dir}/results/{task_name}/semantic_output"
     os.makedirs(out_dir, exist_ok=True)
     
     # Get next run index
@@ -523,7 +524,7 @@ def sample_semantics(
     if use_lst_guidance:
         base_name += f'_lst{lst_guidance_scale}'
     
-    run_idx = get_next_run_idx(out_dir, base_name)
+    run_idx = get_next_run_idx(data_dir, base_name)
     if overwrite_samples and run_idx > 0:
         run_idx = 0
     
@@ -543,12 +544,12 @@ def sample_semantics(
     if vis_samples:
         vis_tensor = torch.cat(vis_samples, dim=1)
         grid = make_grid(vis_tensor, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
-        output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}.png')
+        output_path = os.path.join(data_dir, f'{base_name}_idx{run_idx}.png')
         save_image(grid, output_path)
         print(f"\n✓ Saved visualization to {output_path}")
     
     # Save individual samples as .pt files for Stage 2
-    samples_dir = os.path.join(out_dir, f'{base_name}_idx{run_idx}_samples')
+    samples_dir = os.path.join(data_dir, f'{base_name}_idx{run_idx}_samples')
     os.makedirs(samples_dir, exist_ok=True)
     
     for idx in range(num_samples):
@@ -615,8 +616,8 @@ def infer(args, config):
     ).to(device)
     vae.eval()
     
-    out_dir = f"{big_data_storage_path}/results/{train_config['task_name']}"
-    vae_path = os.path.join(out_dir, semantic_train_config.get('autoencoder_ckpt_name', 'semantic_vae_ddp_ckpt.pth'))
+    data_dir = f"{big_data_storage_path}/results/{train_config['task_name']}"
+    vae_path = os.path.join(data_dir, semantic_train_config.get('autoencoder_ckpt_name', 'semantic_vae_ddp_ckpt.pth'))
     
     if os.path.exists(vae_path):
         vae.load_state_dict(torch.load(vae_path, map_location=device))
@@ -638,7 +639,7 @@ def infer(args, config):
         model.enable_gradient_checkpointing()
         print("✓ Enabled gradient checkpointing for memory efficiency")
     
-    ldm_path = os.path.join(out_dir, semantic_train_config.get('ldm_ckpt_name', 'semantic_ldm_ddp_ckpt.pth'))
+    ldm_path = os.path.join(data_dir, semantic_train_config.get('ldm_ckpt_name', 'semantic_ldm_ddp_ckpt.pth'))
     
     if os.path.exists(ldm_path):
         model.load_state_dict(torch.load(ldm_path, map_location=device))
@@ -652,12 +653,13 @@ def infer(args, config):
     if args.use_lst_guidance:
         # LST predictor path from base train_config
         base_train_config = config['train_params']
-        lst_predictor_path = os.path.join(out_dir, base_train_config.get('lst_predictor_ckpt_name', 'lst_predictor_best.pth'))
+        lst_predictor_path = os.path.join(data_dir, base_train_config.get('lst_predictor_ckpt_name', 'lst_predictor_best.pth'))
         lst_predictor = load_lst_predictor(lst_predictor_path, device)
     
     ########## Sample Semantics #############
     samples = sample_semantics(
         model=model,
+        repo_dir=config.get('repo_dir', '.'),
         scheduler=scheduler,
         train_config=train_config,
         diffusion_model_config=semantic_ldm_config,
