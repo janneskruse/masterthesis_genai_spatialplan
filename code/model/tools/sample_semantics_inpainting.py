@@ -544,12 +544,12 @@ def sample_semantics(
     if vis_samples:
         vis_tensor = torch.cat(vis_samples, dim=1)
         grid = make_grid(vis_tensor, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
-        output_path = os.path.join(data_dir, f'{base_name}_idx{run_idx}.png')
+        output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}.png')
         save_image(grid, output_path)
         print(f"\n✓ Saved visualization to {output_path}")
     
     # Save individual samples as .pt files for Stage 2
-    samples_dir = os.path.join(data_dir, f'{base_name}_idx{run_idx}_samples')
+    samples_dir = os.path.join(out_dir, f'{base_name}_idx{run_idx}_samples')
     os.makedirs(samples_dir, exist_ok=True)
     
     for idx in range(num_samples):
