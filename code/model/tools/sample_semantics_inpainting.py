@@ -20,7 +20,7 @@ from model.diffusion_blocks.unet_cond_base import Unet
 from model.diffusion_blocks.vae import VAE
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.utils.config_utils import get_prediction_channels
+from model.utils.config_utils import get_prediction_channels, compute_patch_and_latent_sizes
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 from model.lst_predictor.predictor import LSTPredictor
@@ -230,15 +230,20 @@ def sample_semantics(
     
     include_ndvi = train_config.get('lst_predictor_use_ndvi', True)
     
-    # Get latent size
-    im_size = dataset_config['patch_size_m'] // dataset_config['res']
-    latent_size = im_size // (2 ** sum(autoencoder_model_config['down_sample']))
+    # Get image and latent sizes using utility function
+    im_size, latent_size, vae_factor, unet_factor, total_divisor = compute_patch_and_latent_sizes(
+        dataset_config,
+        autoencoder_model_config,
+        diffusion_model_config,
+        use_latents=False
+    )
     
     print("\n" + "="*50)
     print("Semantic Sampling Configuration")
     print("="*50)
-    print(f"Image size: {im_size}x{im_size}")
+    print(f"Image size: {im_size}x{im_size} ({im_size * dataset_config['res']}m)")
     print(f"Latent size: {latent_size}x{latent_size}")
+    print(f"VAE downsample: {vae_factor}x, U-Net downsample: {unet_factor}x")
     print(f"Number of samples: {num_samples}")
     print(f"Guidance scale (CFG): {guidance_scale}")
     print(f"LST guidance scale: {lst_guidance_scale}")
@@ -354,6 +359,15 @@ def sample_semantics(
                     
                     semantic_input = torch.cat(semantic_tensor, dim=1)
                     x_context, _, _ = vae.encode(semantic_input)
+                    
+                    # Ensure x_context matches x dimensions
+                    if x_context.shape[-2:] != (latent_size, latent_size):
+                        x_context = F.interpolate(
+                            x_context,
+                            size=(latent_size, latent_size),
+                            mode='bilinear',
+                            align_corners=False
+                        )
                 else:
                     x_context = torch.zeros_like(x)
                 

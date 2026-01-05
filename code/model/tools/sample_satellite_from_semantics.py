@@ -26,7 +26,7 @@ from model.diffusion_blocks.unet_cond_base import Unet
 from model.diffusion_blocks.vae import VAE
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.utils.config_utils import get_config_value
+from model.utils.config_utils import get_config_value, compute_patch_and_latent_sizes
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 
@@ -173,15 +173,20 @@ def render_satellite_from_semantics(
     """
     model.eval()
     
-    # Get image size and latent size
-    im_size = dataset_config['patch_size_m'] // dataset_config['res']
-    latent_size = im_size // (2 ** sum(autoencoder_model_config['down_sample']))
+    # Get image and latent sizes using utility function
+    im_size, latent_size, vae_factor, unet_factor, total_divisor = compute_patch_and_latent_sizes(
+        dataset_config,
+        autoencoder_model_config,
+        diffusion_model_config,
+        use_latents=False
+    )
     
     print("\n" + "="*50)
     print("Satellite Rendering Configuration")
     print("="*50)
-    print(f"Image size: {im_size}x{im_size}")
+    print(f"Image size: {im_size}x{im_size} ({im_size * dataset_config['res']}m)")
     print(f"Latent size: {latent_size}x{latent_size}")
+    print(f"VAE downsample: {vae_factor}x, U-Net downsample: {unet_factor}x")
     print(f"Number of samples: {len(semantic_samples)}")
     print(f"Guidance scale: {guidance_scale}")
     print(f"Include masked RGB: {include_masked_rgb}")
