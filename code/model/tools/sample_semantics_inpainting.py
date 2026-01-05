@@ -531,24 +531,25 @@ def sample_semantics(
     print(f"\n{'='*50}")
     print(f"Output Run Index: {run_idx}")
     print(f"{'='*50}")
-    
-    # Save visualization
-    vis_samples = []
+
+    # Save visualization - each channel separately (like VAE training)
     for ch_idx, ch_name in enumerate(semantic_channels):
         if ch_idx < semantic_samples.shape[1]:
             ch = semantic_samples[:, ch_idx:ch_idx+1, :, :]
+            
             if 'height' in ch_name:
-                ch = torch.clamp(ch / 100.0, 0, 1)  # Normalize height
-            vis_samples.append(ch)
+                # Continuous height channel: normalize by max height
+                ch_vis = torch.clamp(ch / 100.0, 0, 1)
+            else:
+                # Binary channels: already in [0, 1] after VAE decode
+                ch_vis = torch.clamp(ch, 0, 1)
+            
+            # Create grid for this channel
+            grid = make_grid(ch_vis, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
+            output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}_{ch_name.replace(":", "_")}.png')
+            save_image(grid, output_path)
     
-    if vis_samples:
-        vis_tensor = torch.cat(vis_samples, dim=1)
-        grid = make_grid(vis_tensor, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
-        output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}.png')
-        save_image(grid, output_path)
-        print(f"\n✓ Saved visualization to {output_path}")
-    
-    # Save individual samples as .pt files for Stage 2
+    print(f"\n✓ Saved {len(semantic_channels)} channel visualizations to {out_dir}")    # Save individual samples as .pt files for Stage 2
     samples_dir = os.path.join(out_dir, f'{base_name}_idx{run_idx}_samples')
     os.makedirs(samples_dir, exist_ok=True)
     
