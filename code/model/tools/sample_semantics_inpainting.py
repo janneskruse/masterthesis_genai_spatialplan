@@ -235,7 +235,7 @@ def sample_semantics(
         dataset_config,
         autoencoder_model_config,
         diffusion_model_config,
-        use_latents=False
+        use_latents=True
     )
     
     print("\n" + "="*50)
@@ -255,11 +255,22 @@ def sample_semantics(
     task_name = train_config.get('task_name', 'urban_inpainting')
     cache_dir = Path(big_data_storage_path) / "processed" / task_name / "semantic"
     use_cached_patches = cache_dir.exists()
+    
+    # Check if latents exist for val split
+    out_dir = f"{big_data_storage_path}/results/{task_name}"
+    latent_path = os.path.join(out_dir, "semantic_vae_latents_val.pt")
+    use_latents = os.path.exists(latent_path)
+    
+    if use_latents:
+        print(f"\n✓ Found validation latents at {latent_path}")
+    else:
+        print(f"\n⚠ Validation latents not found, will downsample conditioning on-the-fly")
+    
     dataset = UrbanInpaintingDataset(
         split='val',
         mode='semantic',
-        use_latents=False,
-        latent_path=None,
+        use_latents=use_latents,
+        latent_path=latent_path if use_latents else None,
         use_cached_patches=use_cached_patches,
         cache_dir=cache_dir
     )
@@ -287,6 +298,37 @@ def sample_semantics(
             for k, v in cond_input[key].items():
                 if isinstance(v, torch.Tensor):
                     cond_input[key][k] = v.unsqueeze(0).to(device)
+    
+    # Downsample conditioning to latent resolution if not using pre-computed latents
+    if not use_latents and 'image' in cond_input:
+        print(f"\n⚠ Downsampling conditioning from full resolution to latent resolution")
+        cond_spatial = cond_input['image']  # [1, C, H, W]
+        
+        # Compute latent dimensions
+        latent_h = latent_size
+        latent_w = latent_size
+        
+        # Separate mask (nearest) from features (bilinear)
+        downsampled_channels = []
+        spatial_names = cond_input.get('meta', {}).get('spatial_names', [])
+        
+        for idx in range(cond_spatial.shape[1]):
+            channel = cond_spatial[:, idx:idx+1, :, :]  # [1, 1, H, W]
+            channel_name = spatial_names[idx] if idx < len(spatial_names) else ''
+            
+            # Use nearest for masks, bilinear for features
+            mode = 'nearest' if 'mask' in channel_name.lower() else 'bilinear'
+            downsampled = F.interpolate(
+                channel,
+                size=(latent_h, latent_w),
+                mode=mode,
+                align_corners=False if mode == 'bilinear' else None
+            )
+            
+            downsampled_channels.append(downsampled)
+        
+        cond_input['image'] = torch.cat(downsampled_channels, dim=1)  # [1, C, H_latent, W_latent]
+        print(f"✓ Downsampled conditioning: {cond_spatial.shape} → {cond_input['image'].shape}")
     
     # Extract mask and LST target
     mask_full = None
