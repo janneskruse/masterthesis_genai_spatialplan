@@ -464,8 +464,8 @@ def sample_semantics(
         for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="Denoising"):
             t = torch.full((1,), i, device=device, dtype=torch.long)
             
-            # Print GPU memory every 50 steps
-            if i % 50 == 0:
+            # Print GPU memory every 500 steps
+            if i % 500 == 0:
                 print_gpu_memory()
             
             # Classifier-free guidance with memory optimization
