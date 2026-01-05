@@ -249,12 +249,13 @@ def sample_semantics(
     # Note: task_name should be from base train_config, not semantic_train_config
     task_name = train_config.get('task_name', 'urban_inpainting')
     cache_dir = Path(big_data_storage_path) / "processed" / task_name / "semantic"
+    use_cached_patches = cache_dir.exists()
     dataset = UrbanInpaintingDataset(
         split='val',
         mode='semantic',
         use_latents=False,
         latent_path=None,
-        use_cached_patches=True,
+        use_cached_patches=use_cached_patches,
         cache_dir=cache_dir
     )
     
@@ -293,7 +294,7 @@ def sample_semantics(
     if 'image' in cond_input and 'meta' in cond_input:
         spatial_names = cond_input['meta'].get('spatial_names', [])
         for idx, name in enumerate(spatial_names):
-            if 'landsat_surface_temp' in name or 'LST' in name or 'lst' in name:
+            if 'LST' in name or 'lst' in name:
                 lst_target = cond_input['image'][:, idx:idx+1, :, :]
                 print(f"✓ Found LST target channel: {name}")
                 break
