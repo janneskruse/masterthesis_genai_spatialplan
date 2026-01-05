@@ -258,7 +258,7 @@ def sample_semantics(
     
     # Check if latents exist for val split
     out_dir = f"{big_data_storage_path}/results/{task_name}"
-    latent_path = os.path.join(out_dir, "semantic_vae_latents_val.pt")
+    latent_path = os.path.join(out_dir, "semantic_vae_latents.pt")
     use_latents = os.path.exists(latent_path)
     
     if use_latents:
@@ -359,7 +359,7 @@ def sample_semantics(
             uncond_input[key] = cond_input[key].copy() if isinstance(cond_input[key], dict) else cond_input[key]
     
     # Get inpainting mode from semantic config
-    inpainting_cfg = train_config.get('inpainting', {})
+    inpainting_cfg = semantic_config.get('inpainting', {})
     mode = inpainting_cfg.get('mode', 'hard')
     
     print(f"\n✓ Inpainting mode: {mode}")
@@ -617,7 +617,7 @@ def infer(args, config):
     samples = sample_semantics(
         model=model,
         scheduler=scheduler,
-        train_config=semantic_train_config,
+        train_config=train_config,
         diffusion_model_config=semantic_ldm_config,
         autoencoder_model_config=semantic_autoencoder_config,
         diffusion_config=diffusion_config,
