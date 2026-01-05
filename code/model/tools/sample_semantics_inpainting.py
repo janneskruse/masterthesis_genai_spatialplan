@@ -28,6 +28,14 @@ from model.lst_predictor.predictor import LSTPredictor
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
+def print_gpu_memory():
+    """Print current GPU memory usage"""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        print(f"GPU Memory: {allocated:.2f} GB allocated, {reserved:.2f} GB reserved")
+
+
 def load_lst_predictor(checkpoint_path, device):
     """
     Load LST predictor model from checkpoint.
@@ -350,19 +358,40 @@ def sample_semantics(
         print("⚠ LST guidance requested but no LST target found in data")
         use_lst_guidance = False
     
-    # Create unconditional input for CFG
+    # Create unconditional input for CFG (deep copy with latent resolution enforcement)
     uncond_input = {}
     for key in cond_input:
         if key == 'image':
             uncond_input[key] = torch.zeros_like(cond_input[key])
-        elif key == 'meta':
-            uncond_input[key] = cond_input[key].copy() if isinstance(cond_input[key], dict) else cond_input[key]
+        elif key == 'meta' and isinstance(cond_input[key], dict):
+            # Deep copy meta dict and ensure all tensors are at latent resolution
+            uncond_input[key] = {}
+            for k, v in cond_input[key].items():
+                if isinstance(v, torch.Tensor):
+                    # Ensure all meta tensors match latent resolution
+                    if v.shape[-2:] != (latent_size, latent_size):
+                        uncond_input[key][k] = F.interpolate(
+                            v.float(),
+                            size=(latent_size, latent_size),
+                            mode='nearest' if 'mask' in k.lower() else 'bilinear',
+                            align_corners=False if 'mask' not in k.lower() else None
+                        )
+                    else:
+                        uncond_input[key][k] = v.clone()
+                else:
+                    uncond_input[key][k] = v
+        else:
+            uncond_input[key] = cond_input[key]
     
     # Get inpainting mode from semantic config
     inpainting_cfg = semantic_config.get('inpainting', {})
     mode = inpainting_cfg.get('mode', 'hard')
     
     print(f"\n✓ Inpainting mode: {mode}")
+    
+    # Print initial GPU memory
+    print("\nInitial GPU memory:")
+    print_gpu_memory()
     
     ################# Sampling Loop ########################
     print("\n" + "="*50)
@@ -434,18 +463,26 @@ def sample_semantics(
         for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="Denoising"):
             t = torch.full((1,), i, device=device, dtype=torch.long)
             
-            # Classifier-free guidance
+            # Print GPU memory every 50 steps
+            if i % 50 == 0:
+                print_gpu_memory()
+            
+            # Classifier-free guidance with memory optimization
             if guidance_scale > 0:
-                # Conditional prediction
-                noise_pred_cond = model(x, t, cond_input=cond_input)
-                
-                # Unconditional prediction
-                noise_pred_uncond = model(x, t, cond_input=uncond_input)
+                with torch.no_grad():
+                    # Conditional prediction
+                    noise_pred_cond = model(x, t, cond_input=cond_input)
+                    torch.cuda.empty_cache()
+                    
+                    # Unconditional prediction
+                    noise_pred_uncond = model(x, t, cond_input=uncond_input)
+                    torch.cuda.empty_cache()
                 
                 # CFG
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
             else:
-                noise_pred = model(x, t, cond_input=cond_input)
+                with torch.no_grad():
+                    noise_pred = model(x, t, cond_input=cond_input)
             
             # Apply LST guidance
             if use_lst_guidance and lst_predictor is not None and lst_target is not None:
@@ -595,6 +632,11 @@ def infer(args, config):
         mode='semantic'
     ).to(device)
     model.eval()
+    
+    # Enable gradient checkpointing to save memory
+    if hasattr(model, 'enable_gradient_checkpointing'):
+        model.enable_gradient_checkpointing()
+        print("✓ Enabled gradient checkpointing for memory efficiency")
     
     ldm_path = os.path.join(out_dir, semantic_train_config.get('ldm_ckpt_name', 'semantic_ldm_ddp_ckpt.pth'))
     
