@@ -127,7 +127,7 @@ def apply_lst_guidance(
     
     # Decode to semantic space
     with torch.no_grad():
-        semantic_pred = vae.decoder(x0_pred)
+        semantic_pred = vae.decode(x0_pred)
     
     # Build input for LST predictor
     semantic_tensor = []
@@ -510,7 +510,7 @@ def sample_semantics(
     
     # Decode to semantic space
     with torch.no_grad():
-        semantic_samples = vae.decoder(all_samples)
+        semantic_samples = vae.decode(all_samples)
     
     # Clamp semantic values
     semantic_samples = torch.clamp(semantic_samples, 0, 1)

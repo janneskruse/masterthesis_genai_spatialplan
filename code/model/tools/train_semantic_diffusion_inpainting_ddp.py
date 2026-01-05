@@ -376,7 +376,7 @@ def train():
                 im_latent = im.float().to(device)
             else:
                 with torch.no_grad():
-                    _, im_latent, _, _ = vae.encoder(semantic_input)
+                    im_latent, _, _ = vae.encode(semantic_input)
             
             # Downsample mask to latent resolution
             if mask_full is not None:
@@ -473,7 +473,7 @@ def train():
                     
                     # Decode to semantic space
                     if vae is not None:
-                        semantic_sample = vae.decoder(x_sample)
+                        semantic_sample = vae.decode(x_sample)
                     else:
                         semantic_sample = x_sample
                     

@@ -253,7 +253,7 @@ def render_satellite_from_semantics(
                 # Encode to latent
                 rgb_context = torch.cat(rgb_channels, dim=1)
                 with torch.no_grad():
-                    x_context_rgb = vae.encoder(rgb_context)
+                    x_context_rgb, _, _ = vae.encode(rgb_context)
             else:
                 x_context_rgb = torch.zeros(1, autoencoder_model_config['z_channels'], 
                                            latent_size, latent_size, device=device)
@@ -300,7 +300,7 @@ def render_satellite_from_semantics(
     
     # Decode to RGB
     with torch.no_grad():
-        rgb_renders = vae.decoder(all_renders)
+        rgb_renders = vae.decode(all_renders)
     
     # Normalize to [0, 1]
     rgb_renders = torch.clamp(rgb_renders, -1., 1.)
