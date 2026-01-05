@@ -353,7 +353,7 @@ def sample_semantics(
                             semantic_tensor.append(torch.zeros(1, 1, H, W, device=device))
                     
                     semantic_input = torch.cat(semantic_tensor, dim=1)
-                    x_context = vae.encoder(semantic_input)
+                    x_context, _, _ = vae.encode(semantic_input)
                 else:
                     x_context = torch.zeros_like(x)
                 
