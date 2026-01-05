@@ -82,3 +82,66 @@ def get_prediction_channels(condition_config):
                     prediction_channels.append(f'env:{layer_name}')
     
     return prediction_channels
+
+def compute_patch_and_latent_sizes(
+    dataset_config: dict,
+    autoencoder_config: dict,
+    ldm_config: dict,
+    use_latents: bool = False,
+    self=None
+) -> tuple[int, int, int, int, int]:
+    """
+    Compute properly aligned patch and latent sizes.
+    
+    Ensures patch size is divisible by both VAE and U-Net downsampling factors
+    to prevent dimension mismatches in skip connections.
+    
+    Args:
+        dataset_config: Dataset configuration with 'patch_size_m' and 'res'
+        autoencoder_config: VAE config with 'down_sample'
+        ldm_config: U-Net config with 'down_channels',
+        self: optional UrbanInpaintingDataset instance for setting latent_downsample_factor
+    
+    Returns:
+        tuple: (patch_size, latent_size, vae_factor, unet_factor, total_divisor)
+    """
+    # Initial calculation
+    pixel_size = dataset_config.get('patch_size_m', 650)
+    im_res = dataset_config.get('res', 3)
+    patch_size = int(pixel_size / im_res) # compute patch size in pixels
+    patch_size = patch_size - (patch_size % 8) # make patch size divisible by 8
+    
+    # VAE downsampling factor
+    if use_latents:
+        vae_downsample_factor = 2 ** sum([1 for ds in autoencoder_config.get('down_sample', [True, True, True]) if ds])
+    else:
+        vae_downsample_factor = 1
+        
+    patch_size = patch_size - (patch_size % vae_downsample_factor)
+    
+    # U-Net downsampling factor
+    num_down_layers = len(ldm_config.get('down_channels', [64, 128, 256, 512]))
+    unet_downsample_factor = 2 ** num_down_layers
+    
+    # Total divisibility requirement
+    total_divisor = vae_downsample_factor * unet_downsample_factor
+    patch_size = patch_size - (patch_size % total_divisor)
+    
+    # Latent size
+    latent_size = patch_size // vae_downsample_factor
+    
+    if self is not None:
+        self.vae_downsample_factor = vae_downsample_factor
+    
+    print(f"Using patch size: {patch_size} pixels ({patch_size*im_res} m at {im_res} m resolution)")
+    print(f"  VAE downsample factor: {vae_downsample_factor}")
+    print(f"  U-Net downsample factor: {unet_downsample_factor}")
+    print(f"  Total divisor: {total_divisor}")
+    
+    return (
+        patch_size,
+        latent_size,
+        vae_downsample_factor,
+        unet_downsample_factor,
+        total_divisor
+    )
