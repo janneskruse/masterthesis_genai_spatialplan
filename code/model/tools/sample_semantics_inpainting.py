@@ -267,7 +267,8 @@ def sample_semantics(
     
     # Check if latents exist for val split
     data_dir = f"{big_data_storage_path}/results/{task_name}"
-    latent_path = os.path.join(data_dir, "semantic_vae_latents.pt")
+    latent_dir_name = train_config.get('latent_dir_name', 'semantic_vae_latents')
+    latent_path = os.path.join(data_dir, latent_dir_name + "_val")
     use_latents = os.path.exists(latent_path)
     
     if use_latents:
@@ -359,7 +360,7 @@ def sample_semantics(
         print("⚠ LST guidance requested but no LST target found in data")
         use_lst_guidance = False
     
-    # Create unconditional input for CFG (deep copy with latent resolution enforcement)
+    # Create unconditional input for CFG
     uncond_input = {}
     for key in cond_input:
         if key == 'image':
@@ -408,31 +409,22 @@ def sample_semantics(
         x = torch.randn(1, autoencoder_model_config['z_channels'], 
                        latent_size, latent_size).to(device)
         
-        # For hard inpainting, start with context latent
+        # For hard inpainting, encode ground truth semantic context
+        mask_latent = None
+        x_context = None
+        
         if mode == "hard":
-            # Encode context to get base latent
             with torch.no_grad():
-                # Build semantic tensor from conditioning
-                semantic_tensor = []
-                if 'image' in cond_input and 'meta' in cond_input:
-                    spatial_names = cond_input['meta'].get('spatial_names', [])
+                # Get ground truth semantic sample (the image we're trying to inpaint)
+                # This should come from the dataset - the actual semantic target
+                if len(sample_data) == 2:
+                    im_semantic, _ = sample_data
                     
-                    for sem_ch in semantic_channels:
-                        found = False
-                        for idx, name in enumerate(spatial_names):
-                            if sem_ch == name or (sem_ch in name and '_context' not in name):
-                                semantic_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
-                                found = True
-                                break
-                        
-                        if not found:
-                            _, _, H, W = cond_input['image'].shape
-                            semantic_tensor.append(torch.zeros(1, 1, H, W, device=device))
+                    # Encode ground truth semantics to latent space
+                    im_semantic = im_semantic.unsqueeze(0).to(device)
+                    x_context, _, _ = vae.encode(im_semantic)
                     
-                    semantic_input = torch.cat(semantic_tensor, dim=1)
-                    x_context, _, _ = vae.encode(semantic_input)
-                    
-                    # Ensure x_context matches x dimensions
+                    # Ensure x_context matches expected latent dimensions
                     if x_context.shape[-2:] != (latent_size, latent_size):
                         x_context = F.interpolate(
                             x_context,
@@ -440,25 +432,25 @@ def sample_semantics(
                             mode='bilinear',
                             align_corners=False
                         )
+                    
+                    # Downsample mask to latent resolution
+                    if mask_full is not None:
+                        mask_latent = F.interpolate(
+                            mask_full.float(),
+                            size=(latent_size, latent_size),
+                            mode='nearest'
+                        )
+                    else:
+                        mask_latent = torch.ones(1, 1, latent_size, latent_size, device=device)
+                    
+                    # Initialize: keep context outside mask, noise inside mask
+                    x = mask_latent * x + (1 - mask_latent) * x_context
+                    
+                    print(f"✓ Hard inpainting: preserving context outside mask ({(1 - mask_latent.mean()):.1%} of latent)")
                 else:
-                    x_context = torch.zeros_like(x)
-                
-                # Downsample mask to latent resolution
-                if mask_full is not None:
-                    mask_latent = F.interpolate(
-                        mask_full.float(),
-                        size=(latent_size, latent_size),
-                        mode='nearest'
-                    )
-                else:
-                    mask_latent = torch.ones(1, 1, latent_size, latent_size, device=device)
-                
-                # Initialize: keep context, randomize masked region
-                x = mask_latent * x + (1 - mask_latent) * x_context
-        else:
-            # SD-like: start from pure noise
-            mask_latent = None
-            x_context = None
+                    print("⚠ Hard inpainting requested but no semantic ground truth available, using pure noise")
+                    mask_latent = None
+                    x_context = None
         
         # Sampling loop
         for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="Denoising"):
