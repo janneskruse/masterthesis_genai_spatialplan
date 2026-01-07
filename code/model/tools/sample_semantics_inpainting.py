@@ -260,7 +260,6 @@ def sample_semantics(
     print(f"Semantic channels: {semantic_channels}")
     
     # Load dataset to get conditioning examples
-    # Note: task_name should be from base train_config, not semantic_train_config
     task_name = train_config.get('task_name', 'urban_inpainting')
     cache_dir = Path(big_data_storage_path) / "processed" / task_name / "semantic"
     use_cached_patches = cache_dir.exists()
@@ -300,8 +299,9 @@ def sample_semantics(
     else:
         cond_input = {}
     
-    # Prepare conditioning inputs
+    # Prepare conditioning inputs for batch
     for key in cond_input:
+        # unsqueeze batch dimension
         if isinstance(cond_input[key], torch.Tensor):
             cond_input[key] = cond_input[key].unsqueeze(0).to(device)
         elif key == 'meta' and isinstance(cond_input[key], dict):
@@ -416,13 +416,11 @@ def sample_semantics(
         if mode == "hard":
             with torch.no_grad():
                 # Get ground truth semantic sample (the image we're trying to inpaint)
-                # This should come from the dataset - the actual semantic target
-                if len(sample_data) == 2:
-                    im_semantic, _ = sample_data
-                    
-                    # Encode ground truth semantics to latent space
-                    im_semantic = im_semantic.unsqueeze(0).to(device)
-                    x_context, _, _ = vae.encode(im_semantic)
+                # For semantic mode, dataset returns semantic tensor (buildings, streets, vegetation, height)
+                if len(sample_data) == 2 and use_latents:
+                    # Using pre-computed latents - im is already a latent
+                    im_latent, _ = sample_data
+                    x_context = im_latent.unsqueeze(0).to(device)
                     
                     # Ensure x_context matches expected latent dimensions
                     if x_context.shape[-2:] != (latent_size, latent_size):
@@ -433,6 +431,41 @@ def sample_semantics(
                             align_corners=False
                         )
                     
+                    print(f"✓ Using pre-computed latent context")
+                    
+                elif len(sample_data) == 2 and not use_latents:
+                    # Not using latents - need to encode semantic tensor
+                    im_semantic, _ = sample_data
+                    
+                    # Verify channel count matches VAE expectation
+                    expected_channels = len(semantic_channels)
+                    if im_semantic.shape[0] != expected_channels:
+                        print(f"⚠ Channel mismatch: got {im_semantic.shape[0]}, expected {expected_channels}")
+                        print(f"⚠ Falling back to pure noise generation")
+                        mask_latent = None
+                        x_context = None
+                    else:
+                        # Encode ground truth semantics to latent space
+                        im_semantic = im_semantic.unsqueeze(0).to(device)
+                        x_context, _, _ = vae.encode(im_semantic)
+                        
+                        # Ensure x_context matches expected latent dimensions
+                        if x_context.shape[-2:] != (latent_size, latent_size):
+                            x_context = F.interpolate(
+                                x_context,
+                                size=(latent_size, latent_size),
+                                mode='bilinear',
+                                align_corners=False
+                            )
+                        
+                        print(f"✓ Encoded semantic context to latent space")
+                else:
+                    print("⚠ Hard inpainting requested but no semantic ground truth available, using pure noise")
+                    mask_latent = None
+                    x_context = None
+                
+                # Setup mask if we have valid context
+                if x_context is not None:
                     # Downsample mask to latent resolution
                     if mask_full is not None:
                         mask_latent = F.interpolate(
@@ -447,10 +480,6 @@ def sample_semantics(
                     x = mask_latent * x + (1 - mask_latent) * x_context
                     
                     print(f"✓ Hard inpainting: preserving context outside mask ({(1 - mask_latent.mean()):.1%} of latent)")
-                else:
-                    print("⚠ Hard inpainting requested but no semantic ground truth available, using pure noise")
-                    mask_latent = None
-                    x_context = None
         
         # Sampling loop
         for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="Denoising"):
