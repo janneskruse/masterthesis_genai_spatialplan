@@ -516,9 +516,9 @@ def sample_semantics(
     if use_lst_guidance:
         base_name += f'_lst{lst_guidance_scale}'
     
-    run_idx = get_next_run_idx(data_dir, base_name)
+    run_idx = get_next_run_idx(out_dir, base_name)
     if overwrite_samples and run_idx > 0:
-        run_idx = 0
+        run_idx -= 1
     
     print(f"\n{'='*50}")
     print(f"Output Run Index: {run_idx}")
