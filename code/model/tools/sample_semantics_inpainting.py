@@ -434,19 +434,38 @@ def sample_semantics(
                     print(f"✓ Using pre-computed latent context")
                     
                 elif len(sample_data) == 2 and not use_latents:
-                    # Not using latents - need to encode semantic tensor
-                    im_semantic, _ = sample_data
+                    # Not using latents - need to build semantic tensor and encode
+                    im, sample_cond_input = sample_data
                     
-                    # Verify channel count matches VAE expectation
-                    expected_channels = len(semantic_channels)
-                    if im_semantic.shape[0] != expected_channels:
-                        print(f"⚠ Channel mismatch: got {im_semantic.shape[0]}, expected {expected_channels}")
-                        print(f"⚠ Falling back to pure noise generation")
-                        mask_latent = None
-                        x_context = None
-                    else:
+                    # Build semantic tensor from conditioning input (same logic as train_vae_ddp.py)
+                    if 'image' in sample_cond_input and 'meta' in sample_cond_input:
+                        semantic_tensor = []
+                        meta = sample_cond_input['meta']
+                        spatial_names = meta.get('spatial_names', [])
+                        
+                        # Extract semantic channels based on configuration
+                        for sem_ch in semantic_channels:
+                            found = False
+                            for idx, name in enumerate(spatial_names):
+                                if name == sem_ch:
+                                    semantic_tensor.append(sample_cond_input['image'][idx:idx+1, :, :].unsqueeze(0))
+                                    found = True
+                                    break
+                                if sem_ch in name or name in sem_ch:
+                                    semantic_tensor.append(sample_cond_input['image'][idx:idx+1, :, :].unsqueeze(0))
+                                    found = True
+                                    break
+                            
+                            if not found:
+                                print(f"⚠ Warning: Semantic channel '{sem_ch}' not found. Filling with zeros.")
+                                # Channel not found, create zeros
+                                _, H, W = sample_cond_input['image'].shape
+                                semantic_tensor.append(torch.zeros(1, 1, H, W, device=sample_cond_input['image'].device))
+                        
+                        im_semantic = torch.cat(semantic_tensor, dim=1)  # [1, C, H, W]
+                        
                         # Encode ground truth semantics to latent space
-                        im_semantic = im_semantic.unsqueeze(0).to(device)
+                        im_semantic = im_semantic.to(device)
                         x_context, _, _ = vae.encode(im_semantic)
                         
                         # Ensure x_context matches expected latent dimensions
@@ -458,7 +477,12 @@ def sample_semantics(
                                 align_corners=False
                             )
                         
-                        print(f"✓ Encoded semantic context to latent space")
+                        print(f"✓ Built semantic tensor ({im_semantic.shape[1]} channels) and encoded to latent space")
+                    else:
+                        print(f"⚠ Could not build semantic tensor from conditioning input")
+                        print(f"⚠ Falling back to pure noise generation")
+                        mask_latent = None
+                        x_context = None
                 else:
                     print("⚠ Hard inpainting requested but no semantic ground truth available, using pure noise")
                     mask_latent = None
