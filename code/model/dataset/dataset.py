@@ -424,7 +424,7 @@ class UrbanInpaintingDataset(Dataset):
             
             if osm_layers:
                 osm_features = np.concatenate(osm_layers, axis=0)
-                self._append_spatial(spatial, spatial_names, osm_features, 'osm', channel_names=osm_layer_names, layer_type='osm')
+                self._append_spatial(spatial, spatial_names, osm_features, 'osm', channel_names=osm_layer_names, layer_configs=self.osm_layer_configs)
         
         if 'environmental' in self.condition_types:
             env_layers = []
@@ -449,7 +449,7 @@ class UrbanInpaintingDataset(Dataset):
             
             if env_layers:
                 env_features = np.concatenate(env_layers, axis=0)
-                self._append_spatial(spatial, spatial_names, env_features, 'env', channel_names=env_layer_names, layer_type='env')
+                self._append_spatial(spatial, spatial_names, env_features, 'env', channel_names=env_layer_names, layer_configs=self.env_layer_configs)
         
         if spatial:
             cond_inputs['image'] = torch.cat(spatial, dim=0)
@@ -779,40 +779,26 @@ class UrbanInpaintingDataset(Dataset):
 
         return arr.astype(np.float32, copy=False)
 
-    def _format_channel_name(
-        self, 
-        layer_name: str, 
-        layer_type: str = 'osm',
-        base_name: str = None
-    ) -> str:
+    def _apply_context_suffix(self, display_name: str, layer_configs: dict = None) -> str:
         """
-        Format channel name based on mode and layer configuration.
-        
-        In semantic mode:
-        - Channels with predict=True get standard name (e.g., 'osm:buildings')
-        - Channels with predict=False get _context suffix (e.g., 'osm:streets_context')
-        
-        In satellite mode:
-        - All channels use standard names (no _context suffix)
+        Apply _context suffix to display name if in semantic mode and predict=False.
         
         Args:
-            layer_name: Data layer name (e.g., 'buildings', 'streets')
-            layer_type: 'osm' or 'env'
-            base_name: Optional override for display name
+            display_name: Display name (e.g., 'vegetation', 'lst')
+            layer_configs: Dict mapping actual layer names to their configs
             
         Returns:
-            Formatted channel name
+            Display name with optional _context suffix
         """
-        # Get layer config
-        layer_configs = self.osm_layer_configs if layer_type == 'osm' else self.env_layer_configs
-        layer_config = layer_configs.get(layer_name, {})
+        if self.mode != 'semantic' or not layer_configs:
+            return display_name
         
-        # Use custom key if specified, otherwise layer name
-        display_name = base_name or layer_config.get('key', layer_name)
-        
-        # Add _context suffix in semantic mode for non-predictive layers
-        if self.mode == 'semantic' and not layer_config.get('predict', True):
-            return f"{display_name}_context"
+        # Find matching config by checking if display_name matches the config's key
+        for layer_name, config in layer_configs.items():
+            if config.get('key', layer_name) == display_name:
+                if not config.get('predict', True):
+                    return f"{display_name}_context"
+                break
         
         return display_name
 
@@ -823,7 +809,7 @@ class UrbanInpaintingDataset(Dataset):
         arr: np.ndarray, 
         base_name: str, 
         channel_names: list = None,
-        layer_type: str = 'osm'
+        layer_configs: dict = None
     ):
         """
         Add array to spatial stack with proper channel naming.
@@ -833,33 +819,25 @@ class UrbanInpaintingDataset(Dataset):
             names: List to append channel names to
             arr: Numpy array to add
             base_name: Base name for the layer (e.g., 'osm', 'env')
-            channel_names: Optional list of specific channel names
-            layer_type: 'osm' or 'env' for layer config lookup
+            channel_names: Optional list of display names (already resolved with custom keys)
+            layer_configs: Optional dict for looking up predict flag to add _context suffix
         """
         arr = self._to_chw(arr)
         stack.append(torch.from_numpy(arr).float())
         
         if arr.shape[0] == 1:
-            # Single channel - format name
+            # Single channel
             if channel_names and len(channel_names) == 1:
-                formatted_name = self._format_channel_name(
-                    channel_names[0], 
-                    layer_type=layer_type,
-                    base_name=f"{base_name}:{channel_names[0]}"
-                )
+                final_name = self._apply_context_suffix(channel_names[0], layer_configs)
+                names.append(f"{base_name}:{final_name}")
             else:
-                formatted_name = base_name
-            names.append(formatted_name)
+                names.append(base_name)
         else:
-            # Multi-channel - format each name
+            # Multi-channel
             if channel_names is not None and len(channel_names) == arr.shape[0]:
-                for ch in channel_names:
-                    formatted_name = self._format_channel_name(
-                        ch,
-                        layer_type=layer_type,
-                        base_name=f"{base_name}:{ch}"
-                    )
-                    names.append(formatted_name)
+                for display_name in channel_names:
+                    final_name = self._apply_context_suffix(display_name, layer_configs)
+                    names.append(f"{base_name}:{final_name}")
             else:
                 # Fall back to numeric indices
                 names.extend([f"{base_name}:{i}" for i in range(arr.shape[0])])
@@ -992,7 +970,7 @@ class UrbanInpaintingDataset(Dataset):
                         mode='bilinear',
                         align_corners=False
                     ).squeeze(0)
-                    self._append_spatial(spatial, spatial_names, osm_features.numpy(), 'osm', channel_names=osm_layer_names, layer_type='osm')
+                    self._append_spatial(spatial, spatial_names, osm_features.numpy(), 'osm', channel_names=osm_layer_names, layer_configs=self.osm_layer_configs)
             
             if 'environmental' in self.condition_types:
                 env_layers = []
@@ -1025,7 +1003,7 @@ class UrbanInpaintingDataset(Dataset):
                         mode='bilinear',
                         align_corners=False
                     ).squeeze(0)
-                    self._append_spatial(spatial, spatial_names, env_features.numpy(), 'env', channel_names=env_layer_names, layer_type='env')
+                    self._append_spatial(spatial, spatial_names, env_features.numpy(), 'env', channel_names=env_layer_names, layer_configs=self.env_layer_configs)
             
             if spatial:
                 cond_inputs['image'] = torch.cat(spatial, dim=0)
@@ -1079,6 +1057,7 @@ class UrbanInpaintingDataset(Dataset):
         if 'osm_features' in self.condition_types:
             # Stack OSM layers as control signal
             osm_layers = []
+            osm_layer_names = []  # Track display names
             for layer_name in self.osm_layers:
                 if layer_name in data_layers and data_layers[layer_name] is not None:
                     # layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
@@ -1089,14 +1068,21 @@ class UrbanInpaintingDataset(Dataset):
                     layer_patch = self._normalize_layer(layer_patch, layer_name)
                     layer_patch = self._to_chw(layer_patch)
                     osm_layers.append(layer_patch)
+                    
+                    # Extract display name
+                    layer_config = self.osm_layer_configs.get(layer_name, {})
+                    display_name = layer_config.get('key', layer_name)
+                    osm_layer_names.append(display_name)
             
             if osm_layers:
                 osm_features = np.concatenate(osm_layers, axis=0)
                 cond_inputs['osm_features'] = torch.from_numpy(osm_features).float()
+                cond_inputs['osm_layer_names'] = osm_layer_names
         
         if 'environmental' in self.condition_types:
             # Environmental data (NDVI, LST)
             env_layers = []
+            env_layer_names = []  # Track display names
             for layer_name in self.environmental_layers:
                 if layer_name in data_layers and data_layers[layer_name] is not None:
                     # layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
@@ -1107,11 +1093,17 @@ class UrbanInpaintingDataset(Dataset):
                     layer_patch = self._normalize_layer(layer_patch, layer_name)
                     layer_patch = self._to_chw(layer_patch)
                     env_layers.append(layer_patch)
+                    
+                    # Extract display name
+                    layer_config = self.env_layer_configs.get(layer_name, {})
+                    display_name = layer_config.get('key', layer_name)
+                    env_layer_names.append(display_name)
             
             if env_layers:
                 # env_features = np.stack(env_layers, axis=0).astype(np.float32)
                 env_features = np.concatenate(env_layers, axis=0)
                 cond_inputs['environmental'] = torch.from_numpy(env_features).float()
+                cond_inputs['env_layer_names'] = env_layer_names
         
         if 'temperature_threshold' in self.condition_types:
             # Temperature optimization target (scalar or spatially varying)
@@ -1145,14 +1137,14 @@ class UrbanInpaintingDataset(Dataset):
         # OSM
         if 'osm_features' in self.condition_types and 'osm_features' in cond_inputs:
             osm_data = cond_inputs.pop('osm_features').numpy()
-            # Use actual OSM layer names
-            self._append_spatial(spatial, spatial_names, osm_data, 'osm', channel_names=self.osm_layers, layer_type='osm')
+            osm_display_names = cond_inputs.pop('osm_layer_names', self.osm_layers)
+            self._append_spatial(spatial, spatial_names, osm_data, 'osm', channel_names=osm_display_names, layer_configs=self.osm_layer_configs)
 
         # environmental
         if 'environmental' in self.condition_types and 'environmental' in cond_inputs:
             env_data = cond_inputs.pop('environmental').numpy()
-            # Use actual environmental layer names
-            self._append_spatial(spatial, spatial_names, env_data, 'env', channel_names=self.environmental_layers, layer_type='env')
+            env_display_names = cond_inputs.pop('env_layer_names', self.environmental_layers)
+            self._append_spatial(spatial, spatial_names, env_data, 'env', channel_names=env_display_names, layer_configs=self.env_layer_configs)
 
         if spatial:
             cond_inputs['image'] = torch.cat(spatial, dim=0)   # [C_total,H,W]
