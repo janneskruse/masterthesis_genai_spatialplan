@@ -233,7 +233,7 @@ def save_latents_distributed(
                     for sem_ch in semantic_channels:
                         found = False
                         for idx, name in enumerate(spatial_names):
-                            if sem_ch in name or name in sem_ch:
+                            if name == sem_ch:
                                 semantic_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
                                 found = True
                                 break
@@ -694,11 +694,9 @@ def train_vae(mode: str = 'satellite'):
                     for sem_ch in semantic_channels:
                         found = False
                         for idx, name in enumerate(spatial_names):
+                            # Use exact matching only - fuzzy matching causes issues
+                            # (e.g., 'osm:buildings' would match 'osm:buildings_heights')
                             if name == sem_ch:
-                                semantic_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
-                                found = True
-                                break
-                            if sem_ch in name or name in sem_ch:
                                 semantic_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
                                 found = True
                                 break
