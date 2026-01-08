@@ -650,6 +650,15 @@ def sample_semantics(
             output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}_{ch_name.replace(":", "_")}.png')
             save_image(grid, output_path)
     
+    # Save mask visualization
+    if mask_full is not None:
+        # Replicate mask for all samples
+        mask_vis = mask_full.repeat(num_samples, 1, 1, 1)  # [B, 1, H, W]
+        grid = make_grid(mask_vis, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
+        output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}_inpainting_mask.png')
+        save_image(grid, output_path)
+        print(f"✓ Saved inpainting mask visualization")
+    
     print(f"\n✓ Saved {len(semantic_channels)} channel visualizations to {out_dir}")    # Save individual samples as .pt files for Stage 2
     samples_dir = os.path.join(out_dir, f'{base_name}_idx{run_idx}_samples')
     os.makedirs(samples_dir, exist_ok=True)
