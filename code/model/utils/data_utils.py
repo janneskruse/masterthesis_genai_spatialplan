@@ -7,7 +7,7 @@ def apply_range_filter(data, filter_config):
     
     Supports:
     - gte (>=): Greater than or equal
-    - lte (<=): Less than or equal
+    - lte (<=): Less than or equal  
     - gt (>): Greater than
     - lt (<): Less than
     - eq (==): Equal to
@@ -17,7 +17,7 @@ def apply_range_filter(data, filter_config):
         filter_config: dict with filter specifications (e.g., {'gte': 0.2, 'lte': 0.8})
         
     Returns:
-        Binary mask (0 or 1) where conditions are met
+        Filtered data where areas not meeting criteria are set to -1.0 (will appear dark)
     """
     if filter_config is None or not isinstance(filter_config, dict):
         return data
@@ -27,6 +27,9 @@ def apply_range_filter(data, filter_config):
     if is_torch:
         device = data.device
         data = data.cpu().numpy()
+    
+    # Make a copy to avoid modifying original
+    result = data.copy()
     
     # Create mask starting with all True
     mask = np.ones_like(data, dtype=bool)
@@ -43,8 +46,8 @@ def apply_range_filter(data, filter_config):
     if 'eq' in filter_config:
         mask &= (data == filter_config['eq'])
     
-    # Convert mask to binary (0 or 1)
-    result = mask.astype(np.float32)
+    # Set areas not meeting criteria to -1.0 (will appear dark after normalization)
+    result[~mask] = -1.0
     
     # Convert back to torch if needed
     if is_torch:
