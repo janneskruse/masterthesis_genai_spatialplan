@@ -176,7 +176,7 @@ ldm_params:
           predict: False,
           layer: 'ndvi'
         },
-        landsat_surface_temp_b10_masked: {
+        lst: {
           predict: False,
           layer: 'landsat_surface_temp_b10_masked'
         }
