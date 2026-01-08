@@ -505,7 +505,7 @@ def sample_semantics(
                                     
                                 # Use exact matching only - fuzzy matching causes issues
                                 # (e.g., 'osm:buildings' would match 'osm:buildings_heights')
-                                print(f"    Comparing '{sem_ch}' == '{name}' ? {name == sem_ch}")
+                                # print(f"    Comparing '{sem_ch}' == '{name}' ? {name == sem_ch}")
                                 if name == sem_ch:
                                     # cond_input_fullres['image'] has shape [C, H, W] at FULL resolution
                                     # Extract channel: [C, H, W][idx:idx+1, :, :] -> [1, H, W]
