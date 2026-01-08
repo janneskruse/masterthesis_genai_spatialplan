@@ -285,13 +285,15 @@ def sample_semantics(
     )
     
     # Set seed for reproducibility
-    random.seed(42)
-    torch.manual_seed(42)
-    np.random.seed(42)
+    seed = train_config.get('seed', 42)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    print(f"\n✓ Set random seed: {seed}")
     
     # Get a random sample for conditioning
     sample_idx = random.randint(0, len(dataset) - 1)
-    print(f"\nUsing sample index {sample_idx} for conditioning")
+    print(f"Using sample index {sample_idx} for conditioning")
     
     sample_data = dataset[sample_idx]
     if len(sample_data) == 2:
