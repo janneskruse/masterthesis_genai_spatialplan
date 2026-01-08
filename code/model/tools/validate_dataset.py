@@ -213,7 +213,15 @@ def validate_dataset(num_samples=5, config=None, mode='semantic'):
     print(f"  Number of patches: {len(dataset)}")
     print(f"  Patch size: {dataset.patch_size}x{dataset.patch_size} pixels")
     print(f"  Image channels: {dataset.im_channels}")
-    print(f"  Selected date: {dataset.selected_date}")
+    print(f"  Regions: {dataset.regions}")
+    
+    # Print selected dates per region if available
+    if hasattr(dataset, 'data_layers_per_region') and dataset.data_layers_per_region:
+        print(f"  Selected dates per region:")
+        for region, layers in dataset.data_layers_per_region.items():
+            if 'date' in layers:
+                print(f"    - {region}: {layers['date']}")
+    
     print(f"  Conditioning types: {dataset.condition_types}")
     print(f"  OSM layers: {dataset.osm_layers}")
     print(f"  Environmental layers: {dataset.environmental_layers}")
