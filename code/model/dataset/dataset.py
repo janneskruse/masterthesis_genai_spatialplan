@@ -1055,71 +1055,6 @@ class UrbanInpaintingDataset(Dataset):
         # Prepare conditioning inputs
         cond_inputs = {}
         
-        if 'osm_features' in self.condition_types:
-            # Stack OSM layers as control signal
-            osm_layers = []
-            osm_layer_names = []  # Track display names
-            for idx, layer_name in enumerate(self.osm_layers):
-                if layer_name in data_layers and data_layers[layer_name] is not None:
-                    # layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
-                    layer_patch = data_layers[layer_name].isel(
-                        y=slice(y, y+ps),
-                        x=slice(x, x+ps)
-                    ).values
-                    layer_patch = self._normalize_layer(layer_patch, layer_name)
-                    layer_patch = self._to_chw(layer_patch)
-                    osm_layers.append(layer_patch)
-                    
-                    # Extract display name
-                    layer_config = self.osm_layer_configs[idx]
-                    display_name = layer_config.get('key', layer_name)
-                    osm_layer_names.append(display_name)
-            
-            if osm_layers:
-                osm_features = np.concatenate(osm_layers, axis=0)
-                cond_inputs['osm_features'] = torch.from_numpy(osm_features).float()
-                cond_inputs['osm_layer_names'] = osm_layer_names
-        
-        if 'environmental' in self.condition_types:
-            # Environmental data (NDVI, LST)
-            env_layers = []
-            env_layer_names = []  # Track display names
-            for idx, layer_name in enumerate(self.environmental_layers):
-                if layer_name in data_layers and data_layers[layer_name] is not None:
-                    # layer_patch = self.data_layers[layer_name][y:y+ps, x:x+ps]
-                    layer_patch = data_layers[layer_name].isel(
-                        y=slice(y, y+ps),
-                        x=slice(x, x+ps)
-                    ).values
-                    layer_patch = self._normalize_layer(layer_patch, layer_name)
-                    layer_patch = self._to_chw(layer_patch)
-                    env_layers.append(layer_patch)
-                    
-                    # Extract display name
-                    layer_config = self.env_layer_configs[idx]
-                    display_name = layer_config.get('key', layer_name)
-                    env_layer_names.append(display_name)
-            
-            if env_layers:
-                # env_features = np.stack(env_layers, axis=0).astype(np.float32)
-                env_features = np.concatenate(env_layers, axis=0)
-                cond_inputs['environmental'] = torch.from_numpy(env_features).float()
-                cond_inputs['env_layer_names'] = env_layer_names
-        
-        if 'temperature_threshold' in self.condition_types:
-            # Temperature optimization target (scalar or spatially varying)
-            if 'landsat_surface_temp_b10_masked' in data_layers and data_layers['landsat_surface_temp_b10_masked'] is not None:
-                # lst_patch = self.data_layers['landsat_surface_temp_b10_masked'][y:y+ps, x:x+ps]
-                lst_patch = data_layers['landsat_surface_temp_b10_masked'].isel(
-                    y=slice(y, y+ps),
-                    x=slice(x, x+ps)
-                ).values
-                lst_patch = self._normalize_layer(lst_patch, 'landsat_surface_temp_b10_masked')
-                lst_patch = self._to_chw(lst_patch)
-                # Store as target for optimization
-                cond_inputs['temperature_target'] = torch.from_numpy(lst_patch).float()
-        
-        
         # put spatial conditions together into one image tensor
         spatial = []
         spatial_names = []
@@ -1134,19 +1069,66 @@ class UrbanInpaintingDataset(Dataset):
             
             # Always include mask for inpainting
             self._append_spatial(spatial, spatial_names, inpaint_mask, 'inpaint_mask')
-
-        # OSM
-        if 'osm_features' in self.condition_types and 'osm_features' in cond_inputs:
-            osm_data = cond_inputs.pop('osm_features').numpy()
-            osm_display_names = cond_inputs.pop('osm_layer_names', self.osm_layers)
-            self._append_spatial(spatial, spatial_names, osm_data, 'osm', channel_names=osm_display_names, layer_configs=self.osm_layer_configs)
-
-        # environmental
-        if 'environmental' in self.condition_types and 'environmental' in cond_inputs:
-            env_data = cond_inputs.pop('environmental').numpy()
-            env_display_names = cond_inputs.pop('env_layer_names', self.environmental_layers)
-            self._append_spatial(spatial, spatial_names, env_data, 'env', channel_names=env_display_names, layer_configs=self.env_layer_configs)
-
+        
+        if 'osm_features' in self.condition_types:
+            osm_layers = []
+            osm_layer_names = []  # Track display names
+            for idx, layer_name in enumerate(self.osm_layers):
+                if layer_name in data_layers and data_layers[layer_name] is not None:
+                    layer_patch = data_layers[layer_name].isel(
+                        y=slice(y, y+ps),
+                        x=slice(x, x+ps)
+                    ).values
+                    # Apply normalization and filters
+                    layer_patch = self._apply_layer_transform(layer_patch, layer_name, idx, 'osm')
+                    layer_patch = self._to_chw(layer_patch)
+                    osm_layers.append(layer_patch)
+                    
+                    # Extract display name
+                    layer_config = self.osm_layer_configs[idx]
+                    display_name = layer_config.get('key', layer_name)
+                    osm_layer_names.append(display_name)
+            
+            if osm_layers:
+                osm_features = np.concatenate(osm_layers, axis=0)
+                self._append_spatial(spatial, spatial_names, osm_features, 'osm', channel_names=osm_layer_names, layer_configs=self.osm_layer_configs)
+        
+        if 'environmental' in self.condition_types:
+            # Environmental data (NDVI, LST)
+            env_layers = []
+            env_layer_names = []  # Track display names
+            for idx, layer_name in enumerate(self.environmental_layers):
+                if layer_name in data_layers and data_layers[layer_name] is not None:
+                    layer_patch = data_layers[layer_name].isel(
+                        y=slice(y, y+ps),
+                        x=slice(x, x+ps)
+                    ).values
+                    # Apply normalization and filters
+                    layer_patch = self._apply_layer_transform(layer_patch, layer_name, idx, 'env')
+                    layer_patch = self._to_chw(layer_patch)
+                    env_layers.append(layer_patch)
+                    
+                    # Extract display name
+                    layer_config = self.env_layer_configs[idx]
+                    display_name = layer_config.get('key', layer_name)
+                    env_layer_names.append(display_name)
+            
+            if env_layers:
+                env_features = np.concatenate(env_layers, axis=0)
+                self._append_spatial(spatial, spatial_names, env_features, 'env', channel_names=env_layer_names, layer_configs=self.env_layer_configs)
+        
+        if 'temperature_threshold' in self.condition_types:
+            # Temperature optimization target (scalar or spatially varying)
+            if 'landsat_surface_temp_b10_masked' in data_layers and data_layers['landsat_surface_temp_b10_masked'] is not None:
+                lst_patch = data_layers['landsat_surface_temp_b10_masked'].isel(
+                    y=slice(y, y+ps),
+                    x=slice(x, x+ps)
+                ).values
+                lst_patch = self._normalize_layer(lst_patch, 'landsat_surface_temp_b10_masked')
+                lst_patch = self._to_chw(lst_patch)
+                # Store as target for optimization
+                cond_inputs['temperature_target'] = torch.from_numpy(lst_patch).float()
+        
         if spatial:
             cond_inputs['image'] = torch.cat(spatial, dim=0)   # [C_total,H,W]
 
