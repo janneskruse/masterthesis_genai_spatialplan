@@ -717,10 +717,19 @@ class UrbanInpaintingDataset(Dataset):
             
             # Only normalize valid temperature data
             if valid_mask.any():
-                # Clip valid data to reasonable Kelvin range
-                data_clipped = np.clip(data, 250, 350)
-                # Normalize to [-1, 1]
-                data = ((data_clipped - 250) / 100.0) * 2.0 - 1.0
+                # Check if data is in Kelvin (>200) or Celsius (<100)
+                # Typical range: Kelvin 250-350K, Celsius -20 to 60°C
+                if data[valid_mask].mean() > 200:
+                    # Data is in Kelvin - clip to reasonable range (250-350K = -23 to 77°C)
+                    data_clipped = np.clip(data, 250, 350)
+                    # Normalize to [-1, 1]
+                    data = ((data_clipped - 250) / 100.0) * 2.0 - 1.0
+                else:
+                    # Data is in Celsius - clip to reasonable range (-20 to 80°C)
+                    data_clipped = np.clip(data, -20, 80)
+                    # Normalize to [-1, 1]
+                    data = ((data_clipped - (-20)) / 100.0) * 2.0 - 1.0
+                
                 # Set invalid areas to 0.0 (will appear as mid-gray in visualization)
                 data = np.where(valid_mask, data, 0.0)
             else:
