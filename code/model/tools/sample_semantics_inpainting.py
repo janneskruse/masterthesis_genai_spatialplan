@@ -660,8 +660,8 @@ def sample_semantics(
                 ch_vis_rgb = ch_vis.repeat(1, 3, 1, 1)  # [B, 3, H, W]
                 
                 # Compute mask boundary using gradient
-                mask_tensor = mask_fullres.unsqueeze(0).float()  # [1, 1, H, W]
-                kernel = torch.ones(1, 1, 3, 3, device=mask_tensor.device)
+                mask_tensor = mask_fullres.unsqueeze(0).float().to(ch_vis.device)  # [1, 1, H, W]
+                kernel = torch.ones(1, 1, 3, 3, device=ch_vis.device)
                 kernel[0, 0, 1, 1] = 0
                 
                 # Dilate and subtract to get boundary
