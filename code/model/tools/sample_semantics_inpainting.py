@@ -654,6 +654,32 @@ def sample_semantics(
                 # Binary channels: already in [0, 1] after VAE decode
                 ch_vis = torch.clamp(ch, 0, 1)
             
+            # Also save original ground truth for comparison
+            if mask_fullres is not None and 'image' in cond_input_fullres and 'meta' in cond_input_fullres:
+                spatial_names_fullres = cond_input_fullres['meta'].get('spatial_names', [])
+                for idx, name in enumerate(spatial_names_fullres):
+                    # Skip _context channels - we only want the base semantic channels
+                    if '_context' in name:
+                        continue
+                    
+                    if name == ch_name or ch_name in name or name in ch_name:
+                        # Extract original channel
+                        ch_orig = cond_input_fullres['image'][idx:idx+1, :, :].unsqueeze(0).to(ch_vis.device)  # [1, 1, H, W]
+                        
+                        if 'height' in ch_name:
+                            ch_orig_vis = torch.clamp(ch_orig / 100.0, 0, 1)
+                        else:
+                            ch_orig_vis = torch.clamp(ch_orig, 0, 1)
+                        
+                        # Replicate for all samples
+                        ch_orig_vis = ch_orig_vis.repeat(num_samples, 1, 1, 1)
+                        
+                        # Save original without border
+                        grid_orig = make_grid(ch_orig_vis, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
+                        output_path_orig = os.path.join(out_dir, f'{base_name}_idx{run_idx}_{ch_name.replace(":", "_")}_original.png')
+                        save_image(grid_orig, output_path_orig)
+                        break
+            
             # Overlay red mask border if mask is available
             if mask_fullres is not None:
                 # Convert grayscale to RGB for red border overlay
