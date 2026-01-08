@@ -101,7 +101,7 @@ ldm_params:
         vegetation: {
           predict: True,
           layer: 'ndvi',
-          gte: 0.4,
+          gte: 0.6,
           # lte: 0.4
         },
         lst: {
