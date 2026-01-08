@@ -342,12 +342,9 @@ def sample_semantics(
         cond_input['image'] = torch.cat(downsampled_channels, dim=1)  # [1, C, H_latent, W_latent]
         print(f"✓ Downsampled conditioning: {cond_spatial.shape} → {cond_input['image'].shape}")
     
-    # Extract mask and LST target
+    # Extract mask and LST target from conditioning channels
     mask_full = None
     lst_target = None
-    
-    if 'meta' in cond_input and 'inpainting_mask' in cond_input['meta']:
-        mask_full = cond_input['meta']['inpainting_mask']
     
     # Diagnostic: Print conditioning channels
     if 'image' in cond_input and 'meta' in cond_input:
@@ -357,11 +354,19 @@ def sample_semantics(
             ch = cond_input['image'][0, idx:idx+1, :, :]
             print(f"  {idx:02d} {name:40s} shape={tuple(ch.shape)} mean={ch.mean():.4f}")
         
+        # Extract inpainting mask (channel name is 'inpaint_mask')
+        for idx, name in enumerate(spatial_names):
+            if name == 'inpaint_mask' or 'inpaint_mask' in name:
+                mask_full = cond_input['image'][:, idx:idx+1, :, :]
+                print(f"\n✓ Found inpainting mask channel: {name}")
+                print(f"  Mask coverage: {mask_full.mean():.2%} (1=inpaint, 0=keep)")
+                break
+        
         # Extract LST target
         for idx, name in enumerate(spatial_names):
             if 'LST' in name or 'lst' in name:
                 lst_target = cond_input['image'][:, idx:idx+1, :, :]
-                print(f"\n✓ Found LST target channel: {name}")
+                print(f"✓ Found LST target channel: {name}")
                 break
     
     if use_lst_guidance and lst_target is None:
@@ -524,13 +529,16 @@ def sample_semantics(
                             size=(latent_size, latent_size),
                             mode='nearest'
                         )
+                        print(f"✓ Downsampled mask: {mask_full.shape} → {mask_latent.shape}")
                     else:
+                        print(f"⚠ Warning: No inpainting mask found, creating full mask (generate entire image)")
                         mask_latent = torch.ones(1, 1, latent_size, latent_size, device=device)
                     
                     # Initialize: keep context outside mask, noise inside mask
                     x = mask_latent * x + (1 - mask_latent) * x_context
                     
                     print(f"✓ Hard inpainting: preserving context outside mask ({(1 - mask_latent.mean()):.1%} of latent)")
+                    print(f"  Mask latent stats: mean={mask_latent.mean():.4f}, min={mask_latent.min():.4f}, max={mask_latent.max():.4f}")
         
         # Sampling loop
         for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="Denoising"):
