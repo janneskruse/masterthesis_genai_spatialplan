@@ -458,26 +458,38 @@ def sample_semantics(
                         meta = sample_cond_input['meta']
                         spatial_names = meta.get('spatial_names', [])
                         
+                        # sample_cond_input['image'] has shape [C, H, W] (no batch dimension from dataset)
+                        print(f"\n✓ Building semantic tensor from {sample_cond_input['image'].shape}")
+                        print(f"  Looking for channels: {semantic_channels}")
+                        print(f"  Available channels: {spatial_names}")
+                        
                         # Extract semantic channels based on configuration
                         for sem_ch in semantic_channels:
                             found = False
                             for idx, name in enumerate(spatial_names):
                                 if name == sem_ch:
-                                    semantic_tensor.append(sample_cond_input['image'][idx:idx+1, :, :].unsqueeze(0))
+                                    # sample_cond_input['image'][idx] has shape [H, W]
+                                    # unsqueeze(0) twice: [H,W] -> [1,H,W] -> [1,1,H,W]
+                                    ch = sample_cond_input['image'][idx:idx+1, :, :].unsqueeze(0)  # [1, 1, H, W]
+                                    semantic_tensor.append(ch)
+                                    print(f"    ✓ Found {sem_ch} at index {idx}, shape={ch.shape}")
                                     found = True
                                     break
                                 if sem_ch in name or name in sem_ch:
-                                    semantic_tensor.append(sample_cond_input['image'][idx:idx+1, :, :].unsqueeze(0))
+                                    ch = sample_cond_input['image'][idx:idx+1, :, :].unsqueeze(0)  # [1, 1, H, W]
+                                    semantic_tensor.append(ch)
+                                    print(f"    ✓ Found {sem_ch} (fuzzy match: {name}) at index {idx}, shape={ch.shape}")
                                     found = True
                                     break
                             
                             if not found:
-                                print(f"⚠ Warning: Semantic channel '{sem_ch}' not found. Filling with zeros.")
+                                print(f"    ⚠ Warning: Semantic channel '{sem_ch}' not found. Filling with zeros.")
                                 # Channel not found, create zeros
-                                _, H, W = sample_cond_input['image'].shape
+                                C, H, W = sample_cond_input['image'].shape
                                 semantic_tensor.append(torch.zeros(1, 1, H, W, device=sample_cond_input['image'].device))
                         
                         im_semantic = torch.cat(semantic_tensor, dim=1)  # [1, C, H, W]
+                        print(f"  → Built semantic tensor: {im_semantic.shape}")
                         
                         # Encode ground truth semantics to latent space
                         im_semantic = im_semantic.to(device)
