@@ -33,11 +33,15 @@ from helpers.load_configs import load_configs
 load_cuda()
 
 def apply_cond_dropout(cond_input, spatial_names, drop_prob, drop_groups=("osm", "env")):
+    # if no conditioning
     if 'image' not in cond_input:
         return cond_input
+    
+    # if no dropout
     if np.random.rand() >= drop_prob:
         return cond_input
 
+    # if dropout, zero out relevant channels
     x = cond_input['image']
     keep = torch.ones((x.shape[1],), device=x.device, dtype=x.dtype)
 
