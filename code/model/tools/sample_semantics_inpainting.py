@@ -497,23 +497,21 @@ def sample_semantics(
                         # Only extract NON-context versions (buildings, streets, vegetation, height)
                         for sem_ch in semantic_channels:
                             found = False
+                            print(f"  → Searching for: '{sem_ch}'")
                             for idx, name in enumerate(spatial_names):
                                 # Skip _context channels - we only want the base semantic channels
                                 if '_context' in name:
                                     continue
                                     
+                                # Use exact matching only - fuzzy matching causes issues
+                                # (e.g., 'osm:buildings' would match 'osm:buildings_heights')
+                                print(f"    Comparing '{sem_ch}' == '{name}' ? {name == sem_ch}")
                                 if name == sem_ch:
                                     # cond_input_fullres['image'] has shape [C, H, W] at FULL resolution
                                     # Extract channel: [C, H, W][idx:idx+1, :, :] -> [1, H, W]
                                     ch = cond_input_fullres['image'][idx:idx+1, :, :]
                                     semantic_tensor.append(ch)
                                     print(f"    ✓ Found {sem_ch} at index {idx}, shape={ch.shape}")
-                                    found = True
-                                    break
-                                if sem_ch in name or name in sem_ch:
-                                    ch = cond_input_fullres['image'][idx:idx+1, :, :]
-                                    semantic_tensor.append(ch)
-                                    print(f"    ✓ Found {sem_ch} (fuzzy match: {name}) at index {idx}, shape={ch.shape}")
                                     found = True
                                     break
                             
