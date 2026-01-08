@@ -15,6 +15,7 @@ from torchvision.utils import make_grid
 
 # Visualization
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
@@ -110,14 +111,17 @@ def visualize_sample(sample_data, save_path=None):
                 if 'mask' in name.lower():
                     axes[idx].imshow(channel, cmap='gray', vmin=0, vmax=1)
                 elif 'temp' in name.lower() or 'lst' in name.lower():
-                    # Temperature - use hot colormap
-                    axes[idx].imshow(channel, cmap='hot')
-                elif 'ndvi' in name.lower():
-                    # NDVI - use green colormap
+                    # Temperature - use seaborn rocket colormap
+                    axes[idx].imshow(channel, cmap=sns.color_palette("rocket", as_cmap=True))
+                elif 'ndvi' in name.lower() or 'vegetation' in name.lower():
+                    # NDVI - keep RdYlGn colormap
                     axes[idx].imshow(channel, cmap='RdYlGn', vmin=-1, vmax=1)
+                elif 'height' in name.lower():
+                    # Heights - use seaborn mako colormap
+                    axes[idx].imshow(channel, cmap=sns.color_palette("rocket", as_cmap=True))
                 else:
-                    # Binary/categorical
-                    axes[idx].imshow(channel, cmap='viridis')
+                    # Binary/categorical - use seaborn mako colormap
+                    axes[idx].imshow(channel, cmap=sns.color_palette("rocket", as_cmap=True))
                 
                 axes[idx].set_title(name, fontsize=10)
                 axes[idx].axis('off')
