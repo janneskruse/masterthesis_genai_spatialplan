@@ -360,6 +360,7 @@ def sample_semantics(
     
     # Extract mask and LST target from conditioning channels
     mask_full = None
+    mask_fullres = None
     lst_target = None
     
     # Diagnostic: Print conditioning channels
@@ -383,6 +384,14 @@ def sample_semantics(
             if 'LST' in name or 'lst' in name:
                 lst_target = cond_input['image'][:, idx:idx+1, :, :]
                 print(f"✓ Found LST target channel: {name}")
+                break
+    
+    # Also extract full-resolution mask for visualization
+    if 'image' in cond_input_fullres and 'meta' in cond_input_fullres:
+        spatial_names_fullres = cond_input_fullres['meta'].get('spatial_names', [])
+        for idx, name in enumerate(spatial_names_fullres):
+            if name == 'inpaint_mask' or 'inpaint_mask' in name:
+                mask_fullres = cond_input_fullres['image'][idx:idx+1, :, :]  # [1, H, W]
                 break
     
     if use_lst_guidance and lst_target is None:
@@ -651,13 +660,25 @@ def sample_semantics(
             save_image(grid, output_path)
     
     # Save mask visualization
-    if mask_full is not None:
-        # Replicate mask for all samples
-        mask_vis = mask_full.repeat(num_samples, 1, 1, 1)  # [B, 1, H, W]
+    if mask_fullres is not None:
+        # Use full-resolution mask for visualization
+        mask_vis = mask_fullres.unsqueeze(0).repeat(num_samples, 1, 1, 1)  # [B, 1, H, W]
         grid = make_grid(mask_vis, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
         output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}_inpainting_mask.png')
         save_image(grid, output_path)
         print(f"✓ Saved inpainting mask visualization")
+    elif mask_full is not None:
+        # Fallback to upsampling if full-res not available
+        mask_upsampled = F.interpolate(
+            mask_full,
+            size=(semantic_samples.shape[2], semantic_samples.shape[3]),
+            mode='nearest'
+        )
+        mask_vis = mask_upsampled.repeat(num_samples, 1, 1, 1)
+        grid = make_grid(mask_vis, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
+        output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}_inpainting_mask.png')
+        save_image(grid, output_path)
+        print(f"✓ Saved inpainting mask visualization (upsampled)")
     
     print(f"\n✓ Saved {len(semantic_channels)} channel visualizations to {out_dir}")    # Save individual samples as .pt files for Stage 2
     samples_dir = os.path.join(out_dir, f'{base_name}_idx{run_idx}_samples')
