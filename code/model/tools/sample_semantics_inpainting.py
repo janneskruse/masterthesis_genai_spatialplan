@@ -468,15 +468,16 @@ def sample_semantics(
                             found = False
                             for idx, name in enumerate(spatial_names):
                                 if name == sem_ch:
+                                    # sample_cond_input['image'] has shape [C, H, W] (no batch)
                                     # sample_cond_input['image'][idx] has shape [H, W]
-                                    # unsqueeze(0) twice: [H,W] -> [1,H,W] -> [1,1,H,W]
-                                    ch = sample_cond_input['image'][idx:idx+1, :, :].unsqueeze(0)  # [1, 1, H, W]
+                                    # unsqueeze twice: [H,W] -> [1,H,W] -> [1,1,H,W]
+                                    ch = sample_cond_input['image'][idx].unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
                                     semantic_tensor.append(ch)
                                     print(f"    ✓ Found {sem_ch} at index {idx}, shape={ch.shape}")
                                     found = True
                                     break
                                 if sem_ch in name or name in sem_ch:
-                                    ch = sample_cond_input['image'][idx:idx+1, :, :].unsqueeze(0)  # [1, 1, H, W]
+                                    ch = sample_cond_input['image'][idx].unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
                                     semantic_tensor.append(ch)
                                     print(f"    ✓ Found {sem_ch} (fuzzy match: {name}) at index {idx}, shape={ch.shape}")
                                     found = True
