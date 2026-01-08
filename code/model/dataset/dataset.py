@@ -698,23 +698,39 @@ class UrbanInpaintingDataset(Dataset):
         """
         Normalize data layer to [-1, 1] range
         """
-        # Handle NaN values
-        data = np.nan_to_num(data, nan=0.0)
-        
         # Different normalization strategies per layer type
         if layer_name in ['satellite']:
+            # Handle NaN values before clipping
+            data = np.nan_to_num(data, nan=0.0)
             # Clip to reasonable range and normalize
             data = np.clip(data, 0, 1)  # ensure in [0, 1]
             data = data* 2.0 - 1.0
         elif layer_name in ['ndvi']:
+            # Handle NaN values
+            data = np.nan_to_num(data, nan=0.0)
             # (NDVI is already in [-1, 1] range typically)
             data = np.clip(data, -1, 1)
         elif layer_name in ['landsat_surface_temp_b10_masked']:
             # Temperature - normalize to reasonable range
-            data = np.clip(data, 250, 350)  # Kelvin
-            data = ((data - 250) / 100.0) * 2.0 - 1.0
+            # Create mask for valid data (not NaN and not 0)
+            valid_mask = ~np.isnan(data) & (data > 0)
+            
+            # Only normalize valid temperature data
+            if valid_mask.any():
+                # Clip valid data to reasonable Kelvin range
+                data_clipped = np.clip(data, 250, 350)
+                # Normalize to [-1, 1]
+                data = ((data_clipped - 250) / 100.0) * 2.0 - 1.0
+                # Set invalid areas to 0.0 (will appear as mid-gray in visualization)
+                data = np.where(valid_mask, data, 0.0)
+            else:
+                # No valid LST data - fill with zeros
+                data = np.zeros_like(data)
         else:
             # Binary or categorical layers
+            # Handle NaN values
+            data = np.nan_to_num(data, nan=0.0)
+            
             if data.max() <= 1.0:
                 data = data * 2.0 - 1.0 # normalize to [-1, 1]
             else:
