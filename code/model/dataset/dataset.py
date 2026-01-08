@@ -712,29 +712,34 @@ class UrbanInpaintingDataset(Dataset):
             data = np.clip(data, -1, 1)
         elif layer_name in ['landsat_surface_temp_b10_masked']:
             # Temperature - normalize to reasonable range
-            # Create mask for valid data (not NaN and not 0)
-            valid_mask = ~np.isnan(data) & (data > 0)
+            # Create mask for valid data (not NaN and within reasonable range)
+            # For Celsius: exclude unreasonable values (< -50 or > 100)
+            # For Kelvin: exclude unreasonable values (< 200 or > 400)
+            valid_mask = ~np.isnan(data) & (np.abs(data) > 0.01)  # Not NaN and not zero
             
             # Only normalize valid temperature data
             if valid_mask.any():
                 # Check if data is in Kelvin (>200) or Celsius (<100)
-                # Typical range: Kelvin 250-350K, Celsius -20 to 60°C
-                if data[valid_mask].mean() > 200:
+                # Typical range: Kelvin 250-350K, Celsius -20 to 80°C
+                mean_val = data[valid_mask].mean()
+                
+                if mean_val > 200:
                     # Data is in Kelvin - clip to reasonable range (250-350K = -23 to 77°C)
                     data_clipped = np.clip(data, 250, 350)
                     # Normalize to [-1, 1]
-                    data = ((data_clipped - 250) / 100.0) * 2.0 - 1.0
+                    data_normalized = ((data_clipped - 250) / 100.0) * 2.0 - 1.0
                 else:
-                    # Data is in Celsius - clip to reasonable range (-20 to 80°C)
-                    data_clipped = np.clip(data, -20, 80)
+                    # Data is in Celsius - clip to reasonable range (0 to 70°C for typical LST)
+                    data_clipped = np.clip(data, 0, 70)
                     # Normalize to [-1, 1]
-                    data = ((data_clipped - (-20)) / 100.0) * 2.0 - 1.0
+                    # 35°C (middle of range) -> 0.0, 0°C -> -1.0, 70°C -> 1.0
+                    data_normalized = ((data_clipped - 35) / 35.0)
                 
-                # Set invalid areas to 0.0 (will appear as mid-gray in visualization)
-                data = np.where(valid_mask, data, 0.0)
+                # Apply mask: valid areas get normalized data, invalid areas get -1.0 (will appear dark)
+                data = np.where(valid_mask, data_normalized, -1.0)
             else:
-                # No valid LST data - fill with zeros
-                data = np.zeros_like(data)
+                # No valid LST data - fill with -1.0 (dark)
+                data = np.full_like(data, -1.0)
         else:
             # Binary or categorical layers
             # Handle NaN values
