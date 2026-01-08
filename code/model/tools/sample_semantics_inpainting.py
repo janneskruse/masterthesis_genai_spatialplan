@@ -347,13 +347,19 @@ def sample_semantics(
     if 'meta' in cond_input and 'inpainting_mask' in cond_input['meta']:
         mask_full = cond_input['meta']['inpainting_mask']
     
-    # Extract LST target
+    # Diagnostic: Print conditioning channels
     if 'image' in cond_input and 'meta' in cond_input:
         spatial_names = cond_input['meta'].get('spatial_names', [])
+        print(f"\n✓ Conditioning channels available ({len(spatial_names)}):")
+        for idx, name in enumerate(spatial_names):
+            ch = cond_input['image'][0, idx:idx+1, :, :]
+            print(f"  {idx:02d} {name:40s} shape={tuple(ch.shape)} mean={ch.mean():.4f}")
+        
+        # Extract LST target
         for idx, name in enumerate(spatial_names):
             if 'LST' in name or 'lst' in name:
                 lst_target = cond_input['image'][:, idx:idx+1, :, :]
-                print(f"✓ Found LST target channel: {name}")
+                print(f"\n✓ Found LST target channel: {name}")
                 break
     
     if use_lst_guidance and lst_target is None:
@@ -361,10 +367,19 @@ def sample_semantics(
         use_lst_guidance = False
     
     # Create unconditional input for CFG
+    # Zero out _context channels but keep mask and other structural info
     uncond_input = {}
     for key in cond_input:
         if key == 'image':
-            uncond_input[key] = torch.zeros_like(cond_input[key])
+            # Zero out context channels for CFG, but keep mask channel
+            uncond_image = cond_input[key].clone()
+            if 'meta' in cond_input:
+                spatial_names = cond_input['meta'].get('spatial_names', [])
+                for idx, name in enumerate(spatial_names):
+                    # Zero out _context channels (OSM and env features)
+                    if '_context' in name:
+                        uncond_image[:, idx:idx+1, :, :] = 0.0
+            uncond_input[key] = uncond_image
         elif key == 'meta' and isinstance(cond_input[key], dict):
             # Deep copy meta dict and ensure all tensors are at latent resolution
             uncond_input[key] = {}
