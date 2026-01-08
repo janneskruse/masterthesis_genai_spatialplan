@@ -15,6 +15,9 @@ from torchvision.utils import make_grid
 
 # Visualization
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import ListedColormap
+import matplotlib.cm as cm
 import seaborn as sns
 
 # Local libraries
@@ -61,6 +64,17 @@ def visualize_sample(sample_data, save_path=None):
         # Denormalize from [-1, 1] to [0, 1]
         rgb = (rgb + 1) / 2
         rgb = np.clip(rgb, 0, 1)
+        
+        # Apply brightness/contrast enhancement for better visualization
+        # Stretch to use full dynamic range
+        rgb_min = rgb.min()
+        rgb_max = rgb.max()
+        if rgb_max > rgb_min:
+            rgb = (rgb - rgb_min) / (rgb_max - rgb_min)
+        
+        # Apply gamma correction to brighten
+        rgb = np.power(rgb, 0.7)  # gamma < 1 brightens the image
+        
         axes[idx].imshow(rgb)
         axes[idx].set_title('Target RGB Image', fontsize=12, fontweight='bold')
         axes[idx].axis('off')
@@ -89,6 +103,14 @@ def visualize_sample(sample_data, save_path=None):
                 axes[idx].set_title('Masked Input\n(Context)', fontsize=12, fontweight='bold')
                 axes[idx].axis('off')
                 idx += 1
+                
+            # rocket_colors = sns.color_palette("rocket", as_cmap=True)
+            # Create colormap from black (0) to red-orange from rocket (1)
+            # colors = [(0, 0, 0), rocket_colors(0.3)]  # Black to red-orange
+            colors = [(0, 0, 0), (255,255,255)]  # Black to white
+            n_bins = 100
+            cmap_name = 'black_white'
+            cm_binary = LinearSegmentedColormap.from_list(cmap_name, colors, N=n_bins)
             
             # Plot each conditioning channel
             for i in range(spatial_cond.shape[0]):
@@ -107,21 +129,29 @@ def visualize_sample(sample_data, save_path=None):
                 if 'masked_image:' in name:
                     continue
                 
+                
                 # Plot channel
                 if 'mask' in name.lower():
-                    axes[idx].imshow(channel, cmap='gray', vmin=0, vmax=1)
+                    # Inpainting mask - use custom black to red-orange colormap
+                    axes[idx].imshow(channel, cmap=cm_binary, vmin=0, vmax=1)
                 elif 'temp' in name.lower() or 'lst' in name.lower():
                     # Temperature - use seaborn rocket colormap
                     axes[idx].imshow(channel, cmap=sns.color_palette("rocket", as_cmap=True))
-                elif 'ndvi' in name.lower() or 'vegetation' in name.lower():
-                    # NDVI - keep RdYlGn colormap
-                    axes[idx].imshow(channel, cmap='RdYlGn', vmin=-1, vmax=1)
+                elif 'vegetation' in name.lower() or 'ndvi' in name.lower():
+                    # Vegetation (filtered NDVI) - use custom colormap: black for -1, then greens from RdYlGn
+                    # Values at -1.0 (filtered out) will be black, positive NDVI will use green gradient
+                    rdylgn = cm.get_cmap('RdYlGn', 256)
+                    # Take only the greenish part
+                    newcolors = rdylgn(np.linspace(0.1, 1, 256))
+                    # Set first color to black for -1.0 values
+                    newcolors[0] = [0, 0, 0, 1]
+                    vegcmap = ListedColormap(newcolors)
+                    axes[idx].imshow(channel, cmap=vegcmap, vmin=-1, vmax=1)
                 elif 'height' in name.lower():
-                    # Heights - use seaborn mako colormap
+                    # Heights - use seaborn rocket colormap
                     axes[idx].imshow(channel, cmap=sns.color_palette("rocket", as_cmap=True))
                 else:
-                    # Binary/categorical - use seaborn mako colormap
-                    axes[idx].imshow(channel, cmap=sns.color_palette("rocket", as_cmap=True))
+                    axes[idx].imshow(channel, cmap=cm_binary)
                 
                 axes[idx].set_title(name, fontsize=10)
                 axes[idx].axis('off')
