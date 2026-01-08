@@ -79,21 +79,50 @@ def analyze_mask_coverage(num_samples=50):
     for idx in tqdm(range(num_samples), desc="Analyzing masks"):
         sample_data = dataset[idx]
         
+        # Debug first sample to understand structure
+        if idx == 0:
+            print(f"\nDebug sample 0 structure:")
+            print(f"  Type: {type(sample_data)}")
+            if isinstance(sample_data, (tuple, list)):
+                print(f"  Length: {len(sample_data)}")
+                for i, item in enumerate(sample_data):
+                    print(f"  Item {i}: type={type(item)}")
+                    if isinstance(item, dict):
+                        print(f"    Keys: {list(item.keys())}")
+                        if 'meta' in item:
+                            print(f"    Meta keys: {list(item['meta'].keys())}")
+            print()
+        
         if len(sample_data) == 2:
             _, cond_input = sample_data
         else:
-            cond_input = {}
+            cond_input = sample_data if isinstance(sample_data, dict) else {}
         
-        # Extract mask
+        # Extract mask - try multiple locations
         mask = None
+        
+        # Try meta.inpainting_mask
         if 'meta' in cond_input and 'inpainting_mask' in cond_input['meta']:
             mask = cond_input['meta']['inpainting_mask']
+        
+        # Try direct key
+        elif 'inpainting_mask' in cond_input:
+            mask = cond_input['inpainting_mask']
+        
+        # Try image channel with 'mask' in name
+        elif 'image' in cond_input and 'meta' in cond_input:
+            spatial_names = cond_input['meta'].get('spatial_names', [])
+            for ch_idx, name in enumerate(spatial_names):
+                if 'mask' in name.lower():
+                    mask = cond_input['image'][ch_idx:ch_idx+1]
+                    print(f"  Found mask in image channel {ch_idx}: {name}")
+                    break
         
         if mask is not None:
             if mask_stats['shape'] is None:
                 mask_stats['shape'] = tuple(mask.shape)
             
-            mask_np = mask.numpy()
+            mask_np = mask.numpy() if torch.is_tensor(mask) else mask
             
             # Coverage statistics
             mask_stats['mean_coverage'].append(mask_np.mean())
@@ -102,11 +131,24 @@ def analyze_mask_coverage(num_samples=50):
             mask_stats['std_coverage'].append(mask_np.std())
             mask_stats['num_ones'].append((mask_np == 1.0).sum())
             mask_stats['num_zeros'].append((mask_np == 0.0).sum())
+        else:
+            if idx == 0:
+                print(f"⚠ Warning: No mask found in sample {idx}")
     
     # Print statistics
     print("\n" + "="*60)
     print("Mask Statistics")
     print("="*60)
+    
+    if len(mask_stats['mean_coverage']) == 0:
+        print("✗ No masks found in any samples!")
+        print("This could mean:")
+        print("  1. Masks are not included in cached patches")
+        print("  2. Masks are stored in a different location")
+        print("  3. Dataset structure has changed")
+        return
+    
+    print(f"✓ Found masks in {len(mask_stats['mean_coverage'])}/{num_samples} samples")
     print(f"Mask shape: {mask_stats['shape']}")
     print(f"\nMask coverage (fraction of 1s = pixels to inpaint):")
     print(f"  Mean:   {np.mean(mask_stats['mean_coverage']):.2%} ± {np.std(mask_stats['mean_coverage']):.2%}")
