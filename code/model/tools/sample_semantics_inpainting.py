@@ -450,34 +450,31 @@ def sample_semantics(
                     
                 elif len(sample_data) == 2 and not use_latents:
                     # Not using latents - need to build semantic tensor and encode
-                    im, sample_cond_input = sample_data
-                    
-                    # Build semantic tensor from conditioning input (same logic as train_vae_ddp.py)
-                    if 'image' in sample_cond_input and 'meta' in sample_cond_input:
+                    # Use the prepared cond_input which already has batch dimension [1, C, H, W]
+                    if 'image' in cond_input and 'meta' in cond_input:
                         semantic_tensor = []
-                        meta = sample_cond_input['meta']
+                        meta = cond_input['meta']
                         spatial_names = meta.get('spatial_names', [])
                         
-                        # sample_cond_input['image'] has shape [C, H, W] (no batch dimension from dataset)
-                        print(f"\n✓ Building semantic tensor from {sample_cond_input['image'].shape}")
+                        # cond_input['image'] has shape [1, C, H, W] (batch dimension added earlier)
+                        print(f"\n✓ Building semantic tensor from {cond_input['image'].shape}")
                         print(f"  Looking for channels: {semantic_channels}")
                         print(f"  Available channels: {spatial_names}")
                         
-                        # Extract semantic channels based on configuration
+                        # Extract semantic channels based on configuration (same as train_vae_ddp.py)
                         for sem_ch in semantic_channels:
                             found = False
                             for idx, name in enumerate(spatial_names):
                                 if name == sem_ch:
-                                    # sample_cond_input['image'] has shape [C, H, W] (no batch)
-                                    # sample_cond_input['image'][idx] has shape [H, W]
-                                    # unsqueeze twice: [H,W] -> [1,H,W] -> [1,1,H,W]
-                                    ch = sample_cond_input['image'][idx].unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+                                    # cond_input['image'] has shape [1, C, H, W]
+                                    # Extract channel: [1, C, H, W][:, idx:idx+1, :, :] -> [1, 1, H, W]
+                                    ch = cond_input['image'][:, idx:idx+1, :, :]
                                     semantic_tensor.append(ch)
                                     print(f"    ✓ Found {sem_ch} at index {idx}, shape={ch.shape}")
                                     found = True
                                     break
                                 if sem_ch in name or name in sem_ch:
-                                    ch = sample_cond_input['image'][idx].unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+                                    ch = cond_input['image'][:, idx:idx+1, :, :]
                                     semantic_tensor.append(ch)
                                     print(f"    ✓ Found {sem_ch} (fuzzy match: {name}) at index {idx}, shape={ch.shape}")
                                     found = True
@@ -486,8 +483,8 @@ def sample_semantics(
                             if not found:
                                 print(f"    ⚠ Warning: Semantic channel '{sem_ch}' not found. Filling with zeros.")
                                 # Channel not found, create zeros
-                                C, H, W = sample_cond_input['image'].shape
-                                semantic_tensor.append(torch.zeros(1, 1, H, W, device=sample_cond_input['image'].device))
+                                B, C, H, W = cond_input['image'].shape
+                                semantic_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
                         
                         im_semantic = torch.cat(semantic_tensor, dim=1)  # [1, C, H, W]
                         print(f"  → Built semantic tensor: {im_semantic.shape}")
