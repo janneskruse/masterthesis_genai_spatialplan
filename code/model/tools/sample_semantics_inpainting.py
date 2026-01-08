@@ -301,6 +301,22 @@ def sample_semantics(
     else:
         cond_input = {}
     
+    # Save full-resolution conditioning BEFORE any processing
+    # This is needed to build semantic ground truth for VAE encoding
+    cond_input_fullres = {}
+    for key in cond_input:
+        if isinstance(cond_input[key], torch.Tensor):
+            cond_input_fullres[key] = cond_input[key].clone()
+        elif key == 'meta' and isinstance(cond_input[key], dict):
+            cond_input_fullres[key] = {}
+            for k, v in cond_input[key].items():
+                if isinstance(v, torch.Tensor):
+                    cond_input_fullres[key][k] = v.clone()
+                else:
+                    cond_input_fullres[key][k] = v
+        else:
+            cond_input_fullres[key] = cond_input[key]
+    
     # Prepare conditioning inputs for batch
     for key in cond_input:
         # unsqueeze batch dimension
@@ -457,31 +473,36 @@ def sample_semantics(
                     
                 elif len(sample_data) == 2 and not use_latents:
                     # Not using latents - need to build semantic tensor and encode
-                    # Use the prepared cond_input which already has batch dimension [1, C, H, W]
-                    if 'image' in cond_input and 'meta' in cond_input:
+                    # IMPORTANT: Use full-resolution data, NOT downsampled conditioning
+                    if 'image' in cond_input_fullres and 'meta' in cond_input_fullres:
                         semantic_tensor = []
-                        meta = cond_input['meta']
+                        meta = cond_input_fullres['meta']
                         spatial_names = meta.get('spatial_names', [])
                         
-                        # cond_input['image'] has shape [1, C, H, W] (batch dimension added earlier)
-                        print(f"\n✓ Building semantic tensor from {cond_input['image'].shape}")
+                        # cond_input_fullres['image'] has shape [C, H, W] at FULL resolution (256x256)
+                        print(f"\n✓ Building semantic tensor from FULL resolution: {cond_input_fullres['image'].shape}")
                         print(f"  Looking for channels: {semantic_channels}")
                         print(f"  Available channels: {spatial_names}")
                         
                         # Extract semantic channels based on configuration (same as train_vae_ddp.py)
+                        # Only extract NON-context versions (buildings, streets, vegetation, height)
                         for sem_ch in semantic_channels:
                             found = False
                             for idx, name in enumerate(spatial_names):
+                                # Skip _context channels - we only want the base semantic channels
+                                if '_context' in name:
+                                    continue
+                                    
                                 if name == sem_ch:
-                                    # cond_input['image'] has shape [1, C, H, W]
-                                    # Extract channel: [1, C, H, W][:, idx:idx+1, :, :] -> [1, 1, H, W]
-                                    ch = cond_input['image'][:, idx:idx+1, :, :]
+                                    # cond_input_fullres['image'] has shape [C, H, W] at FULL resolution
+                                    # Extract channel: [C, H, W][idx:idx+1, :, :] -> [1, H, W]
+                                    ch = cond_input_fullres['image'][idx:idx+1, :, :]
                                     semantic_tensor.append(ch)
                                     print(f"    ✓ Found {sem_ch} at index {idx}, shape={ch.shape}")
                                     found = True
                                     break
                                 if sem_ch in name or name in sem_ch:
-                                    ch = cond_input['image'][:, idx:idx+1, :, :]
+                                    ch = cond_input_fullres['image'][idx:idx+1, :, :]
                                     semantic_tensor.append(ch)
                                     print(f"    ✓ Found {sem_ch} (fuzzy match: {name}) at index {idx}, shape={ch.shape}")
                                     found = True
@@ -489,11 +510,11 @@ def sample_semantics(
                             
                             if not found:
                                 print(f"    ⚠ Warning: Semantic channel '{sem_ch}' not found. Filling with zeros.")
-                                # Channel not found, create zeros
-                                B, C, H, W = cond_input['image'].shape
-                                semantic_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
+                                # Channel not found, create zeros at FULL resolution
+                                C, H, W = cond_input_fullres['image'].shape
+                                semantic_tensor.append(torch.zeros(1, H, W, device=cond_input_fullres['image'].device))
                         
-                        im_semantic = torch.cat(semantic_tensor, dim=1)  # [1, C, H, W]
+                        im_semantic = torch.cat(semantic_tensor, dim=0).unsqueeze(0)  # [1, 4, H, W] at FULL res
                         print(f"  → Built semantic tensor: {im_semantic.shape}")
                         
                         # Encode ground truth semantics to latent space
