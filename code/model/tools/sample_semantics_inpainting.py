@@ -654,8 +654,35 @@ def sample_semantics(
                 # Binary channels: already in [0, 1] after VAE decode
                 ch_vis = torch.clamp(ch, 0, 1)
             
+            # Overlay red mask border if mask is available
+            if mask_fullres is not None:
+                # Convert grayscale to RGB for red border overlay
+                ch_vis_rgb = ch_vis.repeat(1, 3, 1, 1)  # [B, 3, H, W]
+                
+                # Compute mask boundary using gradient
+                mask_tensor = mask_fullres.unsqueeze(0).float()  # [1, 1, H, W]
+                kernel = torch.ones(1, 1, 3, 3, device=mask_tensor.device)
+                kernel[0, 0, 1, 1] = 0
+                
+                # Dilate and subtract to get boundary
+                import torch.nn.functional as F_conv
+                mask_dilated = F_conv.conv2d(mask_tensor, kernel, padding=1)
+                mask_boundary = ((mask_dilated > 0) & (mask_tensor == 1)).float()
+                
+                # Repeat boundary for all samples
+                mask_boundary = mask_boundary.repeat(num_samples, 1, 1, 1)
+                
+                # Apply red border (set R=1, G=0, B=0 where boundary)
+                ch_vis_rgb[:, 0:1, :, :] = torch.where(mask_boundary > 0, torch.ones_like(ch_vis_rgb[:, 0:1, :, :]), ch_vis_rgb[:, 0:1, :, :])  # Red channel
+                ch_vis_rgb[:, 1:2, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(ch_vis_rgb[:, 1:2, :, :]), ch_vis_rgb[:, 1:2, :, :])  # Green channel
+                ch_vis_rgb[:, 2:3, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(ch_vis_rgb[:, 2:3, :, :]), ch_vis_rgb[:, 2:3, :, :])  # Blue channel
+                
+                ch_vis_final = ch_vis_rgb
+            else:
+                ch_vis_final = ch_vis
+            
             # Create grid for this channel
-            grid = make_grid(ch_vis, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
+            grid = make_grid(ch_vis_final, nrow=int(np.sqrt(num_samples)) + 1, padding=4, pad_value=1.0)
             output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}_{ch_name.replace(":", "_")}.png')
             save_image(grid, output_path)
     
