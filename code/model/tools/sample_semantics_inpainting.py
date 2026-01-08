@@ -659,15 +659,20 @@ def sample_semantics(
                 # Convert grayscale to RGB for red border overlay
                 ch_vis_rgb = ch_vis.repeat(1, 3, 1, 1)  # [B, 3, H, W]
                 
-                # Compute mask boundary using gradient
+                # Compute mask boundary (edge detection)
                 mask_tensor = mask_fullres.unsqueeze(0).float().to(ch_vis.device)  # [1, 1, H, W]
-                kernel = torch.ones(1, 1, 3, 3, device=ch_vis.device)
-                kernel[0, 0, 1, 1] = 0
                 
-                # Dilate and subtract to get boundary
+                # Create erosion kernel (3x3 all ones)
+                kernel = torch.ones(1, 1, 3, 3, device=ch_vis.device)
+                
+                # Erode the mask (shrink it inward)
                 import torch.nn.functional as F_conv
-                mask_dilated = F_conv.conv2d(mask_tensor, kernel, padding=1)
-                mask_boundary = ((mask_dilated > 0) & (mask_tensor == 1)).float()
+                mask_eroded = F_conv.conv2d(mask_tensor, kernel, padding=1)
+                mask_eroded = (mask_eroded == 9).float()  # Only keep pixels where all 9 neighbors were 1
+                
+                # Boundary = original mask - eroded mask (pixels on the edge)
+                mask_boundary = mask_tensor - mask_eroded
+                mask_boundary = (mask_boundary > 0).float()
                 
                 # Repeat boundary for all samples
                 mask_boundary = mask_boundary.repeat(num_samples, 1, 1, 1)
