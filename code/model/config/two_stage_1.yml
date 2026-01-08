@@ -196,7 +196,7 @@ ldm_params:
 
 train_params:
   # ========== General Settings ==========
-  seed: 30
+  seed: 3
   num_workers: 4
   save_latents: True
 
