@@ -247,8 +247,34 @@ def save_latents_distributed(
                 else:
                     input_tensor = im
             else:
-                # Satellite mode: use RGB image directly
-                input_tensor = im
+                # Satellite mode
+                if condition_latents and 'image' in cond_input and 'meta' in cond_input:
+                    # Build tensor with RGB + all conditioning channels
+                    satellite_tensor = [im]  # Start with RGB [B, 3, H, W]
+                    
+                    meta = cond_input['meta']
+                    spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
+                    
+                    # Extract conditioning channels (skip RGB channels from semantic_channels list)
+                    for sem_ch in semantic_channels:
+                        if sem_ch.startswith('rgb:'):
+                            continue  # Skip RGB, already added
+                        
+                        found = False
+                        for idx, name in enumerate(spatial_names):
+                            if name == sem_ch:
+                                satellite_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
+                                found = True
+                                break
+                        
+                        if not found:
+                            B, _, H, W = cond_input['image'].shape
+                            satellite_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
+                    
+                    input_tensor = torch.cat(satellite_tensor, dim=1)
+                else:
+                    # Only RGB channels
+                    input_tensor = im
             
             input_tensor = input_tensor.float().to(device)
             
@@ -1008,6 +1034,7 @@ def train_vae(mode: str = 'satellite'):
             device=device,
             mode=mode,
             semantic_channels=semantic_channels,
+            condition_latents=condition_latents if mode in ['semantic', 'satellite'] else False,
         )
         
         print(f"Rank {rank}: Saved {latent_count} latents")
