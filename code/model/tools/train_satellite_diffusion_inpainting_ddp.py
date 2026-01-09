@@ -171,6 +171,15 @@ def train():
     if is_main:
         print(f"✓ Loaded {len(urban_dataset)} training patches")
         print(f"✓ Using latents: {use_latents}")
+        
+        # Check if two-VAE setup is active
+        if use_latents and hasattr(urban_dataset, 'latent_cond_maps') and urban_dataset.latent_cond_maps is not None:
+            print(f"✓ Two-VAE mode: ACTIVE (using separate prediction + conditioning latents)")
+            print(f"  → Prediction latents: {len(urban_dataset.latent_maps)}")
+            print(f"  → Conditioning latents: {len(urban_dataset.latent_cond_maps)}")
+        elif use_latents:
+            print(f"✓ Two-VAE mode: INACTIVE (using interpolated pixel conditioning)")
+        
         print(f"✓ Patch size: {urban_dataset.patch_size}x{urban_dataset.patch_size}")
         print(f"✓ Conditioning types: {condition_config['condition_types']}")
     
@@ -405,14 +414,25 @@ def train():
             
             if is_main and global_step == 0:
                 print(f"\n{'='*50}")
-                print("Mask Validation (First Batch)")
+                print("First Batch Validation")
                 print(f"{'='*50}")
+                print(f"Prediction latent shape: {im.shape}")
+                print(f"Mask shape: {mask_latent.shape}")
                 print(f"Mask stats: min={mask_latent.min().item():.4f}, max={mask_latent.max().item():.4f}, mean={mask_latent.mean().item():.4f}")
-                print(f"Mask shape: {mask_latent.shape}, Latent shape: {im.shape}")
                 print(f"Mask unique values: {torch.unique(mask_latent)}")
                 if 'image' in cond_input and 'meta' in cond_input:
-                    print(f"Spatial conditioning channels: {spatial_names}")
                     print(f"Spatial conditioning shape: {cond_input['image'].shape}")
+                    print(f"Spatial conditioning channels: {spatial_names}")
+                    
+                    # Check if using latent conditioning
+                    uses_latent_cond = any('latent_cond' in name for name in spatial_names)
+                    if uses_latent_cond:
+                        num_latent_cond = sum(1 for name in spatial_names if 'latent_cond' in name)
+                        print(f"\n✓ TWO-VAE MODE ACTIVE")
+                        print(f"  - Conditioning uses {num_latent_cond} latent channels (no pixel interpolation)")
+                        print(f"  - Conditioning dropout skips latent_cond_* channels")
+                    else:
+                        print(f"\n✓ Single-VAE mode (pixel interpolation for conditioning)")
                 print(f"{'='*50}\n")
             
             ########## Diffusion Forward Process ##########

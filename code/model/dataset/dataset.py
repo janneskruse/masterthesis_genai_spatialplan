@@ -916,12 +916,98 @@ class UrbanInpaintingDataset(Dataset):
         patch_data = torch.load(patch_path)
         
         if self.use_latents:
-            # Load corresponding latent
+            # Load corresponding prediction latent
             latent_path = self.latent_maps[index]
             latent = load_single_latent(latent_path, device=None)
             
-            # Prepare conditioning for latent space
-            cond_inputs = self._prepare_latent_conditioning(patch_data, y, x, region)
+            # Check if we have separate conditioning latents (two-VAE mode)
+            if self.latent_cond_maps is not None and len(self.latent_cond_maps) > 0:
+                # Load conditioning latent
+                latent_cond_path = self.latent_cond_maps[index]
+                latent_cond = load_single_latent(latent_cond_path, device=None)
+                
+                # SAFETY CHECK: Verify indices match
+                pred_idx = int(Path(latent_path).stem.split('_')[-1])
+                cond_idx = int(Path(latent_cond_path).stem.split('_')[-1])
+                
+                if pred_idx != cond_idx:
+                    raise RuntimeError(
+                        f"Latent index mismatch at dataset index {index}! "
+                        f"Prediction latent: {pred_idx}, Conditioning latent: {cond_idx}. "
+                        f"This indicates a data corruption issue. Please regenerate latents."
+                    )
+                
+                # Prepare conditioning with latent_cond (same logic as _getitem_xarray)
+                ps = self.patch_size
+                latent_h = ps // self.vae_downsample_factor
+                latent_w = ps // self.vae_downsample_factor
+                
+                cond_inputs = {}
+                spatial = []
+                spatial_names = []
+                
+                # Extract mask from cached patch and downsample to latent resolution
+                if patch_data['conditioning'] is not None and 'image' in patch_data['conditioning']:
+                    cached_spatial_names = patch_data['conditioning']['meta'].get('spatial_names', [])
+                    try:
+                        mask_idx = cached_spatial_names.index('inpaint_mask')
+                        mask_full = patch_data['conditioning']['image'][mask_idx:mask_idx+1, :, :]
+                        
+                        # Downsample mask to latent resolution
+                        mask_latent = mask_full.unsqueeze(0)  # [1, 1, H, W]
+                        mask_latent = torch.nn.functional.interpolate(
+                            mask_latent,
+                            size=(latent_h, latent_w),
+                            mode='nearest'
+                        ).squeeze(0)  # [1, H_latent, W_latent]
+                        
+                        spatial.append(mask_latent)
+                        spatial_names.append('inpaint_mask')
+                    except ValueError:
+                        # No mask found, create default
+                        mask_latent = torch.ones(1, latent_h, latent_w)
+                        spatial.append(mask_latent)
+                        spatial_names.append('inpaint_mask')
+                
+                # Add conditioning latent channels with proper semantic names
+                conditioning_channel_names = []
+                for layer_name in self.osm_layers:
+                    layer_idx = self.osm_layers.index(layer_name)
+                    layer_config = self.osm_layer_configs[layer_idx]
+                    display_name = layer_config.get('key', layer_name)
+                    display_name = self._apply_context_suffix(display_name, [layer_config])
+                    conditioning_channel_names.append(f'osm:{display_name}')
+                
+                for layer_name in self.environmental_layers:
+                    layer_idx = self.environmental_layers.index(layer_name)
+                    layer_config = self.env_layer_configs[layer_idx]
+                    display_name = layer_config.get('key', layer_name)
+                    display_name = self._apply_context_suffix(display_name, [layer_config])
+                    conditioning_channel_names.append(f'env:{display_name}')
+                
+                # Verify channel count matches
+                if len(conditioning_channel_names) != latent_cond.shape[0]:
+                    print(f"⚠ WARNING: Conditioning channel mismatch at index {index}!")
+                    print(f"  Expected {len(conditioning_channel_names)} channels: {conditioning_channel_names}")
+                    print(f"  Got {latent_cond.shape[0]} latent channels")
+                    conditioning_channel_names = [f'latent_cond_{i}' for i in range(latent_cond.shape[0])]
+                
+                for i in range(latent_cond.shape[0]):
+                    spatial.append(latent_cond[i:i+1])
+                    spatial_names.append(conditioning_channel_names[i])
+                
+                cond_inputs['image'] = torch.cat(spatial, dim=0)
+                cond_inputs['meta'] = {
+                    'y': y,
+                    'x': x,
+                    'time': patch_data['conditioning']['meta'].get('time', ''),
+                    'region': region,
+                    'spatial_names': spatial_names,
+                    'uses_latent_conditioning': True
+                }
+            else:
+                # Fall back to pixel-space interpolation (single-VAE mode)
+                cond_inputs = self._prepare_latent_conditioning(patch_data, y, x, region)
             
             if len(self.condition_types) == 0:
                 return latent
@@ -1006,10 +1092,37 @@ class UrbanInpaintingDataset(Dataset):
                 spatial.append(torch.from_numpy(mask_latent.numpy()).float())
                 spatial_names.append('inpaint_mask')
                 
-                # Add conditioning latent channels
+                # Add conditioning latent channels with proper semantic names
+                # The conditioning VAE encodes all OSM + environmental channels
+                # We need to maintain the semantic names for auxiliary loss extraction
+                conditioning_channel_names = []
+                for layer_name in self.osm_layers:
+                    layer_idx = self.osm_layers.index(layer_name)
+                    layer_config = self.osm_layer_configs[layer_idx]
+                    display_name = layer_config.get('key', layer_name)
+                    # Apply context suffix if in semantic mode
+                    display_name = self._apply_context_suffix(display_name, [layer_config])
+                    conditioning_channel_names.append(f'osm:{display_name}')
+                
+                for layer_name in self.environmental_layers:
+                    layer_idx = self.environmental_layers.index(layer_name)
+                    layer_config = self.env_layer_configs[layer_idx]
+                    display_name = layer_config.get('key', layer_name)
+                    # Apply context suffix if in semantic mode
+                    display_name = self._apply_context_suffix(display_name, [layer_config])
+                    conditioning_channel_names.append(f'env:{display_name}')
+                
+                # Verify channel count matches
+                if len(conditioning_channel_names) != latent_cond.shape[0]:
+                    print(f"⚠ WARNING: Conditioning channel mismatch!")
+                    print(f"  Expected {len(conditioning_channel_names)} channels: {conditioning_channel_names}")
+                    print(f"  Got {latent_cond.shape[0]} latent channels")
+                    # Fallback to generic names
+                    conditioning_channel_names = [f'latent_cond_{i}' for i in range(latent_cond.shape[0])]
+                
                 for i in range(latent_cond.shape[0]):
                     spatial.append(latent_cond[i:i+1])
-                    spatial_names.append(f'latent_cond_{i}')
+                    spatial_names.append(conditioning_channel_names[i])
                 
                 cond_inputs['image'] = torch.cat(spatial, dim=0)
                 cond_inputs['meta'] = {
