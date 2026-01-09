@@ -139,6 +139,18 @@ def train():
     condition_config = satellite_ldm_config.get('condition_config', None)
     assert condition_config is not None, "Condition config required for satellite diffusion"
     
+    # Check for condition_latents limitation
+    condition_latents = condition_config.get('condition_latents', False)
+    if is_main and use_latents and condition_latents:
+        print(f"\n{'='*50}")
+        print("⚠ WARNING: condition_latents=True detected")
+        print(f"{'='*50}")
+        print("Current implementation: Conditioning uses INTERPOLATED pixel values")
+        print("For proper latent conditioning, latents must encode ALL channels")
+        print("This is a known limitation - conditioning quality may be suboptimal")
+        print("Recommendation: Ensure VAE was trained with condition_latents=True")
+        print(f"{'='*50}\n")
+    
     if is_main:
         print(f"\n{'='*50}")
         print("Loading Urban Dataset for Satellite Training")
