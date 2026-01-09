@@ -145,6 +145,17 @@ def train():
     latent_path = f'{big_data_storage_path}/results/{train_config["task_name"]}/{latent_dir_name}'
     use_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
     
+    # Check if conditioning should use latents
+    condition_latents = condition_config.get('condition_latents', False)
+    
+    if use_latents and condition_latents:
+        if is_main:
+            print(f"\n⚠ WARNING: condition_latents=True detected")
+            print(f"  Current implementation: Conditioning uses INTERPOLATED pixel values (not latent encodings)")
+            print(f"  For proper latent conditioning, latents must encode ALL channels (prediction + conditioning)")
+            print(f"  This is a known limitation - conditioning quality may be suboptimal")
+            print(f"  Recommendation: Ensure VAE was trained with condition_latents=True")
+    
     cache_dir = f"{big_data_storage_path}/processed/{train_config.get('task_name', 'urban_inpainting')}/semantic"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
