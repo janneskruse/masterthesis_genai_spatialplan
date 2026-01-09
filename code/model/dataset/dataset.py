@@ -88,6 +88,7 @@ class UrbanInpaintingDataset(Dataset):
 
         # Latent space configuration
         self.latent_maps = None
+        self.latent_cond_maps = None
         self.latent_path = latent_path
         self.use_latents = bool(use_latents)
 
@@ -247,15 +248,54 @@ class UrbanInpaintingDataset(Dataset):
         return True
     
     def _load_and_reconcile_latents(self, big_data_storage_path: str):
-        """Load VAE latents and reconcile with patches"""
+        """Load VAE latents (both prediction and conditioning) and reconcile with patches"""
         print(f'Loading latents from {self.latent_path}...')
-        latent_maps = load_latents(self.latent_path)
+        
+        # Load prediction latents
+        latent_maps_pred = load_latents(self.latent_path, prefix='pred')
+        
+        # Load conditioning latents (optional, for two-VAE setup)
+        latent_maps_cond = load_latents(self.latent_path, prefix='cond')
+        
+        # Check if we have conditioning latents
+        has_cond_latents = len(latent_maps_cond) > 0
+        
+        if has_cond_latents:
+            print(f'✓ Found {len(latent_maps_pred)} prediction latents and {len(latent_maps_cond)} conditioning latents')
+            
+            # SAFETY CHECK: Verify indices match
+            pred_indices = set([int(Path(p).stem.split('_')[-1]) for p in latent_maps_pred])
+            cond_indices = set([int(Path(p).stem.split('_')[-1]) for p in latent_maps_cond])
+            
+            missing_in_cond = pred_indices - cond_indices
+            missing_in_pred = cond_indices - pred_indices
+            
+            if missing_in_cond:
+                print(f'⚠ WARNING: {len(missing_in_cond)} prediction latents have no matching conditioning latent')
+                print(f'  Missing indices: {sorted(list(missing_in_cond))[:10]}...')
+            
+            if missing_in_pred:
+                print(f'⚠ WARNING: {len(missing_in_pred)} conditioning latents have no matching prediction latent')
+                print(f'  Missing indices: {sorted(list(missing_in_pred))[:10]}...')
+            
+            # Use only matching indices
+            matching_indices = pred_indices & cond_indices
+            if len(matching_indices) < len(pred_indices):
+                print(f'ℹ️  Using {len(matching_indices)} matching latent pairs (filtered from {len(pred_indices)} prediction latents)')
+                latent_maps_pred = [p for p in latent_maps_pred if int(Path(p).stem.split('_')[-1]) in matching_indices]
+                latent_maps_cond = [p for p in latent_maps_cond if int(Path(p).stem.split('_')[-1]) in matching_indices]
+        else:
+            print(f'✓ Found {len(latent_maps_pred)} prediction latents (no separate conditioning latents)')
+        
+        # Use prediction latents as primary
+        latent_maps = latent_maps_pred if len(latent_maps_pred) > 0 else load_latents(self.latent_path)
         
         if len(latent_maps) == len(self.patches):
             # Perfect match
             self.use_latents = True
             self.latent_maps = latent_maps
-            print(f'✓ Found {len(self.latent_maps)} latents matching {len(self.patches)} patches')
+            self.latent_cond_maps = latent_maps_cond if has_cond_latents else None
+            print(f'✓ Latents match {len(self.patches)} patches')
         else:
             # Mismatch - reconcile
             print(f'⚠ Latents size mismatch: found {len(latent_maps)} latents but need {len(self.patches)} patches')
@@ -274,12 +314,21 @@ class UrbanInpaintingDataset(Dataset):
             if len(filtered_patches) > 0:
                 self.patches = filtered_patches
                 self.latent_maps = filtered_latents
+                # Filter conditioning latents to match
+                if has_cond_latents:
+                    # Match indices from filtered prediction latents
+                    filtered_indices = set([int(Path(p).stem.split('_')[-1]) for p in filtered_latents])
+                    self.latent_cond_maps = [p for p in latent_maps_cond if int(Path(p).stem.split('_')[-1]) in filtered_indices]
+                    print(f'✓ Filtered to {len(self.latent_cond_maps)} matching conditioning latents')
+                else:
+                    self.latent_cond_maps = None
                 self.use_latents = True
                 print(f'✓ Successfully reconciled {len(self.patches)} patches with matching latents')
             else:
                 print('⚠ No matching patches found - falling back to raw images')
                 self.use_latents = False
                 self.latent_maps = None
+                self.latent_cond_maps = None
                     
     def prepare_cached_patches(self) -> None:
         """
@@ -895,14 +944,90 @@ class UrbanInpaintingDataset(Dataset):
         ##### Return latents and conditioning #####
         # If using latents, load latent and prepare conditioning inputs
         if self.use_latents:
-            # Load latent from file
+            # Load prediction latent from file
             latent_path = self.latent_maps[index]
             latent = load_single_latent(latent_path, device=None)  # Load to CPU
             
-            # Still need to prepare conditioning for latent-based training
-            # Calculate latent space dimensions
+            # Check if we have separate conditioning latents
+            if self.latent_cond_maps is not None and len(self.latent_cond_maps) > 0:
+                # Load conditioning latent
+                latent_cond_path = self.latent_cond_maps[index]
+                latent_cond = load_single_latent(latent_cond_path, device=None)
+                
+                # SAFETY CHECK: Verify indices match
+                pred_idx = int(Path(latent_path).stem.split('_')[-1])
+                cond_idx = int(Path(latent_cond_path).stem.split('_')[-1])
+                
+                if pred_idx != cond_idx:
+                    raise RuntimeError(
+                        f"Latent index mismatch at dataset index {index}! "
+                        f"Prediction latent: {pred_idx}, Conditioning latent: {cond_idx}. "
+                        f"This indicates a data corruption issue. Please regenerate latents."
+                    )
+                
+                # Calculate latent space dimensions
+                latent_h = ps // self.vae_downsample_factor
+                latent_w = ps // self.vae_downsample_factor
+                
+                # Use conditioning latent directly (no interpolation needed!)
+                # Prepare minimal conditioning (just mask, latent_cond has the rest)
+                cond_inputs = {}
+                spatial = []
+                spatial_names = []
+                
+                # Still need mask in pixel/latent space
+                street_blocks_layer = None
+                if 'street_blocks' in data_layers and self.hole_config['type'] == 'street_blocks':
+                    street_blocks_layer = data_layers['street_blocks'].isel(
+                        y=slice(y, y+ps),
+                        x=slice(x, x+ps)
+                    ).values
+                
+                patch_info = {
+                    'index': index,
+                    'region': region,
+                    'y': y,
+                    'x': x,
+                    'split': self.split
+                }
+                inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer=street_blocks_layer, patch_info=patch_info)
+                
+                # Downsample mask to latent resolution
+                mask_latent = torch.from_numpy(inpaint_mask).float()
+                mask_latent = mask_latent.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+                mask_latent = torch.nn.functional.interpolate(
+                    mask_latent,
+                    size=(latent_h, latent_w),
+                    mode='nearest'
+                )
+                mask_latent = mask_latent.squeeze(0)  # [1,H_latent,W_latent]
+                
+                # Combine: mask + conditioning latent
+                spatial.append(torch.from_numpy(mask_latent.numpy()).float())
+                spatial_names.append('inpaint_mask')
+                
+                # Add conditioning latent channels
+                for i in range(latent_cond.shape[0]):
+                    spatial.append(latent_cond[i:i+1])
+                    spatial_names.append(f'latent_cond_{i}')
+                
+                cond_inputs['image'] = torch.cat(spatial, dim=0)
+                cond_inputs['meta'] = {
+                    'y': y,
+                    'x': x,
+                    'time': str(data_layers['date']),
+                    'region': region,
+                    'spatial_names': spatial_names,
+                    'uses_latent_conditioning': True
+                }
+                
+                if len(self.condition_types) == 0:
+                    return latent
+                else:
+                    return latent, cond_inputs
+            
+            # Fall back to pixel-space interpolation if no conditioning latents
             latent_h = ps // self.vae_downsample_factor
-            latent_w = ps // self.vae_downsample_factor
             
             # Prepare conditioning inputs
             cond_inputs = {}

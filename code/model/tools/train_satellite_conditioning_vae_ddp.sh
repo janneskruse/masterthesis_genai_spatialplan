@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --time=3:00:00
-#SBATCH --job-name="train_semantic_vae_ddp"
+#SBATCH --job-name="vae_satellite_cond_ddp"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
@@ -54,7 +54,9 @@ echo "=================================================="
 srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    python3 -u train_vae_ddp.py --config $CONFIG_PATH --mode semantic
+    python3 -u train_vae_ddp.py --config $CONFIG_PATH \
+    --mode satellite \
+    --latent_type conditioning
 "
 
 # Capture the exit code of srun/python
@@ -65,11 +67,12 @@ echo "Job finished at: $(date)"
 echo "Training exit code: $EXIT_CODE"
 echo "=================================================="
 
+
 # Only submit next job if training succeeded
 if [ $EXIT_CODE -eq 0 ]; then
-    echo "Training completed successfully. Submitting conditioning VAE training..."
-    sbatch train_semantic_conditioning_vae_ddp.sh --config $CONFIG_PATH
+    echo "Training completed successfully. Submitting diffusion training..."
+    sbatch train_satellite_diffusion_inpainting_ddp.sh --config $CONFIG_PATH
 else
-    echo "Training failed with exit code $EXIT_CODE. Skipping conditioning VAE training."
+    echo "Training failed with exit code $EXIT_CODE. Skipping diffusion training."
     exit $EXIT_CODE
 fi

@@ -143,12 +143,15 @@ def train():
     condition_latents = condition_config.get('condition_latents', False)
     if is_main and use_latents and condition_latents:
         print(f"\n{'='*50}")
-        print("⚠ WARNING: condition_latents=True detected")
+        print("ℹ️  INFO: condition_latents=True with two-VAE setup")
         print(f"{'='*50}")
-        print("Current implementation: Conditioning uses INTERPOLATED pixel values")
-        print("For proper latent conditioning, latents must encode ALL channels")
-        print("This is a known limitation - conditioning quality may be suboptimal")
-        print("Recommendation: Ensure VAE was trained with condition_latents=True")
+        print("Training supports TWO latent encoding modes:")
+        print("1. Single-VAE (legacy): Conditioning from interpolated pixels")
+        print("2. Two-VAE (optimal): Separate prediction + conditioning latents")
+        print("")
+        print("Current setup will auto-detect:")
+        print("  - If latent_pred_*.pt + latent_cond_*.pt exist → Two-VAE mode")
+        print("  - Otherwise → Falls back to pixel interpolation")
         print(f"{'='*50}\n")
     
     if is_main:

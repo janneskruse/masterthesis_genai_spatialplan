@@ -9,40 +9,53 @@ from typing import List, Optional
 import torch
 
 
-def load_latents(latent_path: str) -> List[str]:
+def load_latents(latent_path: str, prefix: str = None) -> List[str]:
     """
     Load pre-computed latents from disk to speed up LDM training.
     Returns list of file paths for lazy loading.
     
     Args:
         latent_path: Directory containing latent files
+        prefix: Optional prefix to filter files (e.g., 'pred' for latent_pred_*.pt, 'cond' for latent_cond_*.pt)
         
     Returns:
         List of latent file paths sorted by index
     """
     latent_path = Path(latent_path)
     
+    # Build pattern based on prefix
+    if prefix:
+        pattern = f'latent_{prefix}_*.pt'
+        idx_position = 2  # e.g., latent_pred_123.pt -> split('_')[2] = '123'
+    else:
+        pattern = 'latent_*.pt'
+        idx_position = 1  # e.g., latent_123.pt -> split('_')[1] = '123'
+    
     # Try .pt files (recommended format)
     latent_files = sorted(
-        latent_path.glob('latent_*.pt'),
-        key=lambda x: int(x.stem.split('_')[1])
+        latent_path.glob(pattern),
+        key=lambda x: int(x.stem.split('_')[idx_position])
     )
     
     if latent_files:
-        print(f"✓ Found {len(latent_files)} .pt latent files")
+        print(f"✓ Found {len(latent_files)} .pt latent files{' with prefix: ' + prefix if prefix else ''}")
         return [str(f) for f in latent_files]
     
-    # Fall back to .pkl files (legacy format)
-    pkl_files = list(latent_path.glob('*.pkl'))
-    if pkl_files:
-        print(f"⚠ Found {len(pkl_files)} .pkl latent files (legacy format)")
-        print(f"⚠ Consider converting to .pt format for better performance")
-        print(f"⚠ Note: .pkl files will be fully loaded into memory by load_single_latent")
-        
-        # Return paths as strings, consistent with .pt behavior
-        return [str(f) for f in sorted(pkl_files)]
+    # Fall back to .pkl files (legacy format) - only if no prefix specified
+    if not prefix:
+        pkl_files = list(latent_path.glob('*.pkl'))
+        if pkl_files:
+            print(f"⚠ Found {len(pkl_files)} .pkl latent files (legacy format)")
+            print(f"⚠ Consider converting to .pt format for better performance")
+            print(f"⚠ Note: .pkl files will be fully loaded into memory by load_single_latent")
+            
+            # Return paths as strings, consistent with .pt behavior
+            return [str(f) for f in sorted(pkl_files)]
     
-    print(f"❌ No latent files found in {latent_path}")
+    if prefix:
+        print(f"❌ No latent files found with prefix '{prefix}' in {latent_path}")
+    else:
+        print(f"❌ No latent files found in {latent_path}")
     return []
 
 def load_single_latent(latent_path: str, device: Optional[torch.device] = None) -> torch.Tensor:

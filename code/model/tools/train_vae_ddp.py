@@ -122,6 +122,13 @@ def parse_args():
         required=True,
         help='Training mode: semantic (Stage 1) or satellite (Stage 2)'
     )
+    parser.add_argument(
+        '--latent_type',
+        type=str,
+        choices=['prediction', 'conditioning'],
+        default='prediction',
+        help='Latent type to save: prediction (RGB/targets) or conditioning (OSM/env features)'
+    )
     return parser.parse_args()
 
 
@@ -136,6 +143,7 @@ def save_latents_distributed(
     mode: str = 'satellite',
     semantic_channels: list = None,
     condition_latents: bool = False,
+    latent_type: str = 'prediction',
 ) -> int:
     """
     Save latent encodings from VAE in distributed setting.
@@ -153,6 +161,7 @@ def save_latents_distributed(
         device: Device for computation
         mode: 'semantic' or 'satellite' - determines input building logic
         semantic_channels: List of semantic channel names (required for semantic mode)
+        latent_type: 'prediction' (only RGB/prediction channels) or 'conditioning' (all conditioning channels)
         
     Returns:
         Number of latents saved by this rank
@@ -222,7 +231,7 @@ def save_latents_distributed(
                 im = data
                 cond_input = {}
             
-            # Build input based on mode
+            # Build input based on mode and latent_type
             if mode == 'semantic':
                 # Build semantic tensor
                 if 'image' in cond_input and 'meta' in cond_input:
@@ -231,7 +240,13 @@ def save_latents_distributed(
                     # meta is a list of dicts (one per batch item), get spatial_names from first item
                     spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
                     
-                    for sem_ch in semantic_channels:
+                    # Filter channels based on latent_type
+                    channels_to_encode = semantic_channels
+                    if latent_type == 'conditioning':
+                        # Only encode conditioning channels (those with _context suffix or predict=False)
+                        channels_to_encode = [ch for ch in semantic_channels if ch.endswith('_context')]
+                    
+                    for sem_ch in channels_to_encode:
                         found = False
                         for idx, name in enumerate(spatial_names):
                             if name == sem_ch:
@@ -243,37 +258,50 @@ def save_latents_distributed(
                             B, _, H, W = cond_input['image'].shape
                             semantic_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
                     
-                    input_tensor = torch.cat(semantic_tensor, dim=1)
+                    if len(semantic_tensor) > 0:
+                        input_tensor = torch.cat(semantic_tensor, dim=1)
+                    else:
+                        input_tensor = im
                 else:
                     input_tensor = im
             else:
                 # Satellite mode
-                if condition_latents and 'image' in cond_input and 'meta' in cond_input:
-                    # Build tensor with RGB + all conditioning channels
-                    satellite_tensor = [im]  # Start with RGB [B, 3, H, W]
-                    
-                    meta = cond_input['meta']
-                    spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
-                    
-                    # Extract conditioning channels (skip RGB channels from semantic_channels list)
-                    for sem_ch in semantic_channels:
-                        if sem_ch.startswith('rgb:'):
-                            continue  # Skip RGB, already added
+                if latent_type == 'prediction':
+                    # Only encode RGB for prediction latents
+                    input_tensor = im
+                elif latent_type == 'conditioning':
+                    # Only encode conditioning channels (no RGB)
+                    if 'image' in cond_input and 'meta' in cond_input:
+                        satellite_tensor = []
                         
-                        found = False
-                        for idx, name in enumerate(spatial_names):
-                            if name == sem_ch:
-                                satellite_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
-                                found = True
-                                break
+                        meta = cond_input['meta']
+                        spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
                         
-                        if not found:
-                            B, _, H, W = cond_input['image'].shape
-                            satellite_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
-                    
-                    input_tensor = torch.cat(satellite_tensor, dim=1)
+                        # Extract only conditioning channels from semantic_channels
+                        for sem_ch in semantic_channels:
+                            if sem_ch.startswith('rgb:') or sem_ch.startswith('masked_image:'):
+                                continue  # Skip RGB/masked_image - these are prediction channels
+                            
+                            found = False
+                            for idx, name in enumerate(spatial_names):
+                                if name == sem_ch:
+                                    satellite_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
+                                    found = True
+                                    break
+                            
+                            if not found:
+                                B, _, H, W = cond_input['image'].shape
+                                satellite_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
+                        
+                        if len(satellite_tensor) > 0:
+                            input_tensor = torch.cat(satellite_tensor, dim=1)
+                        else:
+                            # Fallback to RGB if no conditioning found
+                            input_tensor = im
+                    else:
+                        input_tensor = im
                 else:
-                    # Only RGB channels
+                    # Legacy mode: Only RGB channels
                     input_tensor = im
             
             input_tensor = input_tensor.float().to(device)
@@ -290,8 +318,13 @@ def save_latents_distributed(
                 if global_idx >= end_idx or global_idx >= total_samples:
                     break
                 
-                # Save latent to disk
-                latent_path = latent_dir / f'latent_{global_idx}.pt'
+                # Save latent to disk with type prefix
+                if latent_type == 'prediction':
+                    latent_path = latent_dir / f'latent_pred_{global_idx}.pt'
+                elif latent_type == 'conditioning':
+                    latent_path = latent_dir / f'latent_cond_{global_idx}.pt'
+                else:
+                    latent_path = latent_dir / f'latent_{global_idx}.pt'
                 torch.save(z[i].cpu(), latent_path)
                 latent_count += 1
     
@@ -301,9 +334,19 @@ def save_latents_distributed(
     
     # Verify completeness (rank 0 only)
     if rank == 0:
+        if latent_type == 'prediction':
+            pattern = 'latent_pred_*.pt'
+            prefix_len = 2  # 'pred' + index
+        elif latent_type == 'conditioning':
+            pattern = 'latent_cond_*.pt'
+            prefix_len = 2  # 'cond' + index
+        else:
+            pattern = 'latent_*.pt'
+            prefix_len = 1  # just index
+        
         saved_latents = sorted([
-            int(f.stem.split('_')[1]) 
-            for f in latent_dir.glob('latent_*.pt')
+            int(f.stem.split('_')[prefix_len]) 
+            for f in latent_dir.glob(pattern)
         ])
         
         expected_latents = list(range(total_samples))
@@ -311,7 +354,7 @@ def save_latents_distributed(
         duplicate_latents = len(saved_latents) - len(set(saved_latents))
         
         print(f"\n{'='*60}")
-        print(f"✓ Total latents saved: {len(saved_latents)}/{total_samples}")
+        print(f"✓ Total {latent_type} latents saved: {len(saved_latents)}/{total_samples}")
         
         if missing_latents:
             print(f"⚠ Missing latents: {sorted(missing_latents)[:10]}{'...' if len(missing_latents) > 10 else ''}")
@@ -427,12 +470,13 @@ def compute_semantic_reconstruction_loss(
 
 
 ########## Main Training Function #############
-def train_vae(mode: str = 'satellite'):
+def train_vae(mode: str = 'satellite', latent_type: str = 'prediction'):
     """
     Unified VAE training function supporting both semantic and satellite modes.
     
     Args:
         mode: 'semantic' or 'satellite' - determines which VAE to train
+        latent_type: 'prediction' or 'conditioning' - determines which channels to encode
     """
     # Record training start time
     training_start_time = time.time()
@@ -1112,7 +1156,9 @@ if __name__ == '__main__':
     
     parser.add_argument('--mode', type=str, default='satellite', choices=['semantic', 'satellite'],
                         help='Mode of VAE to train: "semantic" or "satellite"')
+    parser.add_argument('--latent_type', type=str, default='prediction', choices=['prediction', 'conditioning'],
+                        help='Type of latents to save: "prediction" (RGB/targets) or "conditioning" (OSM/env features)')
     
     args = parser.parse_args()
     
-    train_vae(mode=args.mode)
+    train_vae(mode=args.mode, latent_type=args.latent_type)
