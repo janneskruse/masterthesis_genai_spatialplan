@@ -500,6 +500,7 @@ def train_vae(mode: str = 'satellite', latent_type: str = 'prediction'):
         print(f"✓ Rank: {rank}")
         print(f"✓ Local rank: {local_rank}")
         print(f"✓ Mode: {mode}")
+        print(f"✓ Latent type: {latent_type}")
         print(f"\n{'='*50}")
         print("Configuration")
         print(f"{'='*50}")
@@ -575,23 +576,50 @@ def train_vae(mode: str = 'satellite', latent_type: str = 'prediction'):
         condition_latents = condition_config.get('condition_latents', False)
         
         if condition_latents:
-            # Encode RGB + ALL conditioning channels
-            semantic_channels = ['rgb:blue', 'rgb:green', 'rgb:red']  # RGB channels
-            
-            # Add all conditioning channels
-            all_cond_channels = get_all_channels(condition_config)  # Uses encode_mask from config
-            semantic_channels.extend(all_cond_channels)
-            
-            num_input_channels = len(semantic_channels)
-            encode_mask = condition_config.get('encode_mask', False)
-            
-            if is_main:
-                print(f"✓ condition_latents=True: Encoding RGB + {len(all_cond_channels)} conditioning channels = {num_input_channels} total")
-                print(f"✓ encode_mask={encode_mask}: {'Including' if encode_mask else 'Excluding'} inpainting mask")
+            # Two-VAE mode: Train separate VAEs for prediction and conditioning
+            if latent_type == 'prediction':
+                # Prediction VAE: Only encode RGB
+                semantic_channels = ['rgb:blue', 'rgb:green', 'rgb:red']
+                num_input_channels = 3
+                
+                if is_main:
+                    print(f"\n{'='*60}")
+                    print(f"TWO-VAE ARCHITECTURE: Prediction VAE")
+                    print(f"{'='*60}")
+                    print(f"✓ Training on RGB channels only: {num_input_channels} channels")
+                    print(f"✓ Will save latent_pred_*.pt files")
+                    print(f"{'='*60}\n")
+                    
+            elif latent_type == 'conditioning':
+                # Conditioning VAE: Only encode OSM + environmental features
+                all_cond_channels = get_all_channels(condition_config)
+                semantic_channels = all_cond_channels
+                num_input_channels = len(semantic_channels)
+                encode_mask = condition_config.get('encode_mask', False)
+                
+                if is_main:
+                    print(f"\n{'='*60}")
+                    print(f"TWO-VAE ARCHITECTURE: Conditioning VAE")
+                    print(f"{'='*60}")
+                    print(f"✓ Training on {num_input_channels} conditioning channels")
+                    print(f"✓ encode_mask={encode_mask}: {'Including' if encode_mask else 'Excluding'} inpainting mask")
+                    print(f"✓ Channels: {semantic_channels}")
+                    print(f"✓ Will save latent_cond_*.pt files")
+                    print(f"{'='*60}\n")
+            else:
+                # Legacy mode: encode all channels together (not recommended)
+                semantic_channels = ['rgb:blue', 'rgb:green', 'rgb:red']
+                all_cond_channels = get_all_channels(condition_config)
+                semantic_channels.extend(all_cond_channels)
+                num_input_channels = len(semantic_channels)
+                
+                if is_main:
+                    print(f"⚠ WARNING: Legacy mode - encoding all {num_input_channels} channels together")
+                    print(f"⚠ Consider using latent_type='prediction' or 'conditioning' for two-VAE architecture")
         else:
-            # Only encode RGB channels
+            # Single-VAE mode: Only encode RGB channels
             num_input_channels = dataset_config['im_channels']
-            semantic_channels = None
+            semantic_channels = ['rgb:blue', 'rgb:green', 'rgb:red']
             
             if is_main:
                 print(f"✓ condition_latents=False: Encoding only {num_input_channels} RGB channels")
@@ -827,37 +855,56 @@ def train_vae(mode: str = 'satellite', latent_type: str = 'prediction'):
                     input_tensor = im
             else:
                 # Satellite mode
-                if condition_latents and 'image' in cond_input and 'meta' in cond_input:
-                    # Build tensor with RGB + all conditioning channels
-                    satellite_tensor = [im]  # Start with RGB [B, 3, H, W]
-                    
-                    meta = cond_input['meta']
-                    spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
-                    
-                    # Extract conditioning channels (skip RGB channels from semantic_channels list)
-                    for sem_ch in semantic_channels:
-                        if sem_ch.startswith('rgb:'):
-                            continue  # Skip RGB, already added
+                if condition_latents:
+                    # Two-VAE mode: build input based on latent_type
+                    if latent_type == 'prediction':
+                        # Prediction VAE: Only RGB
+                        input_tensor = im
                         
-                        found = False
-                        for idx, name in enumerate(spatial_names):
-                            if name == sem_ch:
-                                satellite_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
-                                found = True
-                                break
+                    elif latent_type == 'conditioning' and 'image' in cond_input and 'meta' in cond_input:
+                        # Conditioning VAE: Only OSM + environmental features
+                        satellite_tensor = []
                         
-                        if not found:
-                            if is_main and batch_idx == 0:
-                                print(f"⚠ Warning: Satellite conditioning channel '{sem_ch}' not found. Filling with zeros.")
-                            B, _, H, W = cond_input['image'].shape
-                            satellite_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
-                    
-                    input_tensor = torch.cat(satellite_tensor, dim=1)
+                        meta = cond_input['meta']
+                        spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
+                        
+                        # Extract only conditioning channels (no RGB)
+                        for sem_ch in semantic_channels:
+                            found = False
+                            for idx, name in enumerate(spatial_names):
+                                if name == sem_ch:
+                                    satellite_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
+                                    found = True
+                                    break
+                            
+                            if not found:
+                                if is_main and batch_idx == 0:
+                                    print(f"⚠ Warning: Satellite conditioning channel '{sem_ch}' not found. Filling with zeros.")
+                                B, _, H, W = cond_input['image'].shape
+                                satellite_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
+                        
+                        if len(satellite_tensor) > 0:
+                            input_tensor = torch.cat(satellite_tensor, dim=1)
+                        else:
+                            # Fallback to RGB if no conditioning found
+                            input_tensor = im
+                    else:
+                        # Legacy mode or no conditioning input: RGB only
+                        input_tensor = im
                 else:
-                    # Only RGB channels
+                    # Single-VAE mode: Only RGB channels
                     input_tensor = im
             
             input_tensor = input_tensor.float().to(device)
+            
+            # Validate channel count matches VAE expectations
+            if input_tensor.shape[1] != num_input_channels:
+                raise RuntimeError(
+                    f"Channel mismatch! VAE expects {num_input_channels} channels but got {input_tensor.shape[1]} channels.\n"
+                    f"Mode: {mode}, Latent type: {latent_type}, condition_latents: {condition_latents}\n"
+                    f"Expected channels: {semantic_channels if semantic_channels else 'RGB'}\n"
+                    f"This likely means the dataset is not providing the expected channels for this latent_type."
+                )
             
             # Sanity check: print channel stats on first batch each epoch (rank 0 only)
             if is_main and mode == 'semantic' and batch_idx == 0:
@@ -867,11 +914,25 @@ def train_vae(mode: str = 'satellite', latent_type: str = 'prediction'):
                     print(f"\n[Epoch {epoch_idx + 1}] Spatial names available: {spatial_names}")
                 
                 ch_means = input_tensor.mean(dim=(0, 2, 3)).detach().cpu().numpy()
-                ch_pos = (input_tensor > 0.5).float().mean(dim=(0, 2, 3)).detach().cpu().numpy()
+                ch_stds = input_tensor.std(dim=(0, 2, 3)).detach().cpu().numpy()
+                ch_mins = input_tensor.min(dim=0)[0].min(dim=1)[0].min(dim=1)[0].detach().cpu().numpy()
+                ch_maxs = input_tensor.max(dim=0)[0].max(dim=1)[0].max(dim=1)[0].detach().cpu().numpy()
                 
-                print(f"\n[Epoch {epoch_idx + 1}] Semantic channel statistics:")
-                for i, name in enumerate(semantic_channels):
-                    print(f"  {i:02d} {name:30s} mean={ch_means[i]:.4f} pos@0.5={ch_pos[i]:.4f}")
+                if mode == 'semantic':
+                    ch_pos = (input_tensor > 0.5).float().mean(dim=(0, 2, 3)).detach().cpu().numpy()
+                    print(f"\n[Epoch {epoch_idx + 1}] Semantic channel statistics:")
+                    for i, name in enumerate(semantic_channels):
+                        print(f"  {i:02d} {name:30s} mean={ch_means[i]:.4f} std={ch_stds[i]:.4f} pos@0.5={ch_pos[i]:.4f}")
+                else:
+                    print(f"\n[Epoch {epoch_idx + 1}] Satellite channel statistics:")
+                    print(f"  Mode: {mode}, Latent type: {latent_type}")
+                    print(f"  Input tensor shape: {input_tensor.shape}")
+                    if semantic_channels:
+                        for i, name in enumerate(semantic_channels):
+                            print(f"  {i:02d} {name:30s} mean={ch_means[i]:+.4f} std={ch_stds[i]:.4f} min={ch_mins[i]:+.4f} max={ch_maxs[i]:+.4f}")
+                    else:
+                        for i in range(input_tensor.shape[1]):
+                            print(f"  {i:02d} {'Channel':30s} mean={ch_means[i]:+.4f} std={ch_stds[i]:.4f} min={ch_mins[i]:+.4f} max={ch_maxs[i]:+.4f}")
                 print()
             
             ########## Train VAE ##########
