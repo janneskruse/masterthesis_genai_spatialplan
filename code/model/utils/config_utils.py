@@ -84,7 +84,7 @@ def get_prediction_channels(condition_config):
     return prediction_channels
 
 
-def get_all_channels(condition_config, include_mask=False):
+def get_all_channels(condition_config, include_mask=None):
     """
     Extract ALL channel names from condition config (prediction + conditioning).
     
@@ -92,12 +92,16 @@ def get_all_channels(condition_config, include_mask=False):
     
     Args:
         condition_config: Configuration dict containing osm_layers and environmental_layers
-        include_mask: Whether to include 'inpaint_mask' channel
+        include_mask: Whether to include 'inpaint_mask' channel. If None, reads from condition_config['encode_mask']
         
     Returns:
         List of all channel names with prefixes (osm: or env:)
     """
     all_channels = []
+    
+    # Determine whether to include mask
+    if include_mask is None:
+        include_mask = condition_config.get('encode_mask', False)
     
     # Add inpainting mask if requested
     if include_mask and 'inpainting' in condition_config.get('condition_types', []):

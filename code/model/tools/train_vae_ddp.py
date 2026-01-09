@@ -498,9 +498,11 @@ def train_vae(mode: str = 'satellite'):
         
         if condition_latents:
             # Encode ALL channels (prediction + conditioning)
-            semantic_channels = get_all_channels(condition_config, include_mask=False)
+            semantic_channels = get_all_channels(condition_config)  # Uses encode_mask from config
+            encode_mask = condition_config.get('encode_mask', False)
             if is_main:
                 print(f"✓ condition_latents=True: Encoding all {len(semantic_channels)} channels through VAE")
+                print(f"✓ encode_mask={encode_mask}: {'Including' if encode_mask else 'Excluding'} inpainting mask")
         else:
             # Only encode prediction channels
             semantic_channels = get_prediction_channels(condition_config)
@@ -533,13 +535,15 @@ def train_vae(mode: str = 'satellite'):
             semantic_channels = ['rgb:blue', 'rgb:green', 'rgb:red']  # RGB channels
             
             # Add all conditioning channels
-            all_cond_channels = get_all_channels(condition_config, include_mask=False)
+            all_cond_channels = get_all_channels(condition_config)  # Uses encode_mask from config
             semantic_channels.extend(all_cond_channels)
             
             num_input_channels = len(semantic_channels)
+            encode_mask = condition_config.get('encode_mask', False)
             
             if is_main:
                 print(f"✓ condition_latents=True: Encoding RGB + {len(all_cond_channels)} conditioning channels = {num_input_channels} total")
+                print(f"✓ encode_mask={encode_mask}: {'Including' if encode_mask else 'Excluding'} inpainting mask")
         else:
             # Only encode RGB channels
             num_input_channels = dataset_config['im_channels']
