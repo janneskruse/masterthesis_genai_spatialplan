@@ -542,17 +542,54 @@ def train_vae(mode: str = 'satellite', latent_type: str = 'prediction'):
         condition_latents = condition_config.get('condition_latents', False)
         
         if condition_latents:
-            # Encode ALL channels (prediction + conditioning)
-            semantic_channels = get_all_channels(condition_config)  # Uses encode_mask from config
-            encode_mask = condition_config.get('encode_mask', False)
-            if is_main:
-                print(f"✓ condition_latents=True: Encoding all {len(semantic_channels)} channels through VAE")
-                print(f"✓ encode_mask={encode_mask}: {'Including' if encode_mask else 'Excluding'} inpainting mask")
+            # Two-VAE mode: Train separate VAEs for prediction and conditioning
+            if latent_type == 'prediction':
+                # Prediction VAE: Only channels with predict=True (to be generated)
+                semantic_channels = get_prediction_channels(condition_config)
+                num_input_channels = len(semantic_channels)
+                
+                if is_main:
+                    print(f"\n{'='*60}")
+                    print(f"TWO-VAE ARCHITECTURE: Semantic Prediction VAE")
+                    print(f"{'='*60}")
+                    print(f"✓ Training on {num_input_channels} prediction channels")
+                    print(f"✓ Channels: {semantic_channels}")
+                    print(f"✓ Will save latent_pred_*.pt files")
+                    print(f"{'='*60}\n")
+                    
+            elif latent_type == 'conditioning':
+                # Conditioning VAE: Only conditioning channels (with _context suffix)
+                all_channels = get_all_channels(condition_config)
+                prediction_channels = set(get_prediction_channels(condition_config))
+                # Conditioning channels are those NOT in prediction channels
+                semantic_channels = [ch for ch in all_channels if ch not in prediction_channels]
+                num_input_channels = len(semantic_channels)
+                encode_mask = condition_config.get('encode_mask', False)
+                
+                if is_main:
+                    print(f"\n{'='*60}")
+                    print(f"TWO-VAE ARCHITECTURE: Semantic Conditioning VAE")
+                    print(f"{'='*60}")
+                    print(f"✓ Training on {num_input_channels} conditioning channels")
+                    print(f"✓ encode_mask={encode_mask}: {'Including' if encode_mask else 'Excluding'} inpainting mask")
+                    print(f"✓ Channels: {semantic_channels}")
+                    print(f"✓ Will save latent_cond_*.pt files")
+                    print(f"{'='*60}\n")
+            else:
+                # Legacy mode: encode all channels together (not recommended)
+                semantic_channels = get_all_channels(condition_config)
+                num_input_channels = len(semantic_channels)
+                encode_mask = condition_config.get('encode_mask', False)
+                
+                if is_main:
+                    print(f"⚠ WARNING: Legacy mode - encoding all {num_input_channels} channels together")
+                    print(f"⚠ Consider using latent_type='prediction' or 'conditioning' for two-VAE architecture")
         else:
-            # Only encode prediction channels
+            # Single-VAE mode: Only encode prediction channels
             semantic_channels = get_prediction_channels(condition_config)
+            num_input_channels = len(semantic_channels)
             if is_main:
-                print(f"✓ condition_latents=False: Encoding only {len(semantic_channels)} prediction channels")
+                print(f"✓ condition_latents=False: Encoding only {num_input_channels} prediction channels")
         
         dice_weight = train_config.get('dice_weight', 0.5)
         
@@ -564,8 +601,7 @@ def train_vae(mode: str = 'satellite', latent_type: str = 'prediction'):
                 'env:vegetation',
                 'osm:buildings_heights'
             ]
-        
-        num_input_channels = len(semantic_channels)
+            num_input_channels = len(semantic_channels)
         
     else: # satellite mode
         # Get satellite condition config
