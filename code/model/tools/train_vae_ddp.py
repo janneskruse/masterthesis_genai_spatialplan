@@ -948,7 +948,8 @@ def train_vae(mode: str = 'satellite'):
                 with torch.no_grad():
                     n_samples = min(8, input_tensor.shape[0])
                     
-                    if mode == 'semantic':
+                    # Use channel-wise visualization when encoding multiple channels
+                    if mode == 'semantic' or (mode == 'satellite' and condition_latents):
                         # Visualize each channel separately
                         vis_grids = []
                         
@@ -956,11 +957,26 @@ def train_vae(mode: str = 'satellite'):
                             input_ch = input_tensor[:n_samples, ch_idx:ch_idx+1, :, :]
                             recon_ch = recon[:n_samples, ch_idx:ch_idx+1, :, :]
                             
+                            # Determine visualization method based on channel type
                             if 'height' in ch_name:
                                 # Continuous height channel: normalize by max height
                                 max_height = 100.0
                                 input_vis = torch.clamp(input_ch / max_height, 0, 1)
                                 recon_vis = torch.clamp(recon_ch / max_height, 0, 1)
+                            elif ch_name.startswith('rgb:'):
+                                # RGB channels: normalize from [-1, 1] to [0, 1]
+                                input_vis = torch.clamp(input_ch, -1., 1.)
+                                input_vis = (input_vis + 1) / 2
+                                recon_vis = torch.clamp(recon_ch, -1., 1.)
+                                recon_vis = (recon_vis + 1) / 2
+                            elif 'mask' in ch_name:
+                                # Mask channel: already in [0, 1]
+                                input_vis = torch.clamp(input_ch, 0, 1)
+                                recon_vis = torch.clamp(recon_ch, 0, 1)
+                            elif 'ndvi' in ch_name or 'lst' in ch_name or 'temp' in ch_name:
+                                # Environmental continuous channels: normalize to [0, 1]
+                                input_vis = (input_ch - input_ch.min()) / (input_ch.max() - input_ch.min() + 1e-8)
+                                recon_vis = (recon_ch - recon_ch.min()) / (recon_ch.max() - recon_ch.min() + 1e-8)
                             else:
                                 # Binary channels: input is 0/1, recon is logits
                                 input_vis = torch.clamp(input_ch, 0, 1)
@@ -975,8 +991,25 @@ def train_vae(mode: str = 'satellite'):
                         for ch_idx, ch_name in enumerate(semantic_channels):
                             save_path = os.path.join(samples_dir, f'recon_step_{global_step}_{ch_name.replace(":", "_")}.png')
                             save_image(vis_grids[ch_idx], save_path)
+                        
+                        # Also save RGB composite if in satellite mode with condition_latents
+                        if mode == 'satellite' and condition_latents:
+                            # Extract first 3 channels (RGB)
+                            rgb_input = input_tensor[:n_samples, :3, :, :]
+                            rgb_recon = recon[:n_samples, :3, :, :]
+                            
+                            rgb_input = torch.clamp(rgb_input, -1., 1.)
+                            rgb_input = (rgb_input + 1) / 2
+                            rgb_recon = torch.clamp(rgb_recon, -1., 1.)
+                            rgb_recon = (rgb_recon + 1) / 2
+                            
+                            comparison_rgb = torch.cat([rgb_input, rgb_recon], dim=0)
+                            grid_rgb = make_grid(comparison_rgb, nrow=n_samples, padding=2, pad_value=1.0)
+                            
+                            save_path = os.path.join(samples_dir, f'recon_step_{global_step}_RGB_composite.png')
+                            save_image(grid_rgb, save_path)
                     else:
-                        # Satellite visualization: normalize to [0, 1]
+                        # Satellite mode without condition_latents: only RGB visualization
                         sample_im = input_tensor[:n_samples]
                         sample_recon = recon[:n_samples]
                         
