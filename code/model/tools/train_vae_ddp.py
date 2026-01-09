@@ -29,7 +29,7 @@ from model.diffusion_blocks.lpips import LPIPS
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
-from model.utils.config_utils import get_prediction_channels
+from model.utils.config_utils import get_prediction_channels, get_all_channels
 from helpers.load_configs import load_configs
 
 # Load CUDA
@@ -135,6 +135,7 @@ def save_latents_distributed(
     device: torch.device,
     mode: str = 'satellite',
     semantic_channels: list = None,
+    condition_latents: bool = False,
 ) -> int:
     """
     Save latent encodings from VAE in distributed setting.
@@ -465,7 +466,21 @@ def train_vae(mode: str = 'satellite'):
         # Get semantic channels from condition config
         semantic_ldm_config = ldm_config.get('semantic', ldm_config)
         condition_config = semantic_ldm_config.get('condition_config', {})
-        semantic_channels = get_prediction_channels(condition_config)
+        
+        # Check if we should encode all conditioning channels
+        condition_latents = condition_config.get('condition_latents', False)
+        
+        if condition_latents:
+            # Encode ALL channels (prediction + conditioning)
+            semantic_channels = get_all_channels(condition_config, include_mask=False)
+            if is_main:
+                print(f"✓ condition_latents=True: Encoding all {len(semantic_channels)} channels through VAE")
+        else:
+            # Only encode prediction channels
+            semantic_channels = get_prediction_channels(condition_config)
+            if is_main:
+                print(f"✓ condition_latents=False: Encoding only {len(semantic_channels)} prediction channels")
+        
         dice_weight = train_config.get('dice_weight', 0.5)
         
         if not semantic_channels:
@@ -480,8 +495,32 @@ def train_vae(mode: str = 'satellite'):
         num_input_channels = len(semantic_channels)
         
     else: # satellite mode
-        num_input_channels = dataset_config['im_channels']
-        semantic_channels = None
+        # Get satellite condition config
+        satellite_ldm_config = ldm_config.get('satellite', ldm_config)
+        condition_config = satellite_ldm_config.get('condition_config', {})
+        
+        # Check if we should encode all conditioning channels
+        condition_latents = condition_config.get('condition_latents', False)
+        
+        if condition_latents:
+            # Encode RGB + ALL conditioning channels
+            semantic_channels = ['rgb:blue', 'rgb:green', 'rgb:red']  # RGB channels
+            
+            # Add all conditioning channels
+            all_cond_channels = get_all_channels(condition_config, include_mask=False)
+            semantic_channels.extend(all_cond_channels)
+            
+            num_input_channels = len(semantic_channels)
+            
+            if is_main:
+                print(f"✓ condition_latents=True: Encoding RGB + {len(all_cond_channels)} conditioning channels = {num_input_channels} total")
+        else:
+            # Only encode RGB channels
+            num_input_channels = dataset_config['im_channels']
+            semantic_channels = None
+            
+            if is_main:
+                print(f"✓ condition_latents=False: Encoding only {num_input_channels} RGB channels")
     
     # Create output directories
     task_name = train_config_global.get('task_name', 'urban_inpainting')
@@ -713,8 +752,36 @@ def train_vae(mode: str = 'satellite'):
                     # Fallback: use RGB image channels if available
                     input_tensor = im
             else:
-                # Satellite mode: use RGB image directly
-                input_tensor = im
+                # Satellite mode
+                if condition_latents and 'image' in cond_input and 'meta' in cond_input:
+                    # Build tensor with RGB + all conditioning channels
+                    satellite_tensor = [im]  # Start with RGB [B, 3, H, W]
+                    
+                    meta = cond_input['meta']
+                    spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
+                    
+                    # Extract conditioning channels (skip RGB channels from semantic_channels list)
+                    for sem_ch in semantic_channels:
+                        if sem_ch.startswith('rgb:'):
+                            continue  # Skip RGB, already added
+                        
+                        found = False
+                        for idx, name in enumerate(spatial_names):
+                            if name == sem_ch:
+                                satellite_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
+                                found = True
+                                break
+                        
+                        if not found:
+                            if is_main and batch_idx == 0:
+                                print(f"⚠ Warning: Satellite conditioning channel '{sem_ch}' not found. Filling with zeros.")
+                            B, _, H, W = cond_input['image'].shape
+                            satellite_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
+                    
+                    input_tensor = torch.cat(satellite_tensor, dim=1)
+                else:
+                    # Only RGB channels
+                    input_tensor = im
             
             input_tensor = input_tensor.float().to(device)
             

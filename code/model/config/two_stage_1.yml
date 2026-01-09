@@ -81,6 +81,7 @@ ldm_params:
     
     # Conditioning for semantic generation
     condition_config:
+      condition_latents: True  # compute latents for all conditioning inputs
       condition_types: ['inpainting', 'osm_features', 'environmental']
 
       osm_layers: [
@@ -140,6 +141,7 @@ ldm_params:
     
     # Conditioning for satellite rendering
     condition_config:
+      condition_latents: True  # compute latents for all conditioning inputs
       condition_types: ['inpainting', 'osm_features', 'environmental', 'masked_rgb']
       
       # Inpainting hole configuration
