@@ -83,6 +83,60 @@ def get_prediction_channels(condition_config):
     
     return prediction_channels
 
+
+def get_all_channels(condition_config, include_mask=False):
+    """
+    Extract ALL channel names from condition config (prediction + conditioning).
+    
+    Used when condition_latents=True to encode all channels through VAE.
+    
+    Args:
+        condition_config: Configuration dict containing osm_layers and environmental_layers
+        include_mask: Whether to include 'inpaint_mask' channel
+        
+    Returns:
+        List of all channel names with prefixes (osm: or env:)
+    """
+    all_channels = []
+    
+    # Add inpainting mask if requested
+    if include_mask and 'inpainting' in condition_config.get('condition_types', []):
+        all_channels.append('inpaint_mask')
+    
+    # Process OSM layers (all layers, regardless of predict flag)
+    osm_layers = condition_config.get('osm_layers', [])
+    for layer in osm_layers:
+        if isinstance(layer, str):
+            # Simple string format
+            all_channels.append(f'osm:{layer}')
+        elif isinstance(layer, dict):
+            # Dict format - include all layers
+            for layer_name, layer_config in layer.items():
+                if isinstance(layer_config, dict):
+                    # Use custom key if specified, otherwise use layer name
+                    display_name = layer_config.get('key', layer_name)
+                    all_channels.append(f'osm:{display_name}')
+                else:
+                    all_channels.append(f'osm:{layer_name}')
+    
+    # Process environmental layers (all layers, regardless of predict flag)
+    env_layers = condition_config.get('environmental_layers', [])
+    for layer in env_layers:
+        if isinstance(layer, str):
+            # Simple string format
+            all_channels.append(f'env:{layer}')
+        elif isinstance(layer, dict):
+            # Dict format - include all layers
+            for layer_name, layer_config in layer.items():
+                if isinstance(layer_config, dict):
+                    # Use custom key if specified, otherwise use layer name
+                    display_name = layer_config.get('key', layer_name)
+                    all_channels.append(f'env:{display_name}')
+                else:
+                    all_channels.append(f'env:{layer_name}')
+    
+    return all_channels
+
 def compute_patch_and_latent_sizes(
     dataset_config: dict,
     autoencoder_config: dict,
