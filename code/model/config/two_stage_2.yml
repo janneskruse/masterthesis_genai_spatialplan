@@ -275,6 +275,8 @@ train_params:
     kl_weight: 0.000001
     penalize_out_of_range: True
     autoencoder_img_save_steps: 64
+    use_discriminator: True
+    use_perceptual: True
   
     # Satellite diffusion training
     ldm_epochs: 400
