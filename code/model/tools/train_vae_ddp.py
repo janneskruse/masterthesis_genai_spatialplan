@@ -562,7 +562,9 @@ def train_vae(mode: str = 'satellite', latent_type: str = 'prediction'):
                 all_channels = get_all_channels(condition_config)
                 prediction_channels = set(get_prediction_channels(condition_config))
                 # Conditioning channels are those NOT in prediction channels
-                semantic_channels = [ch for ch in all_channels if ch not in prediction_channels]
+                # Dataset applies _context suffix to these channels in semantic mode
+                base_conditioning_channels = [ch for ch in all_channels if ch not in prediction_channels]
+                semantic_channels = [f"{ch}_context" for ch in base_conditioning_channels]
                 num_input_channels = len(semantic_channels)
                 encode_mask = condition_config.get('encode_mask', False)
                 
@@ -572,7 +574,8 @@ def train_vae(mode: str = 'satellite', latent_type: str = 'prediction'):
                     print(f"{'='*60}")
                     print(f"✓ Training on {num_input_channels} conditioning channels")
                     print(f"✓ encode_mask={encode_mask}: {'Including' if encode_mask else 'Excluding'} inpainting mask")
-                    print(f"✓ Channels: {semantic_channels}")
+                    print(f"✓ Base channels: {base_conditioning_channels}")
+                    print(f"✓ With _context suffix: {semantic_channels}")
                     print(f"✓ Will save latent_cond_*.pt files")
                     print(f"{'='*60}\n")
             else:
