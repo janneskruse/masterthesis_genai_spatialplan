@@ -271,17 +271,15 @@ def save_latents_distributed(
                     input_tensor = im
                 elif latent_type == 'conditioning':
                     # Only encode conditioning channels (no RGB)
+                    # semantic_channels already contains ONLY conditioning channels (set during training init)
                     if 'image' in cond_input and 'meta' in cond_input:
                         satellite_tensor = []
                         
                         meta = cond_input['meta']
                         spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
                         
-                        # Extract only conditioning channels from semantic_channels
+                        # Extract conditioning channels as specified in semantic_channels
                         for sem_ch in semantic_channels:
-                            if sem_ch.startswith('rgb:') or sem_ch.startswith('masked_image:'):
-                                continue  # Skip RGB/masked_image - these are prediction channels
-                            
                             found = False
                             for idx, name in enumerate(spatial_names):
                                 if name == sem_ch:
@@ -290,6 +288,9 @@ def save_latents_distributed(
                                     break
                             
                             if not found:
+                                # Warn if channel not found
+                                if rank == 0 and batch_idx == 0:
+                                    print(f"⚠ Warning: Satellite conditioning channel '{sem_ch}' not found. Filling with zeros.")
                                 B, _, H, W = cond_input['image'].shape
                                 satellite_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
                         
