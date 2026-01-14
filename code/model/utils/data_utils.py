@@ -1,60 +1,257 @@
+###### import libraries ######
+# Standard libraries
+from typing import Dict, List, Tuple, Union
+
+# Data Science/ML
 import torch
 import numpy as np
 
-def apply_range_filter(data, filter_config):
+# Local imports
+from model.utils.layer_config import is_binary_layer
+
+def apply_layer_mask(
+    data: torch.Tensor,
+    mask: torch.Tensor,
+) -> torch.Tensor:
     """
-    Apply range filters to data array based on configuration.
-    
-    Supports:
-    - gte (>=): Greater than or equal
-    - lte (<=): Less than or equal  
-    - gt (>): Greater than
-    - lt (<): Less than
-    - eq (==): Equal to
+    Apply mask to layer data (e.g., mask building heights by building footprints).
     
     Args:
-        data: numpy array or torch tensor
-        filter_config: dict with filter specifications (e.g., {'gte': 0.2, 'lte': 0.8})
+        data: Input tensor to mask
+        mask: Binary mask tensor (same spatial dims as data)
         
     Returns:
-        Filtered data where areas not meeting criteria are set to -1.0 (will appear dark)
+        Masked tensor (data * mask)
     """
-    if filter_config is None or not isinstance(filter_config, dict):
+    return data * mask
+
+def apply_filter(data, layer_config: Dict):
+    """
+    Apply filter to layer data (thresholds, binary conversion).
+    
+    Handles both torch.Tensor and numpy arrays efficiently.
+    
+    Args:
+        data: Input tensor or numpy array
+        layer_config: Layer configuration with optional 'filter' key
+        
+    Returns:
+        Filtered data (binary {0, 1} if type='binary', otherwise continuous)
+        Returns same type as input (torch.Tensor or numpy array)
+    """
+    is_torch = isinstance(data, torch.Tensor)
+    is_binary = layer_config.get('type') == 'binary'
+    filter_config = layer_config.get('filter', {})
+    
+    # No filter specified - just handle binary conversion if needed
+    if not filter_config:
+        if is_binary:
+            if is_torch:
+                return (data > 0.5).float()
+            else:
+                return (data > 0.5).astype(np.float32)
         return data
     
-    # Convert to numpy for easier manipulation
-    is_torch = isinstance(data, torch.Tensor)
+    # Create mask for filtering
     if is_torch:
-        device = data.device
-        data = data.cpu().numpy()
-    
-    # Make a copy to avoid modifying original
-    result = data.copy()
-    
-    # Create mask starting with all True
-    mask = np.ones_like(data, dtype=bool)
-    
-    # Apply filters
-    if 'gte' in filter_config:
-        mask &= (data >= filter_config['gte'])
-    if 'lte' in filter_config:
-        mask &= (data <= filter_config['lte'])
-    if 'gt' in filter_config:
-        mask &= (data > filter_config['gt'])
-    if 'lt' in filter_config:
-        mask &= (data < filter_config['lt'])
-    if 'eq' in filter_config:
-        mask &= (data == filter_config['eq'])
-    
-    # Set areas not meeting criteria to -1.0 (will appear dark after normalization)
-    result[~mask] = -1.0
-    
-    # Convert back to torch if needed
-    if is_torch:
-        result = torch.from_numpy(result).to(device)
-    
-    return result
+        mask = torch.ones_like(data, dtype=torch.bool)
+        
+        if 'gte' in filter_config:
+            mask = mask & (data >= filter_config['gte'])
+        if 'lte' in filter_config:
+            mask = mask & (data <= filter_config['lte'])
+        if 'gt' in filter_config:
+            mask = mask & (data > filter_config['gt'])
+        if 'lt' in filter_config:
+            mask = mask & (data < filter_config['lt'])
+        
+        # Return binary mask or filtered continuous data
+        if is_binary:
+            return mask.float()
+        else:
+            return torch.where(mask, data, torch.zeros_like(data))
+    else:
+        # NumPy path
+        mask = np.ones_like(data, dtype=bool)
+        
+        if 'gte' in filter_config:
+            mask = mask & (data >= filter_config['gte'])
+        if 'lte' in filter_config:
+            mask = mask & (data <= filter_config['lte'])
+        if 'gt' in filter_config:
+            mask = mask & (data > filter_config['gt'])
+        if 'lt' in filter_config:
+            mask = mask & (data < filter_config['lt'])
+        
+        # Return binary mask or filtered continuous data
+        if is_binary:
+            return mask.astype(np.float32)
+        else:
+            return np.where(mask, data, 0.0)
 
+def apply_layer_transform(data, layer_config):
+    """
+    Apply transformations to layer data including filtering and normalization.
+    
+    Handles both torch.Tensor and numpy arrays.
+    
+    Args:
+        data: numpy array or torch tensor of layer data
+        layer_config: Layer configuration dict with optional 'filter' and 'normalize' keys
+        
+    Returns:
+        Transformed data (same type as input)
+    """
+    is_torch = isinstance(data, torch.Tensor)
+    is_binary = is_binary_layer(layer_config)
+    filter_config = layer_config.get('filter', {})
+    
+    # Step 1: Apply filters (thresholding, range filtering)
+    if filter_config:
+        data = apply_filter(data, layer_config)
+    
+    # Step 2: Convert to binary if needed
+    if is_binary:
+        if is_torch:
+            data = (data > 0.5).float()
+        else:
+            data = (data > 0.5).astype(np.float32)
+    
+    # Step 3: Apply normalization
+    data = normalize_layer(data, layer_config)
+    
+    return data
+
+def normalize_layer(data, layer_config):
+    """
+    Normalize data layer based on configuration.
+    
+    Supports multiple normalization strategies:
+    - 'minmax': Normalize to [0, 1] using min-max scaling
+    - 'standardize': Z-score normalization (mean=0, std=1)
+    - 'percentile': Clip to percentiles then normalize to [0, 1]
+    - 'clip': Clip to specified range (no scaling)
+    - 'custom': Custom min/max normalization with specified bounds
+    - None: No normalization (binary layers, already normalized data)
+    
+    Handles both torch.Tensor and numpy arrays.
+    
+    Args:
+        data: Input data (torch.Tensor or numpy array)
+        layer_config: Layer configuration with optional 'normalize' key
+        
+    Returns:
+        Normalized data (same type as input)
+        
+    Config examples:
+        normalize: 'minmax'
+        
+        normalize: 'percentile'
+        lower_percentile: 2
+        upper_percentile: 98
+        
+        normalize: 'clip'
+        clip_range: [-1, 1]
+        
+        normalize: 'custom'
+        normalize_params:
+          min: 250  # Kelvin
+          max: 320  # Kelvin
+    """
+    is_torch = isinstance(data, torch.Tensor)
+    normalize_method = layer_config.get('normalize', None)
+    
+    # No normalization needed
+    if normalize_method is None:
+        return data
+    
+    # Handle NaN values
+    if is_torch:
+        data = torch.nan_to_num(data, nan=0.0)
+    else:
+        data = np.nan_to_num(data, nan=0.0)
+    
+    # Apply normalization method
+    if normalize_method == 'minmax':
+        # Normalize to [0, 1]
+        if is_torch:
+            data_min = data.min()
+            data_max = data.max()
+            if data_max > data_min:
+                data = (data - data_min) / (data_max - data_min + 1e-8)
+        else:
+            data_min = data.min()
+            data_max = data.max()
+            if data_max > data_min:
+                data = (data - data_min) / (data_max - data_min + 1e-8)
+    
+    elif normalize_method == 'standardize':
+        # Z-score normalization: (x - mean) / std
+        if is_torch:
+            mean = data.mean()
+            std = data.std()
+            if std > 1e-8:
+                data = (data - mean) / std
+        else:
+            mean = data.mean()
+            std = data.std()
+            if std > 1e-8:
+                data = (data - mean) / std
+    
+    elif normalize_method == 'percentile':
+        # Clip to percentiles then normalize to [0, 1]
+        lower_percentile = layer_config.get('lower_percentile', 2)
+        upper_percentile = layer_config.get('upper_percentile', 98)
+        
+        if is_torch:
+            # PyTorch doesn't have percentile, use quantile
+            p_low = torch.quantile(data, lower_percentile / 100.0)
+            p_high = torch.quantile(data, upper_percentile / 100.0)
+            data = torch.clamp(data, p_low, p_high)
+            if p_high > p_low:
+                data = (data - p_low) / (p_high - p_low + 1e-8)
+        else:
+            p_low = np.percentile(data, lower_percentile)
+            p_high = np.percentile(data, upper_percentile)
+            data = np.clip(data, p_low, p_high)
+            if p_high > p_low:
+                data = (data - p_low) / (p_high - p_low + 1e-8)
+    
+    elif normalize_method == 'clip':
+        # Clip to specified range
+        clip_range = layer_config.get('clip_range', [-1, 1])
+        if is_torch:
+            data = torch.clamp(data, clip_range[0], clip_range[1])
+        else:
+            data = np.clip(data, clip_range[0], clip_range[1])
+    
+    elif normalize_method == 'custom':
+        # Custom normalization with configurable min/max
+        # Useful for domain-specific data like temperature in Kelvin
+        normalize_params = layer_config.get('normalize_params', {})
+        data_min = normalize_params.get('min', None)
+        data_max = normalize_params.get('max', None)
+        
+        if data_min is None or data_max is None:
+            raise ValueError(
+                f"Custom normalization requires 'normalize_params' with 'min' and 'max' keys. "
+                f"Got: {normalize_params}"
+            )
+        
+        # Clip to specified range then normalize to [0, 1]
+        if is_torch:
+            data = torch.clamp(data, data_min, data_max)
+            if data_max > data_min:
+                data = (data - data_min) / (data_max - data_min + 1e-8)
+        else:
+            data = np.clip(data, data_min, data_max)
+            if data_max > data_min:
+                data = (data - data_min) / (data_max - data_min + 1e-8)
+    
+    else:
+        raise ValueError(f"Unknown normalization method: {normalize_method}")
+    
+    return data
 
 def collate_fn(batch):
     """
