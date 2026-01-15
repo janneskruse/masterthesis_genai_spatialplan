@@ -118,8 +118,10 @@ vae_groups:
     num_down_layers: 2
     num_mid_layers: 2
     num_up_layers: 2
-    tanh_activation: True
-    tanh_scaling: 0.95
+    checkpoint_name: 'satellite_vae_ckpt.pth'
+    latents_dir: 'satellite_latents'
+    stats_dir: 'satellite_stats'
+    samples_dir: 'satellite_samples'
     
   # Land-use/urban layout VAE
   semantic:
@@ -134,7 +136,10 @@ vae_groups:
     num_down_layers: 2
     num_mid_layers: 2
     num_up_layers: 2
-    tanh_activation: False  # Binary + continuous mixed
+    checkpoint_name: 'semantic_vae_ckpt.pth'
+    latents_dir: 'semantic_latents'
+    stats_dir: 'semantic_stats'
+    samples_dir: 'semantic_samples'
     
   # Environmental conditions VAE
   environmental:
@@ -149,7 +154,10 @@ vae_groups:
     num_down_layers: 2
     num_mid_layers: 2
     num_up_layers: 2
-    tanh_activation: False
+    checkpoint_name: 'environmental_vae_ckpt.pth'
+    latents_dir: 'environmental_latents'
+    stats_dir: 'environmental_stats'
+    samples_dir: 'environmental_samples'
 
 # ===========================================================================
 # DIFFUSION PARAMETERS
@@ -169,7 +177,6 @@ diffusion_stages:
   # Stage 1: Generate semantic urban layout
   semantic:
     prediction_group: 'semantic'
-    prediction_layers: ['buildings', 'streets', 'buildings_heights', 'vegetation']
     
     # U-Net architecture
     unet_config:
@@ -214,7 +221,6 @@ diffusion_stages:
   # Stage 2: Render satellite RGB from semantic layout
   satellite:
     prediction_group: 'rgb'
-    prediction_layers: ['rgb']
     
     # U-Net architecture
     unet_config:
@@ -275,13 +281,10 @@ train_params:
       use_discriminator: True
       use_perceptual: True
       penalize_out_of_range: True
-      checkpoint_name: 'satellite_vae_ckpt.pth'
-      latents_dir: 'satellite_latents'
-      stats_dir: 'satellite_stats'
-      samples_dir: 'satellite_samples'
+      tanh_activation: True
+      tanh_scaling: 0.95
       img_save_steps: 64
 
-      
     semantic:
       epochs: 50
       batch_size: 4
@@ -292,10 +295,7 @@ train_params:
       dice_weight: 0.5  # Default dice weight
       use_discriminator: False
       use_perceptual: False
-      checkpoint_name: 'semantic_vae_ckpt.pth'
-      latents_dir: 'semantic_latents'
-      stats_dir: 'semantic_stats'
-      samples_dir: 'semantic_samples'
+      tanh_activation: False  # Binary + continuous mixed
       img_save_steps: 64
       # Per-layer dice loss configuration (overrides defaults from layer registry)
       layer_dice_config:
@@ -311,10 +311,8 @@ train_params:
       kl_weight: 0.000001
       use_discriminator: False
       use_perceptual: False
-      checkpoint_name: 'environmental_vae_ckpt.pth'
-      latents_dir: 'environmental_latents'
-      stats_dir: 'environmental_stats'
-      samples_dir: 'environmental_samples'
+      tanh_activation: True
+      tanh_scaling: 0.95
       img_save_steps: 64
   
   # Diffusion training (per stage)
