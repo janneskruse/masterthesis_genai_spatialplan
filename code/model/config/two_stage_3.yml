@@ -63,7 +63,10 @@ layers:
   lst:
     layer: 'landsat_surface_temp_b10_masked'
     type: 'continuous'
-    normalize: 'standardize'
+    normalize: 'custom'
+    normalize_params:
+      min: 250  # Kelvin
+      max: 320  # Kelvin
 
 # ===========================================================================
 # DATASET PARAMETERS

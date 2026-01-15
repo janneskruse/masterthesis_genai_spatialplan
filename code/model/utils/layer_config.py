@@ -229,6 +229,60 @@ def get_conditioning_layers(stage_config: Dict) -> Dict[str, List[str]]:
     return grouped_layers
 
 
+def get_channel_names(layer_name: str, layer_config: Dict) -> List[str]:
+    """
+    Get properly formatted channel names for a layer.
+    
+    - Single channel layers: returns ['layer_name']
+    - Multi-channel layers: returns ['layer_name:channel1', 'layer_name:channel2', ...]
+    
+    Args:
+        layer_name: Name of the layer
+        layer_config: Layer configuration dict
+        
+    Returns:
+        List of channel names with proper formatting
+    
+    Examples:
+        get_channel_names('buildings', {'type': 'binary'}) -> ['buildings']
+        get_channel_names('rgb', {'channels': ['red', 'green', 'blue']}) -> ['rgb:red', 'rgb:green', 'rgb:blue']
+    """
+    if 'channels' in layer_config:
+        channels = layer_config['channels']
+        if len(channels) == 1:
+            # Single channel: use layer name only
+            return [layer_name]
+        else:
+            # Multiple channels: use layer:channel format
+            return [f"{layer_name}:{ch}" for ch in channels]
+    else:
+        # No channels specified: single channel layer
+        return [layer_name]
+
+
+def get_layer_channels_from_names(channel_names: List[str], target_layer: str) -> List[Tuple[int, str]]:
+    """
+    Find indices and channel names for a specific layer.
+    
+    Args:
+        channel_names: List of all channel names in the patch
+        target_layer: Layer name to find (e.g., 'rgb')
+        
+    Returns:
+        List of (index, channel_name) tuples for the target layer
+        
+    Examples:
+        channel_names = ['rgb:red', 'rgb:green', 'rgb:blue', 'buildings', 'streets']
+        get_layer_channels_from_names(channel_names, 'rgb') -> [(0, 'rgb:red'), (1, 'rgb:green'), (2, 'rgb:blue')]
+    """
+    matches = []
+    for idx, name in enumerate(channel_names):
+        layer_name = name.split(':')[0]
+        if layer_name == target_layer:
+            matches.append((idx, name))
+    return matches
+
+
 def validate_layer_config(config: Dict) -> None:
     """
     Validate layer configuration for consistency.

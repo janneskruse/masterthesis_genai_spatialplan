@@ -20,8 +20,14 @@ from torch.utils.data.dataset import Dataset
 from model.utils.diffusion_utils import load_latents
 from model.utils.read_yaml import get_nested
 from model.utils.diffusion_utils import load_single_latent
-from model.utils.data_utils import apply_range_filter
+from model.utils.data_utils import apply_layer_transform
 from model.utils.config_utils import compute_patch_and_latent_sizes
+from model.utils.layer_config import (
+    get_layer_info,
+    count_layer_channels,
+    get_channel_names,
+    get_layer_channels_from_names,
+)
 from helpers.load_configs import load_configs
 from model.dataset.compare import reconcile_patches_with_latents
 
@@ -45,7 +51,7 @@ class UrbanInpaintingDataset(Dataset):
                  latent_path=None,
                  use_cached_patches: bool = True,
                  cache_dir: Optional[str] = None,
-                 mode: str = 'satellite',
+                 mode: str = 'default',
         ):
         """
         :param split: 'train' or 'val'
@@ -53,7 +59,7 @@ class UrbanInpaintingDataset(Dataset):
         :param latent_path: path to latent files
         :param use_cached_patches: whether to use cached patches
         :param cache_dir: directory for cached patches
-        :param mode: 'semantic' or 'satellite' - determines which stage configs to use
+        :param mode: 'default', 'vae:satellite', 'vae:environmental', 'diffusion:semantic', etc.
         """
         
         ###### Setup config variables #######
@@ -69,17 +75,37 @@ class UrbanInpaintingDataset(Dataset):
         self.dataset_config = dataset_config
         self.mode = mode
         
-        # Get mode-specific configs
+        # Validate mode format
+        if mode != 'default':
+            mode_parts = mode.split(':')
+            if len(mode_parts) != 2 or mode_parts[0] not in ['vae', 'diffusion']:
+                raise ValueError(
+                    f"Invalid mode: '{mode}'. Must be 'default', 'vae:<group_name>', or 'diffusion:<stage_name>'. "
+                    f"Examples: 'vae:satellite', 'diffusion:semantic'"
+                )
+            self.mode_type = mode_parts[0]  # 'vae' or 'diffusion'
+            self.mode_target = mode_parts[1]  # 'satellite', 'semantic', etc.
+        else:
+            self.mode_type = 'default'
+            self.mode_target = None
+        
+        # Store global layer registry and VAE groups
+        self.layers_registry = config.get('layers', {})
+        self.vae_groups = config.get('vae_groups', {})
+        self.diffusion_stages = config.get('diffusion_stages', {})
+        
+        # Legacy configs (keep for backward compatibility during transition)
         ldm_config = config.get('ldm_params', {})
         autoencoder_config = config.get('autoencoder_params', {})
         
-        # Select configs based on mode
-        if self.mode == 'semantic':
-            self.ldm_config = ldm_config.get('semantic', ldm_config)
-            self.autoencoder_config = autoencoder_config.get('semantic', autoencoder_config)
-        else:  # satellite
-            self.ldm_config = ldm_config.get('satellite', ldm_config)
-            self.autoencoder_config = autoencoder_config.get('satellite', autoencoder_config)
+        # For legacy mode compatibility
+        if mode in ['semantic', 'satellite']:
+            self.ldm_config = ldm_config.get(mode, ldm_config)
+            self.autoencoder_config = autoencoder_config.get(mode, autoencoder_config)
+        else:
+            # Use first available config as default
+            self.ldm_config = ldm_config
+            self.autoencoder_config = autoencoder_config
         
         # Basic parameters
         big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
@@ -109,24 +135,25 @@ class UrbanInpaintingDataset(Dataset):
         self.im_channels = im_channels
         self.min_valid_percent = min_valid_percent
 
-        # Conditioning configuration (from mode-specific ldm_config)
-        condition_config = self.ldm_config.get('condition_config', None)
-        if condition_config is None:
-            raise ValueError(f"Conditioning configuration not found for mode '{self.mode}'")
-
-        self.condition_types = condition_config.get('condition_types', [])
-        self.hole_config = condition_config.get('hole_config', {
+        # Build list of ALL layers from global config (ordered)
+        self.all_layer_names = list(self.layers_registry.keys())
+        
+        # Compute total channels across all layers
+        self.total_channels = sum(
+            count_layer_channels(layer_config) 
+            for layer_config in self.layers_registry.values()
+        )
+        
+        # Inpainting configuration (top-level, shared across all stages)
+        self.inpainting_config = config.get('inpainting_params', {
             'type': 'random_square',
             'size_px': 64
         })
         
-        # Parse layer configurations (supports both string and dict formats)
-        self.osm_layers, self.osm_layer_configs = self._parse_layer_config(
-            get_nested(condition_config, ['osm_layers'], ['buildings', 'streets', 'water'])
-        )
-        self.environmental_layers, self.env_layer_configs = self._parse_layer_config(
-            get_nested(condition_config, ['environmental_layers'], ['ndvi', 'landsat_surface_temp_b10_masked'])
-        )
+        # Legacy conditioning configuration (keep for backward compatibility during transition)
+        # TODO: Remove once fully migrated to new config structure
+        condition_config = self.ldm_config.get('condition_config', {})
+        self.condition_types = condition_config.get('condition_types', [])
         
         # Select regions based on split
         train_regions = dataset_config.get('train_regions', ['Dresden', 'Hamburg', 'Stuttgart'])
@@ -399,193 +426,96 @@ class UrbanInpaintingDataset(Dataset):
         index: int
     ) -> Dict[str, torch.Tensor]:
         """
-        Extract and process a single patch from Xarray (existing __getitem__ logic).
+        Extract and process a single patch from Xarray.
+        
+        Creates a unified tensor containing ALL layers from the global layer config,
+        properly transformed and normalized according to each layer's configuration.
+        Includes dynamically generated inpainting mask.
         
         Returns:
-            Dictionary with 'image' and optional 'conditioning' data
+            Dictionary with:
+            - 'image': [C, H, W] tensor of all layers (including inpainting_mask)
+            - 'meta': metadata dict with spatial_names list
         """
         ps = self.patch_size
         data_layers = self.data_layers_per_region[region]
         
-        # Extract satellite image
-        img_patch = data_layers['satellite'].isel(
-            y=slice(y, y+ps),
-            x=slice(x, x+ps)
-        ).values.astype(np.float32)
+        # Extract all layers and stack them
+        layer_tensors = []
+        channel_names = []
         
-        img_patch = self._to_chw(img_patch)
-        img_patch = self._normalize_layer(img_patch, 'satellite')
-        
-        # Prepare conditioning
-        patch_info = {
-            'index': index,
-            'region': region,
-            'y': y,
-            'x': x,
-            'split': self.split
-        }
-        
-        # Street blocks for inpainting mask
-        street_blocks_layer = None
-        if 'street_blocks' in data_layers and self.hole_config['type'] == 'street_blocks':
-            street_blocks_layer = data_layers['street_blocks'].isel(
+        for layer_name in self.all_layer_names:
+            layer_config = self.layers_registry[layer_name]
+            source_layer = get_layer_info(self.layers_registry, layer_name).get('layer', layer_name)
+            
+            # Special handling for inpainting_mask (generated on-the-fly)
+            if layer_name == 'inpainting_mask':
+                # Get street blocks if available for mask generation
+                street_blocks_layer = None
+                if 'street_blocks' in data_layers and self.inpainting_config.get('type') == 'street_blocks':
+                    street_blocks_layer = data_layers['street_blocks'].isel(
+                        y=slice(y, y+ps),
+                        x=slice(x, x+ps)
+                    ).values
+                
+                # Create inpainting mask
+                patch_info = {
+                    'index': index,
+                    'region': region,
+                    'y': y,
+                    'x': x,
+                    'split': self.split
+                }
+                inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer, patch_info)
+                
+                # Convert to CHW tensor
+                inpaint_mask = self._to_chw(inpaint_mask)
+                layer_tensor = torch.from_numpy(inpaint_mask).float()
+                layer_tensors.append(layer_tensor)
+                channel_names.append('inpainting_mask')
+                continue
+            
+            if source_layer not in data_layers:
+                print(f"⚠ Warning: Layer '{source_layer}' not found in dataset for region {region}")
+                continue
+            
+            # Extract patch
+            layer_data = data_layers[source_layer].isel(
                 y=slice(y, y+ps),
                 x=slice(x, x+ps)
-            ).values
-        
-        inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer, patch_info)
-        
-        # Build conditioning dict
-        cond_inputs = {}
-        spatial = []
-        spatial_names = []
-        
-        if 'inpainting' in self.condition_types:
-            # Only include masked RGB if explicitly requested
-            if 'masked_rgb' in self.condition_types:
-                masked_image = img_patch * (1.0 - inpaint_mask)
-                rgb_names = ['blue', 'green', 'red']
-                self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
+            ).values.astype(np.float32)
             
-            # Always include mask for inpainting
-            self._append_spatial(spatial, spatial_names, inpaint_mask, 'inpaint_mask')
-        
-        if 'osm_features' in self.condition_types:
-            osm_layers = []
-            osm_layer_names = []  # Track which layers are included
+            # Apply transformations (filtering, normalization)
+            layer_data = apply_layer_transform(layer_data, layer_config)
             
-            for idx, layer_name in enumerate(self.osm_layers):
-                if layer_name in data_layers and data_layers[layer_name] is not None:
-                    layer_patch = data_layers[layer_name].isel(
-                        y=slice(y, y+ps),
-                        x=slice(x, x+ps)
-                    ).values
-                    
-                    # Apply normalization and filters
-                    layer_patch = self._apply_layer_transform(layer_patch, layer_name, idx, 'osm')
-                    layer_patch = self._to_chw(layer_patch)
-                    osm_layers.append(layer_patch)
-                    
-                    # Use custom key from config
-                    layer_config = self.osm_layer_configs[idx]
-                    display_name = layer_config.get('key', layer_name)
-                    osm_layer_names.append(display_name)
+            # Convert to CHW format
+            layer_data = self._to_chw(layer_data)
             
-            if osm_layers:
-                osm_features = np.concatenate(osm_layers, axis=0)
-                self._append_spatial(spatial, spatial_names, osm_features, 'osm', channel_names=osm_layer_names, layer_configs=self.osm_layer_configs)
-        
-        if 'environmental' in self.condition_types:
-            env_layers = []
-            env_layer_names = []  # Track which layers are included
+            # Convert to tensor
+            layer_tensor = torch.from_numpy(layer_data).float()
+            layer_tensors.append(layer_tensor)
             
-            for idx, layer_name in enumerate(self.environmental_layers):
-                if layer_name in data_layers and data_layers[layer_name] is not None:
-                    layer_patch = data_layers[layer_name].isel(
-                        y=slice(y, y+ps),
-                        x=slice(x, x+ps)
-                    ).values
-                    
-                    # Apply normalization and filters
-                    layer_patch = self._apply_layer_transform(layer_patch, layer_name, idx, 'env')
-                    layer_patch = self._to_chw(layer_patch)
-                    env_layers.append(layer_patch)
-                    
-                    # Use custom key from config
-                    layer_config = self.env_layer_configs[idx]
-                    display_name = layer_config.get('key', layer_name)
-                    env_layer_names.append(display_name)
-            
-            if env_layers:
-                env_features = np.concatenate(env_layers, axis=0)
-                self._append_spatial(spatial, spatial_names, env_features, 'env', channel_names=env_layer_names, layer_configs=self.env_layer_configs)
+            # Track channel names using proper formatting
+            formatted_names = get_channel_names(layer_name, layer_config)
+            channel_names.extend(formatted_names)
         
-        if spatial:
-            cond_inputs['image'] = torch.cat(spatial, dim=0)
+        # Stack all layers into one tensor
+        unified_patch = torch.cat(layer_tensors, dim=0)  # [C_total, H, W]
         
-        cond_inputs['meta'] = {
+        # Create metadata
+        metadata = {
             'y': y,
             'x': x,
             'time': str(data_layers['date']),
             'region': region,
-            'spatial_names': spatial_names
+            'spatial_names': channel_names,
+            'patch_index': index
         }
         
-        # Return as dict for easy serialization
         return {
-            'image': torch.from_numpy(img_patch).float(),
-            'conditioning': cond_inputs if len(self.condition_types) > 0 else None
+            'image': unified_patch,
+            'meta': metadata
         }
-        
-    def _apply_layer_transform(self, data, layer_name, layer_idx, layer_type='osm'):
-        """
-        Apply transformations to layer data including normalization and range filters.
-        
-        Args:
-            data: numpy array of layer data
-            layer_name: name of the layer
-            layer_idx: index in the layer configs list
-            layer_type: 'osm' or 'env'
-            
-        Returns:
-            Transformed data array
-        """
-        # Get layer config by index
-        layer_configs = self.osm_layer_configs if layer_type == 'osm' else self.env_layer_configs
-        layer_config = layer_configs[layer_idx]
-        
-        # First apply range filters if specified (on original data range)
-        if 'filters' in layer_config and layer_config['filters']:
-            data = apply_range_filter(data, layer_config['filters'])
-        
-        # Then normalize the filtered result
-        data = self._normalize_layer(data, layer_name)
-        
-        return data
-    
-    def _parse_layer_config(self, layers_config: List) -> tuple[list[str], dict]:
-        """
-        Parse layer configuration supporting both string and dict formats.
-        
-        String format: ['buildings', 'streets']
-        Dict format: [{'vegetation': {'layer': 'ndvi', 'gte': 0.2, 'predict': True}}]
-        
-        Returns:
-            tuple: (layer_names, layer_configs)
-                - layer_names: List of data layer names for accessing data (can have duplicates)
-                - layer_configs: List of dicts (parallel to layer_names) with config for each entry
-        """
-        layer_names = []
-        layer_configs = []
-        
-        if not layers_config:
-            return [], []
-        
-        for item in layers_config:
-            if isinstance(item, str):
-                # Simple string format
-                layer_names.append(item)
-                layer_configs.append({'layer': item, 'key': item, 'predict': True, 'filters': {}})
-            elif isinstance(item, dict):
-                # Dict format with metadata
-                for layer_key, layer_config in item.items():
-                    if isinstance(layer_config, dict):
-                        # Get the actual data layer name
-                        data_layer = layer_config.get('layer', layer_key)
-                        layer_names.append(data_layer)
-                        
-                        # Store full config including filters and metadata
-                        layer_configs.append({
-                            'layer': data_layer,
-                            'key': layer_key,  # Original key (e.g., 'vegetation')
-                            'predict': layer_config.get('predict', True),
-                            'filters': {
-                                k: v for k, v in layer_config.items() 
-                                if k in ['gte', 'lte', 'gt', 'lt', 'eq']
-                            }
-                        })
-        
-        return layer_names, layer_configs
     
     def _estimate_cache_size(self) -> int:
         """Estimate cache directory size in MB"""
@@ -600,6 +530,11 @@ class UrbanInpaintingDataset(Dataset):
         Pre-compute valid patch locations from the dataset
         """
         
+        rgb_layer = get_layer_info(self.layers_registry, 'rgb')
+        
+        rgb_layer_name = rgb_layer.get('layer', 'planetscope_sr_4band')
+        rgb_layer_channels = rgb_layer.get('channels', ['blue', 'green', 'red'])
+        
         all_patches = []
         
         for region in self.regions:
@@ -608,7 +543,7 @@ class UrbanInpaintingDataset(Dataset):
         
             # Get valid dates with planetscope data
             valid_planet_dates = (
-                merged_xs['planetscope_sr_4band']
+                merged_xs[rgb_layer_name]
                 .notnull()
                 .sum(dim=['x', 'y']) > 0
             ).any(dim='channel').compute()
@@ -627,7 +562,7 @@ class UrbanInpaintingDataset(Dataset):
             date_data = merged_xs.sel(time=selected_date)
             
             # Get satellite image and compute validity mask
-            img_da = date_data['planetscope_sr_4band'].sel(channel=['blue', 'green', 'red'])
+            img_da = date_data[rgb_layer_name].sel(channel=rgb_layer_channels)
             valid_mask = (~img_da.isnull()).all(dim='channel').compute()
             
             # Handle reflectance scaling
@@ -636,22 +571,28 @@ class UrbanInpaintingDataset(Dataset):
             
             # Store data layers for this region
             data_layers = {
-                'satellite': img_da,
+                rgb_layer_name: img_da,
                 'valid_mask': valid_mask,
                 'date': selected_date
             }
         
             # Add optional layers
-            for layer in self.osm_layers:
-                if layer in date_data:
-                    data_layers[layer] = date_data[layer]
-        
-            # Add environmental data if available
-            for layer in self.environmental_layers:
-                if layer in date_data:
-                    # layer_data = date_data[layer].sel(time=self.selected_date, method='nearest')
-                    # data_layers[layer] = layer_data.values
-                    data_layers[layer] = date_data[layer]
+            for layer in self.all_layer_names:
+                if layer in ['rgb', 'inpainting_mask']:
+                    continue  # already handled
+                
+                layer_info = get_layer_info(self.layers_registry, layer)
+                source_layer = layer_info.get('layer', layer)
+                layer_channels = layer_info.get('channels', None)
+                
+                if source_layer in date_data:
+                    if layer_channels is not None:
+                        layer_da = date_data[source_layer].sel(channel=layer_channels).compute()
+                    else:
+                        layer_da = date_data[source_layer].compute()
+                    data_layers[source_layer] = layer_da
+                else:
+                    print(f"⚠ Layer '{source_layer}' not found in dataset for region {region}")
                     
             # Store data layers for region
             self.data_layers_per_region[region] = data_layers
@@ -744,66 +685,6 @@ class UrbanInpaintingDataset(Dataset):
         
         return mask
     
-    def _normalize_layer(self, data, layer_name):
-        """
-        Normalize data layer to [-1, 1] range
-        """
-        # Different normalization strategies per layer type
-        if layer_name in ['satellite']:
-            # Handle NaN values before clipping
-            data = np.nan_to_num(data, nan=0.0)
-            # Clip to reasonable range and normalize
-            data = np.clip(data, 0, 1)  # ensure in [0, 1]
-            data = data* 2.0 - 1.0
-        elif layer_name in ['ndvi']:
-            # Handle NaN values
-            data = np.nan_to_num(data, nan=0.0)
-            # (NDVI is already in [-1, 1] range typically)
-            data = np.clip(data, -1, 1)
-        elif layer_name in ['landsat_surface_temp_b10_masked']:
-            # Temperature - normalize to reasonable range
-            # Create mask for valid data (not NaN and within reasonable range)
-            # For Celsius: exclude unreasonable values (< -50 or > 100)
-            # For Kelvin: exclude unreasonable values (< 200 or > 400)
-            valid_mask = ~np.isnan(data) & (np.abs(data) > 0.01)  # Not NaN and not zero
-            
-            # Only normalize valid temperature data
-            if valid_mask.any():
-                # Check if data is in Kelvin (>200) or Celsius (<100)
-                # Typical range: Kelvin 250-350K, Celsius -20 to 80°C
-                mean_val = data[valid_mask].mean()
-                
-                if mean_val > 200:
-                    # Data is in Kelvin - clip to reasonable range (250-350K = -23 to 77°C)
-                    data_clipped = np.clip(data, 250, 350)
-                    # Normalize to [-1, 1]
-                    data_normalized = ((data_clipped - 250) / 100.0) * 2.0 - 1.0
-                else:
-                    # Data is in Celsius - clip to reasonable range (0 to 70°C for typical LST)
-                    data_clipped = np.clip(data, 0, 70)
-                    # Normalize to [-1, 1]
-                    # 35°C (middle of range) -> 0.0, 0°C -> -1.0, 70°C -> 1.0
-                    data_normalized = ((data_clipped - 35) / 35.0)
-                
-                # Apply mask: valid areas get normalized data, invalid areas get -1.0 (will appear dark)
-                data = np.where(valid_mask, data_normalized, -1.0)
-            else:
-                # No valid LST data - fill with -1.0 (dark)
-                data = np.full_like(data, -1.0)
-        else:
-            # Binary or categorical layers
-            # Handle NaN values
-            data = np.nan_to_num(data, nan=0.0)
-            
-            if data.max() <= 1.0:
-                data = data * 2.0 - 1.0 # normalize to [-1, 1]
-            else:
-                # Normalize to [0, 1] then to [-1, 1]
-                data = (data - data.min()) / (data.max() - data.min() + 1e-6)
-                data = data * 2.0 - 1.0
-        
-        return data
-    
     def __len__(self):
         return len(self.patches)
     
@@ -829,70 +710,6 @@ class UrbanInpaintingDataset(Dataset):
 
         return arr.astype(np.float32, copy=False)
 
-    def _apply_context_suffix(self, display_name: str, layer_configs: list = None) -> str:
-        """
-        Apply _context suffix to display name if in semantic mode and predict=False.
-        
-        Args:
-            display_name: Display name (e.g., 'vegetation', 'lst')
-            layer_configs: List of config dicts (parallel to layer names)
-            
-        Returns:
-            Display name with optional _context suffix
-        """
-        if self.mode != 'semantic' or not layer_configs:
-            return display_name
-        
-        # Find matching config by checking if display_name matches the config's key
-        for config in layer_configs:
-            if config.get('key') == display_name:
-                if not config.get('predict', True):
-                    return f"{display_name}_context"
-                break
-        
-        return display_name
-
-    def _append_spatial(
-        self, 
-        stack: list, 
-        names: list, 
-        arr: np.ndarray, 
-        base_name: str, 
-        channel_names: list = None,
-        layer_configs: list = None
-    ):
-        """
-        Add array to spatial stack with proper channel naming.
-        
-        Args:
-            stack: List to append tensors to
-            names: List to append channel names to
-            arr: Numpy array to add
-            base_name: Base name for the layer (e.g., 'osm', 'env')
-            channel_names: Optional list of display names (already resolved with custom keys)
-            layer_configs: Optional list of config dicts for looking up predict flag
-        """
-        arr = self._to_chw(arr)
-        stack.append(torch.from_numpy(arr).float())
-        
-        if arr.shape[0] == 1:
-            # Single channel
-            if channel_names and len(channel_names) == 1:
-                final_name = self._apply_context_suffix(channel_names[0], layer_configs)
-                names.append(f"{base_name}:{final_name}")
-            else:
-                names.append(base_name)
-        else:
-            # Multi-channel
-            if channel_names is not None and len(channel_names) == arr.shape[0]:
-                for display_name in channel_names:
-                    final_name = self._apply_context_suffix(display_name, layer_configs)
-                    names.append(f"{base_name}:{final_name}")
-            else:
-                # Fall back to numeric indices
-                names.extend([f"{base_name}:{i}" for i in range(arr.shape[0])])
-
-
     def __getitem__(self, index: int):
         """
         Get a single training sample.
@@ -908,7 +725,13 @@ class UrbanInpaintingDataset(Dataset):
             return self._getitem_xarray(index)
         
     def _getitem_cached(self, index: int):
-        """Load pre-saved patch from disk"""
+        """
+        Load pre-saved patch from disk.
+        
+        Returns:
+            - If use_latents=False: Returns patch_data (dict with 'image' and 'meta')
+            - If use_latents=True: Returns latent + conditioning (KEEP AS IS for now)
+        """
         y, x, region, cache_idx = self.patches[index]
         
         # Load from cache
@@ -916,7 +739,8 @@ class UrbanInpaintingDataset(Dataset):
         patch_data = torch.load(patch_path)
         
         if self.use_latents:
-            # Load corresponding prediction latent
+            # TODO: Refactor latent handling in next step
+            # For now, keep existing latent logic (as instructed)
             latent_path = self.latent_maps[index]
             latent = load_single_latent(latent_path, device=None)
             
@@ -937,7 +761,7 @@ class UrbanInpaintingDataset(Dataset):
                         f"This indicates a data corruption issue. Please regenerate latents."
                     )
                 
-                # Prepare conditioning with latent_cond (same logic as _getitem_xarray)
+                # Prepare conditioning with latent_cond (existing logic - keep for now)
                 ps = self.patch_size
                 latent_h = ps // self.vae_downsample_factor
                 latent_w = ps // self.vae_downsample_factor
@@ -947,11 +771,11 @@ class UrbanInpaintingDataset(Dataset):
                 spatial_names = []
                 
                 # Extract mask from cached patch and downsample to latent resolution
-                if patch_data['conditioning'] is not None and 'image' in patch_data['conditioning']:
-                    cached_spatial_names = patch_data['conditioning']['meta'].get('spatial_names', [])
+                if 'meta' in patch_data:
+                    cached_spatial_names = patch_data['meta'].get('spatial_names', [])
                     try:
                         mask_idx = cached_spatial_names.index('inpaint_mask')
-                        mask_full = patch_data['conditioning']['image'][mask_idx:mask_idx+1, :, :]
+                        mask_full = patch_data['image'][mask_idx:mask_idx+1, :, :]
                         
                         # Downsample mask to latent resolution
                         mask_latent = mask_full.unsqueeze(0)  # [1, 1, H, W]
@@ -969,38 +793,16 @@ class UrbanInpaintingDataset(Dataset):
                         spatial.append(mask_latent)
                         spatial_names.append('inpaint_mask')
                 
-                # Add conditioning latent channels with proper semantic names
-                conditioning_channel_names = []
-                for layer_name in self.osm_layers:
-                    layer_idx = self.osm_layers.index(layer_name)
-                    layer_config = self.osm_layer_configs[layer_idx]
-                    display_name = layer_config.get('key', layer_name)
-                    display_name = self._apply_context_suffix(display_name, [layer_config])
-                    conditioning_channel_names.append(f'osm:{display_name}')
-                
-                for layer_name in self.environmental_layers:
-                    layer_idx = self.environmental_layers.index(layer_name)
-                    layer_config = self.env_layer_configs[layer_idx]
-                    display_name = layer_config.get('key', layer_name)
-                    display_name = self._apply_context_suffix(display_name, [layer_config])
-                    conditioning_channel_names.append(f'env:{display_name}')
-                
-                # Verify channel count matches
-                if len(conditioning_channel_names) != latent_cond.shape[0]:
-                    print(f"⚠ WARNING: Conditioning channel mismatch at index {index}!")
-                    print(f"  Expected {len(conditioning_channel_names)} channels: {conditioning_channel_names}")
-                    print(f"  Got {latent_cond.shape[0]} latent channels")
-                    conditioning_channel_names = [f'latent_cond_{i}' for i in range(latent_cond.shape[0])]
-                
+                # Add conditioning latent channels
                 for i in range(latent_cond.shape[0]):
                     spatial.append(latent_cond[i:i+1])
-                    spatial_names.append(conditioning_channel_names[i])
+                    spatial_names.append(f'latent_cond_{i}')
                 
                 cond_inputs['image'] = torch.cat(spatial, dim=0)
                 cond_inputs['meta'] = {
                     'y': y,
                     'x': x,
-                    'time': patch_data['conditioning']['meta'].get('time', ''),
+                    'time': patch_data['meta'].get('time', ''),
                     'region': region,
                     'spatial_names': spatial_names,
                     'uses_latent_conditioning': True
@@ -1014,11 +816,48 @@ class UrbanInpaintingDataset(Dataset):
             else:
                 return latent, cond_inputs
         else:
-            # Return raw image + conditioning
-            if len(self.condition_types) == 0:
-                return patch_data['image']
+            # Non-latent mode: Compose dataset based on mode
+            unified_image = patch_data['image']
+            spatial_names = patch_data['meta']['spatial_names']
+            
+            if self.mode_type == 'default':
+                # Default mode: RGB as image, everything else as conditioning
+                # Use layer registry to find RGB layer
+                rgb_layer_matches = get_layer_channels_from_names(spatial_names, 'rgb')
+                
+                if len(rgb_layer_matches) == 0:
+                    raise ValueError(
+                        f"Default mode requires 'rgb' layer, but it was not found in patch. "
+                        f"Available layers: {spatial_names}"
+                    )
+                
+                # Extract RGB indices and names
+                rgb_indices = [idx for idx, _ in rgb_layer_matches]
+                rgb_names = [name for _, name in rgb_layer_matches]
+                
+                # Get conditioning indices (everything except RGB)
+                cond_indices = [idx for idx in range(len(spatial_names)) if idx not in rgb_indices]
+                cond_names = [name for idx, name in enumerate(spatial_names) if idx not in rgb_indices]
+                
+                # Extract RGB image
+                image = unified_image[rgb_indices]  # [C_rgb, H, W]
+                
+                # Extract conditioning
+                if len(cond_indices) > 0:
+                    conditioning = unified_image[cond_indices]  # [C_cond, H, W]
+                    cond_meta = patch_data['meta'].copy()
+                    cond_meta['spatial_names'] = cond_names
+                    return image, {'image': conditioning, 'meta': cond_meta}
+                else:
+                    # No conditioning channels
+                    image_meta = patch_data['meta'].copy()
+                    image_meta['spatial_names'] = rgb_names
+                    return image, image_meta
+            
             else:
-                return patch_data['image'], patch_data['conditioning']
+                # VAE or diffusion mode: Return full unified patch for now
+                # TODO: Implement mode-specific composition in next step
+                return unified_image, patch_data['meta']
     
     def _getitem_xarray(self, index: int):
         """Extract patch on-the-fly from Xarray (existing logic)"""
@@ -1456,53 +1295,37 @@ class UrbanInpaintingDataset(Dataset):
     
     def _compute_conditioning_channels(self) -> int:
         """
-        Compute total number of image conditioning input channels.
+        Compute total number of conditioning channels (legacy method).
         
-        Returns:
-            Total channels: masked_rgb (3 if enabled) + mask (1) + osm (N) + env (M)
+        Note: This is kept for backward compatibility but should be updated
+        to reflect the new unified patch structure.
         """
-        total_channels = 0
-        
-        if 'inpainting' in self.condition_types:
-            # Add masked RGB channels if enabled
-            if 'masked_rgb' in self.condition_types:
-                total_channels += 3  # RGB channels
-            # Add mask channel
-            total_channels += 1  # Binary mask
-        
-        if 'osm_features' in self.condition_types:
-            total_channels += len(self.osm_layers)
-        
-        if 'environmental' in self.condition_types:
-            total_channels += len(self.environmental_layers)
-        
-        return total_channels
+        # In new structure, all layers are in patch_data['image']
+        # This method is now mainly for legacy compatibility
+        return self.total_channels
     
     def _print_summary(self):
         """Print dataset configuration summary"""
         print(f"\n{'='*60}")
         print(f"Dataset Configuration Summary")
         print(f"{'='*60}")
-        print(f"Stage/Mode: {self.mode.upper()}")
+        print(f"Mode: {self.mode}")
+        if hasattr(self, 'mode_type') and self.mode_type != 'default':
+            print(f"  Type: {self.mode_type}")
+            print(f"  Target: {self.mode_target}")
         print(f"Split: {self.split}")
         print(f"Loading mode: {'Cached patches' if self.use_cached_patches else 'On-the-fly Xarray'}")
         print(f"Total patches: {len(self.patches)}")
         print(f"Using latents: {self.use_latents}")
         print(f"Patch size: {self.patch_size}x{self.patch_size}")
-        print(f"Conditioning types: {self.condition_types}")
         
-        # Print computed conditioning channels
-        total_channels = self._compute_conditioning_channels()
-        print(f"\nConditioning channels breakdown:")
-        if 'inpainting' in self.condition_types:
-            if 'masked_rgb' in self.condition_types:
-                print(f"  - Masked RGB: 3 channels")
-            print(f"  - Inpainting mask: 1 channel")
-        if 'osm_features' in self.condition_types:
-            print(f"  - OSM features ({', '.join(self.osm_layers)}): {len(self.osm_layers)} channels")
-        if 'environmental' in self.condition_types:
-            print(f"  - Environmental ({', '.join(self.environmental_layers)}): {len(self.environmental_layers)} channels")
-        print(f"  → Total input channels: {total_channels}")
+        # Print layer information
+        print(f"\nUnified patch layers ({self.total_channels} total channels):")
+        for layer_name in self.all_layer_names:
+            layer_config = self.layers_registry[layer_name]
+            num_channels = count_layer_channels(layer_config)
+            layer_type = layer_config.get('type', 'continuous')
+            print(f"  - {layer_name}: {num_channels} channel(s) [{layer_type}]")
         
         if self.use_cached_patches:
             print(f"\nCache directory: {self.cache_dir}")
