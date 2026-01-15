@@ -67,6 +67,23 @@ layers:
     normalize_params:
       min: 250  # Kelvin
       max: 320  # Kelvin
+  
+  # Inpainting mask (generated on-the-fly)
+  inpainting_mask:
+    layer: 'inpainting_mask'  # Special layer: generated per patch
+    type: 'binary'
+
+# ===========================================================================
+# INPAINTING PARAMETERS
+# Shared across all training stages
+# ===========================================================================
+
+inpainting_params:
+  type: 'street_blocks'
+  max_coverage_percent: 25
+  size_px: 80
+  min_size_px: 40
+  max_size_px: 120
 
 # ===========================================================================
 # DATASET PARAMETERS
@@ -185,13 +202,6 @@ diffusion_stages:
     
     # Inpainting configuration
     inpainting:
-      hole_config:
-        type: 'street_blocks'
-        max_coverage_percent: 25
-        size_px: 80
-        min_size_px: 40
-        max_size_px: 120
-      
       mode: 'hard'  # or 'sdlike'
       loss: 'masked'  # or 'weighted'
       mask_loss_weight: 8.0
@@ -235,13 +245,6 @@ diffusion_stages:
     
     # Inpainting configuration
     inpainting:
-      hole_config:
-        type: 'street_blocks'
-        max_coverage_percent: 25
-        size_px: 80
-        min_size_px: 40
-        max_size_px: 120
-      
       mode: 'hard'
       loss: 'masked'
       mask_loss_weight: 8.0

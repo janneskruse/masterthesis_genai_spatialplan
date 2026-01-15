@@ -852,11 +852,52 @@ class UrbanInpaintingDataset(Dataset):
                     # No conditioning channels
                     image_meta = patch_data['meta'].copy()
                     image_meta['spatial_names'] = rgb_names
-                    return image, image_meta
+                    return image, {'image': None, 'meta': image_meta}
             
-            else:
-                # VAE or diffusion mode: Return full unified patch for now
-                # TODO: Implement mode-specific composition in next step
+            elif self.mode_type == 'vae':
+                # VAE mode: Extract layers specified in VAE group config
+                if self.mode_target not in self.vae_groups:
+                    raise ValueError(
+                        f"VAE group '{self.mode_target}' not found in config. "
+                        f"Available groups: {list(self.vae_groups.keys())}"
+                    )
+                
+                vae_config = self.vae_groups[self.mode_target]
+                target_layers = vae_config.get('layers', [])
+                
+                if len(target_layers) == 0:
+                    raise ValueError(
+                        f"VAE group '{self.mode_target}' has no layers defined"
+                    )
+                
+                # Collect all channels for the target layers
+                target_indices = []
+                target_names = []
+                
+                for layer_name in target_layers:
+                    layer_matches = get_layer_channels_from_names(spatial_names, layer_name)
+                    if len(layer_matches) == 0:
+                        raise ValueError(
+                            f"VAE group '{self.mode_target}' requires layer '{layer_name}', "
+                            f"but it was not found in patch. Available: {spatial_names}"
+                        )
+                    
+                    for idx, name in layer_matches:
+                        target_indices.append(idx)
+                        target_names.append(name)
+                
+                # Extract target layers
+                image = unified_image[target_indices]  # [C_target, H, W]
+                
+                # Create metadata
+                image_meta = patch_data['meta'].copy()
+                image_meta['spatial_names'] = target_names
+                
+                return image, image_meta
+            
+            else:  # self.mode_type == 'diffusion'
+                # Diffusion mode: Return full unified patch for now
+                # TODO: Implement diffusion-specific composition in next step
                 return unified_image, patch_data['meta']
     
     def _getitem_xarray(self, index: int):
