@@ -398,7 +398,7 @@ class UrbanInpaintingDataset(Dataset):
         
         # saving stats
         self.stats['layer_statistics'] = self.layer_stats
-        self.save_stats(stats_path)
+        self.save_stats(stats_dir)
         
     
     def _load_cached_patches(self) -> bool:
