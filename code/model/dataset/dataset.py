@@ -515,7 +515,8 @@ class UrbanInpaintingDataset(Dataset):
         
         # Extract all layers and stack them
         layer_tensors = []
-        channel_names = []
+        layer_names = []  # Track which layer each channel belongs to
+        channel_names = []  # Track full channel names (e.g., 'rgb:red', 'buildings')
         
         for layer_name in self.all_layer_names:
             layer_config = self.layers_registry[layer_name]
@@ -545,6 +546,9 @@ class UrbanInpaintingDataset(Dataset):
                 inpaint_mask = self._to_chw(inpaint_mask)
                 layer_tensor = torch.from_numpy(inpaint_mask).float()
                 layer_tensors.append(layer_tensor)
+                
+                # Single channel layer
+                layer_names.append('inpainting_mask')
                 channel_names.append('inpainting_mask')
                 continue
             
@@ -568,8 +572,12 @@ class UrbanInpaintingDataset(Dataset):
             layer_tensor = torch.from_numpy(layer_data).float()
             layer_tensors.append(layer_tensor)
             
-            # Track channel names using proper formatting
+            # Track channel names and layer names
             formatted_names = get_channel_names(layer_name, layer_config)
+            num_channels = len(formatted_names)
+            
+            # For multi-channel layers, each channel still belongs to the same layer
+            layer_names.extend([layer_name] * num_channels)
             channel_names.extend(formatted_names)
         
         # Stack all layers into one tensor
@@ -581,7 +589,8 @@ class UrbanInpaintingDataset(Dataset):
             'x': x,
             'time': str(data_layers['date']),
             'region': region,
-            'spatial_names': channel_names,
+            'layer_names': layer_names,
+            'channel_names': channel_names,
             'patch_index': index
         }
         
@@ -745,7 +754,7 @@ class UrbanInpaintingDataset(Dataset):
         
         Args:
             unified_image: [C_total, H, W] tensor with all layers
-            patch_data: Dictionary with 'meta' containing 'spatial_names' and other metadata
+            patch_data: Dictionary with 'meta' containing 'layer_names', 'channel_names' and other metadata
             index: Dataset index (for loading latents in diffusion mode)
             
         Returns:
@@ -753,26 +762,29 @@ class UrbanInpaintingDataset(Dataset):
             - vae mode: (image, metadata_dict)
             - diffusion mode: (pred_latent, conditioning_dict)
         """
-        spatial_names = patch_data['meta']['spatial_names']
+        layer_names = patch_data['meta']['layer_names']
+        channel_names = patch_data['meta']['channel_names']
             
         if self.mode_type == 'default':
             # Default mode: RGB as image, everything else as conditioning
             # Use layer registry to find RGB layer
-            rgb_layer_matches = get_layer_channels_from_names(spatial_names, 'rgb')
+            rgb_layer_matches = get_layer_channels_from_names(channel_names, 'rgb')
             
             if len(rgb_layer_matches) == 0:
                 raise ValueError(
                     f"Default mode requires 'rgb' layer, but it was not found in patch. "
-                    f"Available layers: {spatial_names}"
+                    f"Available layers: {set(layer_names)}"
                 )
             
             # Extract RGB indices and names
             rgb_indices = [idx for idx, _ in rgb_layer_matches]
-            rgb_names = [name for _, name in rgb_layer_matches]
+            rgb_channel_names = [name for _, name in rgb_layer_matches]
+            rgb_layer_names = [layer_names[idx] for idx in rgb_indices]
             
             # Get conditioning indices (everything except RGB)
-            cond_indices = [idx for idx in range(len(spatial_names)) if idx not in rgb_indices]
-            cond_names = [name for idx, name in enumerate(spatial_names) if idx not in rgb_indices]
+            cond_indices = [idx for idx in range(len(channel_names)) if idx not in rgb_indices]
+            cond_channel_names = [channel_names[idx] for idx in cond_indices]
+            cond_layer_names = [layer_names[idx] for idx in cond_indices]
             
             # Extract RGB image
             image = unified_image[rgb_indices]  # [C_rgb, H, W]
@@ -781,12 +793,14 @@ class UrbanInpaintingDataset(Dataset):
             if len(cond_indices) > 0:
                 conditioning = unified_image[cond_indices]  # [C_cond, H, W]
                 cond_meta = patch_data['meta'].copy()
-                cond_meta['spatial_names'] = cond_names
+                cond_meta['layer_names'] = cond_layer_names
+                cond_meta['channel_names'] = cond_channel_names
                 return image, {'image': conditioning, 'meta': cond_meta}
             else:
                 # No conditioning channels
                 image_meta = patch_data['meta'].copy()
-                image_meta['spatial_names'] = rgb_names
+                image_meta['layer_names'] = rgb_layer_names
+                image_meta['channel_names'] = rgb_channel_names
                 return image, {'image': None, 'meta': image_meta}
         
         elif self.mode_type == 'vae':
@@ -800,26 +814,29 @@ class UrbanInpaintingDataset(Dataset):
             
             # Collect all channels for the target layers
             target_indices = []
-            target_names = []
+            target_channel_names = []
+            target_layer_names = []
             
-            for layer_name in target_layers:
-                layer_matches = get_layer_channels_from_names(spatial_names, layer_name)
+            for target_layer in target_layers:
+                layer_matches = get_layer_channels_from_names(channel_names, target_layer)
                 if len(layer_matches) == 0:
                     raise ValueError(
-                        f"VAE group '{self.mode_target}' requires layer '{layer_name}', "
-                        f"but it was not found in patch. Available: {spatial_names}"
+                        f"VAE group '{self.mode_target}' requires layer '{target_layer}', "
+                        f"but it was not found in patch. Available: {set(layer_names)}"
                     )
                 
                 for idx, name in layer_matches:
                     target_indices.append(idx)
-                    target_names.append(name)
+                    target_channel_names.append(name)
+                    target_layer_names.append(layer_names[idx])
             
             # Extract target layers
             image = unified_image[target_indices]  # [C_target, H, W]
             
             # Create metadata
             image_meta = patch_data['meta'].copy()
-            image_meta['spatial_names'] = target_names
+            image_meta['layer_names'] = target_layer_names
+            image_meta['channel_names'] = target_channel_names
             
             return image, {'image': None,'meta': image_meta}
         
@@ -853,7 +870,7 @@ class UrbanInpaintingDataset(Dataset):
             for cond_spec in conditioning_config.get('pixel_space', []):
                 if cond_spec['type'] == 'inpainting_mask':
                     # Find mask in unified patch
-                    mask_matches = get_layer_channels_from_names(spatial_names, 'inpainting_mask')
+                    mask_matches = get_layer_channels_from_names(channel_names, 'inpainting_mask')
                     if len(mask_matches) > 0:
                         mask_idx = mask_matches[0][0]
                         mask_full = unified_image[mask_idx:mask_idx+1, :, :]  # [1, H, W]

@@ -52,7 +52,8 @@ def visualize_sample(sample_data, mode='default', save_path=None):
     
     # Extract metadata and conditioning
     meta = output_dict.get('meta', {})
-    spatial_names = meta.get('spatial_names', [])
+    layer_names = meta.get('layer_names', [])
+    channel_names = meta.get('channel_names', [])
     cond_image = output_dict.get('image', None)
     
     # Determine what to visualize
@@ -109,7 +110,7 @@ def visualize_sample(sample_data, mode='default', save_path=None):
         for i in range(num_main_channels):
             if idx >= len(axes):
                 break
-            channel_name = spatial_names[i] if i < len(spatial_names) else f'Channel {i}'
+            channel_name = channel_names[i] if i < len(channel_names) else f'Channel {i}'
             cmap = _get_colormap_for_channel(channel_name)
             axes[idx].imshow(im_np[i], cmap=cmap)
             axes[idx].set_title(f'{channel_name}', fontsize=10)
@@ -120,12 +121,19 @@ def visualize_sample(sample_data, mode='default', save_path=None):
     # Visualize conditioning channels
     if cond_image is not None:
         cond_np = cond_image.numpy()
-        cond_names = output_dict.get('pixel_space_names', spatial_names[num_main_channels:])
+        # Get conditioning channel names from metadata
+        # The dataset already provides the correct channel_names in the metadata
+        if 'pixel_space_names' in output_dict:
+            # Diffusion mode: explicit pixel space conditioning names
+            cond_channel_names = output_dict['pixel_space_names']
+        else:
+            # Default/VAE mode: channel_names in meta already filtered for conditioning
+            cond_channel_names = channel_names
         
         for i in range(cond_np.shape[0]):
             if idx >= len(axes):
                 break
-            channel_name = cond_names[i] if i < len(cond_names) else f'Cond {i}'
+            channel_name = cond_channel_names[i] if i < len(cond_channel_names) else f'Cond {i}'
             cmap = _get_colormap_for_channel(channel_name)
             axes[idx].imshow(cond_np[i], cmap=cmap)
             axes[idx].set_title(f'{channel_name}', fontsize=10)
@@ -154,14 +162,14 @@ def visualize_sample(sample_data, mode='default', save_path=None):
     print(f"Sample Metadata ({mode}):")
     print("="*60)
     for key, value in meta.items():
-        if key not in ['spatial_names']:
+        if key not in ['layer_names', 'channel_names']:
             print(f"  {key}: {value}")
-    if spatial_names:
-        print(f"\n  Channels ({len(spatial_names)}):")
-        for name in spatial_names[:10]:  # Limit to first 10
-            print(f"    - {name}")
-        if len(spatial_names) > 10:
-            print(f"    ... and {len(spatial_names) - 10} more")
+    if channel_names:
+        print(f"\n  Channels ({len(channel_names)}):")
+        for i, (layer, channel) in enumerate(zip(layer_names[:10], channel_names[:10])):
+            print(f"    [{i}] {layer}: {channel}")
+        if len(channel_names) > 10:
+            print(f"    ... and {len(channel_names) - 10} more")
     
     plt.tight_layout()
     
