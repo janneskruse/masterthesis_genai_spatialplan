@@ -1182,3 +1182,7 @@ class UrbanInpaintingDataset(Dataset):
                 del ds
             del self.datasets
             gc.collect()
+            
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False 

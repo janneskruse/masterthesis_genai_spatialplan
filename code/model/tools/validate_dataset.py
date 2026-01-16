@@ -291,6 +291,9 @@ def validate_dataset(num_samples=5, config=None, mode='default', use_cached_patc
     print("Validation Complete!")
     print("="*60)
     print(f"\nVisualizations saved to: {output_dir}")
+    
+    # clean up
+    dataset.close()
 
 
 if __name__ == '__main__':
