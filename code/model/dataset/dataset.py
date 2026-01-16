@@ -239,6 +239,16 @@ class UrbanInpaintingDataset(Dataset):
         # Compute global statistics for normalization
         self._compute_layer_statistics()
         
+        # close the dataset and reload (for memory efficiency)
+        for region in self.regions:
+            self.datasets[region].close()
+            
+            # free all resources
+            del self.datasets[region]
+            
+            region_zarr_path = os.path.join(processed_data_path, region.lower(), zarr_name)
+            self.datasets[region] = xr.open_zarr(region_zarr_path, consolidated=True)
+        
         # Load patches
         self.patches = self._load_patches()
         
