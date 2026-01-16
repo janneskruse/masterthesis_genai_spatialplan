@@ -1,5 +1,3 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main
-
 ###### import libraries ######
 # Standard libraries
 import os
@@ -18,7 +16,6 @@ from torch.utils.data.dataset import Dataset
 
 # Local imports
 from model.utils.diffusion_utils import load_latents
-from model.utils.read_yaml import get_nested
 from model.utils.diffusion_utils import load_single_latent
 from model.utils.data_utils import apply_layer_transform
 from model.utils.config_utils import compute_patch_and_latent_sizes, get_default_configs
@@ -47,16 +44,12 @@ class UrbanInpaintingDataset(Dataset):
     """
     
     def __init__(self, split, 
-                 use_latents=False, 
-                 latent_path=None,
                  use_cached_patches: bool = True,
                  cache_dir: Optional[str] = None,
                  mode: str = 'default',
         ):
         """
         :param split: 'train' or 'val'
-        :param use_latents: whether to use pre-computed latents from autoencoder
-        :param latent_path: path to latent files
         :param use_cached_patches: whether to use cached patches
         :param cache_dir: directory for cached patches
         :param mode: 'default', 'vae:satellite', 'vae:environmental', 'diffusion:semantic', etc.
@@ -135,19 +128,20 @@ class UrbanInpaintingDataset(Dataset):
         big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
         im_channels = dataset_config.get('im_channels', 3)
         min_valid_percent = dataset_config.get('min_valid_percent', 90)
+        self.big_data_storage_path = big_data_storage_path
 
-        # Latent space configuration
-        self.latent_maps = None
-        self.latent_cond_maps = None
-        self.latent_path = latent_path
-        self.use_latents = bool(use_latents)
+        # Latent space configuration - store latent maps per VAE group
+        # Structure: {'group_name': [list of latent file paths]}
+        self.group_latents = {}
 
         # Compute patch and latent sizes using mode-specific configs
+        # use_latents=True for diffusion mode (always works in latent space)
+        use_latents_for_sizing = (self.mode_type == 'diffusion')
         patch_size, latent_size, vae_downsample_factor, unet_downsample_factor, total_divisor = compute_patch_and_latent_sizes(
             dataset_config,
             vae_config,
             unet_config,
-            use_latents=self.use_latents,
+            use_latents=use_latents_for_sizing,
             self=self
         )
         
@@ -219,13 +213,10 @@ class UrbanInpaintingDataset(Dataset):
             print(f"{'='*60}")
             self._initialize_xarray_loading()
             
-        # Load latents if specified
-        if use_latents and latent_path is not None:
-            self._load_and_reconcile_latents(big_data_storage_path)
-        elif use_latents and latent_path is None:
-            print('⚠ use_latents=True but no latent_path provided, using raw images')
-            self.use_latents = False
-            self.latent_maps = None
+        # Load latents for diffusion mode (config-driven)
+        if self.mode_type == 'diffusion':
+            self._load_diffusion_latents()
+        
         # Final summary
         self._print_summary()
         
@@ -297,88 +288,146 @@ class UrbanInpaintingDataset(Dataset):
         
         return True
     
-    def _load_and_reconcile_latents(self, big_data_storage_path: str):
-        """Load VAE latents (both prediction and conditioning) and reconcile with patches"""
-        print(f'Loading latents from {self.latent_path}...')
+    def _load_group_latents(self, group_name: str, reconcile: bool = True) -> Optional[List[str]]:
+        """
+        Load latents for a specific VAE group.
+        
+        Args:
+            group_name: Name of the VAE group (e.g., 'satellite', 'semantic')
+            reconcile: Whether to reconcile latent count with patch count
+            
+        Returns:
+            List of latent file paths, or None if not found/failed
+        """
+        if group_name not in self.vae_groups:
+            print(f"⚠ VAE group '{group_name}' not found in config")
+            return None
+        
+        group_config = self.vae_groups[group_name]
+        latents_dir = group_config.get('latents_dir', f'{group_name}_latents')
+        stats_dir = group_config.get('stats_dir', f'{group_name}_stats')
+        
+        # Build full path to latents directory
+        results_dir = Path(self.big_data_storage_path) / "results" / self.config['train_params']['task_name']
+        latent_path = results_dir / latents_dir
+        
+        if not latent_path.exists():
+            print(f"⚠ Latents directory does not exist: {latent_path}")
+            print(f"  Run VAE training for group '{group_name}' first")
+            return None
+        
+        print(f"Loading latents for group '{group_name}' from {latent_path}...")
+        latent_files = load_latents(str(latent_path))
+        
+        if len(latent_files) == 0:
+            print(f"⚠ No latent files found for group '{group_name}'")
+            return None
+        
+        print(f"✓ Found {len(latent_files)} latent files for group '{group_name}'")
+        
+        # Reconcile with patches if requested
+        if reconcile and len(latent_files) != len(self.patches):
+            print(f"⚠ Latent count mismatch: {len(latent_files)} latents vs {len(self.patches)} patches")
+            latent_files = self._reconcile_latents_with_patches(latent_files, group_name, stats_dir)
+        
+        return latent_files if latent_files and len(latent_files) > 0 else None
+    
+    def _reconcile_latents_with_patches(self, latent_files: List[str], group_name: str, stats_dir: str) -> Optional[List[str]]:
+        """
+        Reconcile latent files with current patches using training stats.
+        
+        Args:
+            latent_files: List of latent file paths
+            group_name: Name of VAE group (for logging)
+            stats_dir: Directory containing training stats
+            
+        Returns:
+            Filtered list of latent files matching patches, or None if failed
+        """
+        print(f"Attempting to reconcile latents for group '{group_name}' using VAE training stats...")
+        
+        
+        
+        results_dir = Path(self.big_data_storage_path) / "results" / self.config['train_params']['task_name']
+        stats_csv_path = results_dir / stats_dir / "inpainting_mask_stats_train.csv"
+        
+        if not stats_csv_path.exists():
+            print(f"⚠ Stats file not found: {stats_csv_path}")
+            print(f"  Cannot reconcile - patches and latents will be mismatched")
+            return None
+        
+        filtered_patches, filtered_latents, comparison_results = reconcile_patches_with_latents(
+            stats_csv_path=stats_csv_path,
+            current_patches=self.patches,
+            latent_files=latent_files,
+            verbose=True
+        )
+        
+        if len(filtered_patches) == 0:
+            print(f"⚠ No matching patches found for group '{group_name}'")
+            return None
+        
+        # Update patches (only on first reconciliation)
+        if len(self.patches) != len(filtered_patches):
+            print(f"✓ Updating dataset patches to match latents: {len(self.patches)} -> {len(filtered_patches)}")
+            self.patches = filtered_patches
+        
+        print(f"✓ Successfully reconciled {len(filtered_latents)} latents for group '{group_name}'")
+        return filtered_latents
+    
+    def _load_diffusion_latents(self):
+        """
+        Load all required latents for diffusion training.
+        
+        Loads:
+        - Prediction latents (for the prediction group)
+        - Conditioning latents (for each latent-space conditioning group)
+        """
+        if self.mode_type != 'diffusion':
+            return
+        
+        stage_config = self.diffusion_stages[self.mode_target]
+        pred_group = stage_config.get('prediction_group')
+        conditioning_config = stage_config.get('conditioning', {})
+        
+        print(f"\n{'='*60}")
+        print(f"Loading latents for diffusion stage '{self.mode_target}'")
+        print(f"{'='*60}")
         
         # Load prediction latents
-        latent_maps_pred = load_latents(self.latent_path, prefix='pred')
+        print(f"\nPrediction group: '{pred_group}'")
+        pred_latents = self._load_group_latents(pred_group, reconcile=True)
         
-        # Load conditioning latents (optional, for two-VAE setup)
-        latent_maps_cond = load_latents(self.latent_path, prefix='cond')
-        
-        # Check if we have conditioning latents
-        has_cond_latents = len(latent_maps_cond) > 0
-        
-        if has_cond_latents:
-            print(f'✓ Found {len(latent_maps_pred)} prediction latents and {len(latent_maps_cond)} conditioning latents')
-            
-            # SAFETY CHECK: Verify indices match
-            pred_indices = set([int(Path(p).stem.split('_')[-1]) for p in latent_maps_pred])
-            cond_indices = set([int(Path(p).stem.split('_')[-1]) for p in latent_maps_cond])
-            
-            missing_in_cond = pred_indices - cond_indices
-            missing_in_pred = cond_indices - pred_indices
-            
-            if missing_in_cond:
-                print(f'⚠ WARNING: {len(missing_in_cond)} prediction latents have no matching conditioning latent')
-                print(f'  Missing indices: {sorted(list(missing_in_cond))[:10]}...')
-            
-            if missing_in_pred:
-                print(f'⚠ WARNING: {len(missing_in_pred)} conditioning latents have no matching prediction latent')
-                print(f'  Missing indices: {sorted(list(missing_in_pred))[:10]}...')
-            
-            # Use only matching indices
-            matching_indices = pred_indices & cond_indices
-            if len(matching_indices) < len(pred_indices):
-                print(f'ℹ️  Using {len(matching_indices)} matching latent pairs (filtered from {len(pred_indices)} prediction latents)')
-                latent_maps_pred = [p for p in latent_maps_pred if int(Path(p).stem.split('_')[-1]) in matching_indices]
-                latent_maps_cond = [p for p in latent_maps_cond if int(Path(p).stem.split('_')[-1]) in matching_indices]
-        else:
-            print(f'✓ Found {len(latent_maps_pred)} prediction latents (no separate conditioning latents)')
-        
-        # Use prediction latents as primary
-        latent_maps = latent_maps_pred if len(latent_maps_pred) > 0 else load_latents(self.latent_path)
-        
-        if len(latent_maps) == len(self.patches):
-            # Perfect match
-            self.use_latents = True
-            self.latent_maps = latent_maps
-            self.latent_cond_maps = latent_maps_cond if has_cond_latents else None
-            print(f'✓ Latents match {len(self.patches)} patches')
-        else:
-            # Mismatch - reconcile
-            print(f'⚠ Latents size mismatch: found {len(latent_maps)} latents but need {len(self.patches)} patches')
-            print(f'⚠ Attempting to reconcile using VAE training stats...')
-            
-            results_dir = Path(big_data_storage_path) / "results" / self.config['train_params']['task_name']
-            stats_csv_path = results_dir / "vae_ddp_stats" / "inpainting_mask_stats_train.csv"
-            
-            filtered_patches, filtered_latents, comparison_results = reconcile_patches_with_latents(
-                stats_csv_path=stats_csv_path,
-                current_patches=self.patches,
-                latent_files=latent_maps,
-                verbose=True
+        if pred_latents is None:
+            raise RuntimeError(
+                f"Failed to load prediction latents for group '{pred_group}'. "
+                f"Run VAE training for this group first."
             )
+        
+        self.group_latents[pred_group] = pred_latents
+        
+        # Load conditioning latents (latent-space conditioning)
+        latent_cond_groups = conditioning_config.get('latent_space', [])
+        
+        if latent_cond_groups:
+            print(f"\nLoading {len(latent_cond_groups)} latent-space conditioning groups...")
             
-            if len(filtered_patches) > 0:
-                self.patches = filtered_patches
-                self.latent_maps = filtered_latents
-                # Filter conditioning latents to match
-                if has_cond_latents:
-                    # Match indices from filtered prediction latents
-                    filtered_indices = set([int(Path(p).stem.split('_')[-1]) for p in filtered_latents])
-                    self.latent_cond_maps = [p for p in latent_maps_cond if int(Path(p).stem.split('_')[-1]) in filtered_indices]
-                    print(f'✓ Filtered to {len(self.latent_cond_maps)} matching conditioning latents')
-                else:
-                    self.latent_cond_maps = None
-                self.use_latents = True
-                print(f'✓ Successfully reconciled {len(self.patches)} patches with matching latents')
-            else:
-                print('⚠ No matching patches found - falling back to raw images')
-                self.use_latents = False
-                self.latent_maps = None
-                self.latent_cond_maps = None
+            for cond_spec in latent_cond_groups:
+                cond_group = cond_spec['group']
+                print(f"\nConditioning group: '{cond_group}'")
+                
+                cond_latents = self._load_group_latents(cond_group, reconcile=True)
+                
+                if cond_latents is None:
+                    raise RuntimeError(
+                        f"Failed to load conditioning latents for group '{cond_group}'. "
+                        f"Run VAE training for this group first."
+                    )
+                
+                self.group_latents[cond_group] = cond_latents
+        
+        print(f"\n✓ Successfully loaded latents for {len(self.group_latents)} VAE groups")
+        print(f"{'='*60}\n")
                     
     def prepare_cached_patches(self) -> None:
         """
@@ -749,11 +798,12 @@ class UrbanInpaintingDataset(Dataset):
         
     def _getitem_cached(self, index: int):
         """
-        Load pre-saved patch from disk.
+        Load pre-saved patch from disk and compose based on mode.
         
         Returns:
-            - If use_latents=False: Returns patch_data (dict with 'image' and 'meta')
-            - If use_latents=True: Returns latent + conditioning (KEEP AS IS for now)
+            - default mode: (image, conditioning_dict) or just image
+            - vae mode: (image, metadata_dict)
+            - diffusion mode: (pred_latent, conditioning_dict)
         """
         y, x, region, cache_idx = self.patches[index]
         
@@ -761,46 +811,114 @@ class UrbanInpaintingDataset(Dataset):
         patch_path = self.cache_dir / f"patch_{self.split}_{cache_idx}.pt"
         patch_data = torch.load(patch_path)
         
-        if self.use_latents:
-            # TODO: Refactor latent handling in next step
-            # For now, keep existing latent logic (as instructed)
-            latent_path = self.latent_maps[index]
-            latent = load_single_latent(latent_path, device=None)
+        # Compose dataset based on mode
+        unified_image = patch_data['image']
+        spatial_names = patch_data['meta']['spatial_names']
             
-            # Check if we have separate conditioning latents (two-VAE mode)
-            if self.latent_cond_maps is not None and len(self.latent_cond_maps) > 0:
-                # Load conditioning latent
-                latent_cond_path = self.latent_cond_maps[index]
-                latent_cond = load_single_latent(latent_cond_path, device=None)
-                
-                # SAFETY CHECK: Verify indices match
-                pred_idx = int(Path(latent_path).stem.split('_')[-1])
-                cond_idx = int(Path(latent_cond_path).stem.split('_')[-1])
-                
-                if pred_idx != cond_idx:
-                    raise RuntimeError(
-                        f"Latent index mismatch at dataset index {index}! "
-                        f"Prediction latent: {pred_idx}, Conditioning latent: {cond_idx}. "
-                        f"This indicates a data corruption issue. Please regenerate latents."
+        if self.mode_type == 'default':
+            # Default mode: RGB as image, everything else as conditioning
+            # Use layer registry to find RGB layer
+            rgb_layer_matches = get_layer_channels_from_names(spatial_names, 'rgb')
+            
+            if len(rgb_layer_matches) == 0:
+                raise ValueError(
+                    f"Default mode requires 'rgb' layer, but it was not found in patch. "
+                    f"Available layers: {spatial_names}"
+                )
+            
+            # Extract RGB indices and names
+            rgb_indices = [idx for idx, _ in rgb_layer_matches]
+            rgb_names = [name for _, name in rgb_layer_matches]
+            
+            # Get conditioning indices (everything except RGB)
+            cond_indices = [idx for idx in range(len(spatial_names)) if idx not in rgb_indices]
+            cond_names = [name for idx, name in enumerate(spatial_names) if idx not in rgb_indices]
+            
+            # Extract RGB image
+            image = unified_image[rgb_indices]  # [C_rgb, H, W]
+            
+            # Extract conditioning
+            if len(cond_indices) > 0:
+                conditioning = unified_image[cond_indices]  # [C_cond, H, W]
+                cond_meta = patch_data['meta'].copy()
+                cond_meta['spatial_names'] = cond_names
+                return image, {'image': conditioning, 'meta': cond_meta}
+            else:
+                # No conditioning channels
+                image_meta = patch_data['meta'].copy()
+                image_meta['spatial_names'] = rgb_names
+                return image, {'image': None, 'meta': image_meta}
+        
+        elif self.mode_type == 'vae':
+            vae_config = self.vae_groups[self.mode_target]
+            target_layers = vae_config.get('layers', [])
+            
+            if len(target_layers) == 0:
+                raise ValueError(
+                    f"VAE group '{self.mode_target}' has no layers defined"
+                )
+            
+            # Collect all channels for the target layers
+            target_indices = []
+            target_names = []
+            
+            for layer_name in target_layers:
+                layer_matches = get_layer_channels_from_names(spatial_names, layer_name)
+                if len(layer_matches) == 0:
+                    raise ValueError(
+                        f"VAE group '{self.mode_target}' requires layer '{layer_name}', "
+                        f"but it was not found in patch. Available: {spatial_names}"
                     )
                 
-                # Prepare conditioning with latent_cond (existing logic - keep for now)
-                ps = self.patch_size
-                latent_h = ps // self.vae_downsample_factor
-                latent_w = ps // self.vae_downsample_factor
-                
-                cond_inputs = {}
-                spatial = []
-                spatial_names = []
-                
-                # Extract mask from cached patch and downsample to latent resolution
-                if 'meta' in patch_data:
-                    cached_spatial_names = patch_data['meta'].get('spatial_names', [])
-                    try:
-                        mask_idx = cached_spatial_names.index('inpaint_mask')
-                        mask_full = patch_data['image'][mask_idx:mask_idx+1, :, :]
+                for idx, name in layer_matches:
+                    target_indices.append(idx)
+                    target_names.append(name)
+            
+            # Extract target layers
+            image = unified_image[target_indices]  # [C_target, H, W]
+            
+            # Create metadata
+            image_meta = patch_data['meta'].copy()
+            image_meta['spatial_names'] = target_names
+            
+            return image, image_meta
+        
+        else:  # self.mode_type == 'diffusion'
+            # Diffusion mode: Load prediction latent + conditioning (pixel + latent space)
+            stage_config = self.diffusion_stages[self.mode_target]
+            pred_group = stage_config.get('prediction_group')
+            conditioning_config = stage_config.get('conditioning', {})
+            
+            # Load prediction latent from pre-loaded group latents
+            if pred_group not in self.group_latents:
+                raise RuntimeError(
+                    f"Prediction latents for group '{pred_group}' not loaded. "
+                    f"This should have been loaded in _load_diffusion_latents()"
+                )
+            
+            pred_latent_path = self.group_latents[pred_group][index]
+            pred_latent = load_single_latent(pred_latent_path, device=None)
+            
+            # Build conditioning dictionary
+            cond = {'meta': patch_data['meta'].copy()}
+            
+            # Use pre-computed latent resolution (all VAEs must have same downsampling)
+            latent_h = self.latent_size
+            latent_w = self.latent_size
+            
+            # Add pixel-space conditioning (downsampled to latent resolution)
+            pixel_cond_list = []
+            pixel_cond_names = []
+            
+            for cond_spec in conditioning_config.get('pixel_space', []):
+                if cond_spec['type'] == 'inpainting_mask':
+                    # Find mask in unified patch
+                    mask_matches = get_layer_channels_from_names(spatial_names, 'inpainting_mask')
+                    if len(mask_matches) > 0:
+                        mask_idx = mask_matches[0][0]
+                        mask_full = unified_image[mask_idx:mask_idx+1, :, :]  # [1, H, W]
                         
-                        # Downsample mask to latent resolution
+                        # Downsample to latent resolution
                         mask_latent = mask_full.unsqueeze(0)  # [1, 1, H, W]
                         mask_latent = torch.nn.functional.interpolate(
                             mask_latent,
@@ -808,199 +926,42 @@ class UrbanInpaintingDataset(Dataset):
                             mode='nearest'
                         ).squeeze(0)  # [1, H_latent, W_latent]
                         
-                        spatial.append(mask_latent)
-                        spatial_names.append('inpaint_mask')
-                    except ValueError:
-                        # No mask found, create default
-                        mask_latent = torch.ones(1, latent_h, latent_w)
-                        spatial.append(mask_latent)
-                        spatial_names.append('inpaint_mask')
-                
-                # Add conditioning latent channels
-                for i in range(latent_cond.shape[0]):
-                    spatial.append(latent_cond[i:i+1])
-                    spatial_names.append(f'latent_cond_{i}')
-                
-                cond_inputs['image'] = torch.cat(spatial, dim=0)
-                cond_inputs['meta'] = {
-                    'y': y,
-                    'x': x,
-                    'time': patch_data['meta'].get('time', ''),
-                    'region': region,
-                    'spatial_names': spatial_names,
-                    'uses_latent_conditioning': True
-                }
-            else:
-                # Fall back to pixel-space interpolation (single-VAE mode)
-                cond_inputs = self._prepare_latent_conditioning(patch_data, y, x, region)
+                        pixel_cond_list.append(mask_latent)
+                        pixel_cond_names.append('inpainting_mask')
             
-            if len(self.condition_types) == 0:
-                return latent
-            else:
-                return latent, cond_inputs
-        else:
-            # Non-latent mode: Compose dataset based on mode
-            unified_image = patch_data['image']
-            spatial_names = patch_data['meta']['spatial_names']
+            if pixel_cond_list:
+                cond['image'] = torch.cat(pixel_cond_list, dim=0)
+                cond['pixel_space_names'] = pixel_cond_names
             
-            if self.mode_type == 'default':
-                # Default mode: RGB as image, everything else as conditioning
-                # Use layer registry to find RGB layer
-                rgb_layer_matches = get_layer_channels_from_names(spatial_names, 'rgb')
+            # Add latent-space conditioning (load from pre-loaded group latents)
+            for cond_spec in conditioning_config.get('latent_space', []):
+                group_name = cond_spec['group']
                 
-                if len(rgb_layer_matches) == 0:
-                    raise ValueError(
-                        f"Default mode requires 'rgb' layer, but it was not found in patch. "
-                        f"Available layers: {spatial_names}"
+                if group_name not in self.group_latents:
+                    raise RuntimeError(
+                        f"Conditioning latents for group '{group_name}' not loaded. "
+                        f"This should have been loaded in _load_diffusion_latents()"
                     )
                 
-                # Extract RGB indices and names
-                rgb_indices = [idx for idx, _ in rgb_layer_matches]
-                rgb_names = [name for _, name in rgb_layer_matches]
-                
-                # Get conditioning indices (everything except RGB)
-                cond_indices = [idx for idx in range(len(spatial_names)) if idx not in rgb_indices]
-                cond_names = [name for idx, name in enumerate(spatial_names) if idx not in rgb_indices]
-                
-                # Extract RGB image
-                image = unified_image[rgb_indices]  # [C_rgb, H, W]
-                
-                # Extract conditioning
-                if len(cond_indices) > 0:
-                    conditioning = unified_image[cond_indices]  # [C_cond, H, W]
-                    cond_meta = patch_data['meta'].copy()
-                    cond_meta['spatial_names'] = cond_names
-                    return image, {'image': conditioning, 'meta': cond_meta}
-                else:
-                    # No conditioning channels
-                    image_meta = patch_data['meta'].copy()
-                    image_meta['spatial_names'] = rgb_names
-                    return image, {'image': None, 'meta': image_meta}
+                # Load conditioning latent
+                cond_latent_path = self.group_latents[group_name][index]
+                cond_latent = load_single_latent(cond_latent_path, device=None)
+                cond[group_name] = cond_latent
             
-            elif self.mode_type == 'vae':
-                vae_config = self.vae_groups[self.mode_target]
-                target_layers = vae_config.get('layers', [])
-                
-                if len(target_layers) == 0:
-                    raise ValueError(
-                        f"VAE group '{self.mode_target}' has no layers defined"
-                    )
-                
-                # Collect all channels for the target layers
-                target_indices = []
-                target_names = []
-                
-                for layer_name in target_layers:
-                    layer_matches = get_layer_channels_from_names(spatial_names, layer_name)
-                    if len(layer_matches) == 0:
-                        raise ValueError(
-                            f"VAE group '{self.mode_target}' requires layer '{layer_name}', "
-                            f"but it was not found in patch. Available: {spatial_names}"
-                        )
-                    
-                    for idx, name in layer_matches:
-                        target_indices.append(idx)
-                        target_names.append(name)
-                
-                # Extract target layers
-                image = unified_image[target_indices]  # [C_target, H, W]
-                
-                # Create metadata
-                image_meta = patch_data['meta'].copy()
-                image_meta['spatial_names'] = target_names
-                
-                return image, image_meta
-            
-            else:  # self.mode_type == 'diffusion'
-                # Diffusion mode: Load prediction latent + conditioning (pixel + latent space)
-                stage_config = self.diffusion_stages[self.mode_target]
-                pred_group = stage_config.get('prediction_group')
-                conditioning_config = stage_config.get('conditioning', {})
-                
-                # Get latent directories from VAE group configs
-                big_data_storage_path = self.data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
-                results_dir = Path(big_data_storage_path) / "results" / self.config['train_params']['task_name']
-                
-                # Load prediction latent
-                pred_latents_dir = self.vae_groups[pred_group].get('latents_dir', f'{pred_group}_latents')
-                pred_latent_path = results_dir / pred_latents_dir / f"latent_{cache_idx}.pt"
-                
-                if not pred_latent_path.exists():
-                    raise FileNotFoundError(
-                        f"Prediction latent not found: {pred_latent_path}. "
-                        f"Run VAE training for group '{pred_group}' first."
-                    )
-                
-                pred_latent = torch.load(pred_latent_path)
-                
-                # Build conditioning dictionary
-                cond = {'meta': patch_data['meta'].copy()}
-                
-                # Use pre-computed latent resolution (all VAEs must have same downsampling)
-                latent_h = self.latent_size
-                latent_w = self.latent_size
-                
-                # Add pixel-space conditioning (downsampled to latent resolution)
-                pixel_cond_list = []
-                pixel_cond_names = []
-                
-                for cond_spec in conditioning_config.get('pixel_space', []):
-                    if cond_spec['type'] == 'inpainting_mask':
-                        # Find mask in unified patch
-                        mask_matches = get_layer_channels_from_names(spatial_names, 'inpainting_mask')
-                        if len(mask_matches) > 0:
-                            mask_idx = mask_matches[0][0]
-                            mask_full = unified_image[mask_idx:mask_idx+1, :, :]  # [1, H, W]
-                            
-                            # Downsample to latent resolution
-                            mask_latent = mask_full.unsqueeze(0)  # [1, 1, H, W]
-                            mask_latent = torch.nn.functional.interpolate(
-                                mask_latent,
-                                size=(latent_h, latent_w),
-                                mode='nearest'
-                            ).squeeze(0)  # [1, H_latent, W_latent]
-                            
-                            pixel_cond_list.append(mask_latent)
-                            pixel_cond_names.append('inpainting_mask')
-                
-                if pixel_cond_list:
-                    cond['image'] = torch.cat(pixel_cond_list, dim=0)
-                    cond['pixel_space_names'] = pixel_cond_names
-                
-                # Add latent-space conditioning (load from disk)
-                for cond_spec in conditioning_config.get('latent_space', []):
-                    group_name = cond_spec['group']
-                    
-                    if group_name not in self.vae_groups:
-                        raise ValueError(
-                            f"Conditioning group '{group_name}' not found in VAE groups"
-                        )
-                    
-                    # Load conditioning latent
-                    cond_latents_dir = self.vae_groups[group_name].get('latents_dir', f'{group_name}_latents')
-                    cond_latent_path = results_dir / cond_latents_dir / f"latent_{cache_idx}.pt"
-                    
-                    if not cond_latent_path.exists():
-                        raise FileNotFoundError(
-                            f"Conditioning latent for group '{group_name}' not found: {cond_latent_path}. "
-                            f"Run VAE training for group '{group_name}' first."
-                        )
-                    
-                    cond_latent = torch.load(cond_latent_path)
-                    cond[group_name] = cond_latent
-                
-                return pred_latent, cond
+            return pred_latent, cond
     
     def _getitem_xarray(self, index: int):
-        """Extract patch on-the-fly from Xarray (existing logic)"""
-        y, x, region = self.patches[index]
-        ps = self.patch_size
+        """
+        Extract patch on-the-fly from Xarray.
         
-        data_layers = self.data_layers_per_region[region]
-        
-        ##### Return latents and conditioning #####
-        # If using latents, load latent and prepare conditioning inputs
-        if self.use_latents:
+        TODO: Refactor this method to use new config-driven structure like _getitem_cached.
+        For now, this is a stub that will raise an error if called.
+        """
+        raise NotImplementedError(
+            "_getitem_xarray needs to be refactored to use the new config-driven structure. "
+            "Please use cached patches (use_cached_patches=True) for training, "
+            "or run prepare_cached_patches() first to generate the cache."
+        )
             # Load prediction latent from file
             latent_path = self.latent_maps[index]
             latent = load_single_latent(latent_path, device=None)  # Load to CPU
@@ -1436,7 +1397,13 @@ class UrbanInpaintingDataset(Dataset):
         print(f"Split: {self.split}")
         print(f"Loading mode: {'Cached patches' if self.use_cached_patches else 'On-the-fly Xarray'}")
         print(f"Total patches: {len(self.patches)}")
-        print(f"Using latents: {self.use_latents}")
+        
+        # Print latent information for diffusion mode
+        if self.mode_type == 'diffusion' and self.group_latents:
+            print(f"\nLoaded latents for {len(self.group_latents)} VAE groups:")
+            for group_name, latent_files in self.group_latents.items():
+                print(f"  - {group_name}: {len(latent_files)} latents")
+        
         print(f"Patch size: {self.patch_size}x{self.patch_size}")
         
         # Print layer information
