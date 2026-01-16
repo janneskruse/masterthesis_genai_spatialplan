@@ -264,6 +264,7 @@ class UrbanInpaintingDataset(Dataset):
         This ensures consistent normalization across all patches.
         Statistics are stored in self.layer_stats.
         """
+        import gc
         print(f"\n{'='*60}")
         print("Computing global layer statistics for normalization...")
         print(f"{'='*60}")
@@ -360,6 +361,10 @@ class UrbanInpaintingDataset(Dataset):
             
             print(f"  ✓ min={stats['min']:.3f}, max={stats['max']:.3f}, mean={stats['mean']:.3f}, std={stats['std']:.3f}")
             print(f"    q01={stats['q01']:.3f}, q99={stats['q99']:.3f}")
+            
+            del all_data_concat
+            del all_data
+            gc.collect()
         
         print(f"\n✓ Computed statistics for {len(self.layer_stats)} layers")
         print(f"{'='*60}\n")
