@@ -312,8 +312,8 @@ class UrbanInpaintingDataset(Dataset):
             
             print(f"\nComputing statistics for '{layer_name}' (source: {source_layer})...")
             
-            # Collect all data for this layer across regions and dates
-            all_data_arrays = []
+            # Compute statistics per region/date using xarray, then combine
+            region_stats = []
             
             for region in self.regions:
                 merged_xs = self.datasets[region]
@@ -339,27 +339,52 @@ class UrbanInpaintingDataset(Dataset):
                     else:
                         layer_da = date_data[source_layer]
                     
-                    all_data_arrays.append(layer_da)
+                    # Compute all statistics using xarray methods
+                    print(f"    Computing stats for {region} - {date}...")
+                    stats = {
+                        'min': float(layer_da.min().compute()),
+                        'max': float(layer_da.max().compute()),
+                        'mean': float(layer_da.mean().compute()),
+                        'std': float(layer_da.std().compute()),
+                        'count': int(layer_da.notnull().sum().compute()),
+                        'q01': float(layer_da.quantile(0.01).compute()),
+                        'q02': float(layer_da.quantile(0.02).compute()),
+                        'q98': float(layer_da.quantile(0.98).compute()),
+                        'q99': float(layer_da.quantile(0.99).compute()),
+                    }
+                    region_stats.append(stats)
             
-            if len(all_data_arrays) == 0:
+            if len(region_stats) == 0:
                 print(f"  ⚠ No valid data found for '{layer_name}'")
                 continue
             
-            # Concatenate all data arrays
-            combined_data = xr.concat(all_data_arrays, dim='combined')
+            # Combine statistics from all regions/dates
+            print(f"  Combining statistics from {len(region_stats)} region/date combinations...")
             
-            # Use xarray's efficient methods for statistics
-            print(f"  Computing min/max/mean/std...")
-            layer_min = float(combined_data.min().compute())
-            layer_max = float(combined_data.max().compute())
-            layer_mean = float(combined_data.mean().compute())
-            layer_std = float(combined_data.std().compute())
+            # Global min/max (simple)
+            layer_min = min(s['min'] for s in region_stats)
+            layer_max = max(s['max'] for s in region_stats)
             
-            print(f"  Computing percentiles...")
-            layer_q01 = float(combined_data.quantile(0.01).compute())
-            layer_q02 = float(combined_data.quantile(0.02).compute())
-            layer_q98 = float(combined_data.quantile(0.98).compute())
-            layer_q99 = float(combined_data.quantile(0.99).compute())
+            # Global mean/std (weighted by count)
+            total_count = sum(s['count'] for s in region_stats)
+            layer_mean = sum(s['mean'] * s['count'] for s in region_stats) / total_count
+            
+            # Global std using pooled variance formula
+            pooled_var_sum = 0.0
+            for s in region_stats:
+                # Var_i = std_i^2, so E[X^2]_i = Var_i + mean_i^2
+                e_x2_i = (s['std'] ** 2) + (s['mean'] ** 2)
+                pooled_var_sum += e_x2_i * s['count']
+            
+            pooled_e_x2 = pooled_var_sum / total_count
+            layer_variance = pooled_e_x2 - (layer_mean ** 2)
+            layer_std = np.sqrt(max(0, layer_variance))
+            
+            # Percentiles: average across regions/dates (reasonable approximation)
+            layer_q01 = sum(s['q01'] for s in region_stats) / len(region_stats)
+            layer_q02 = sum(s['q02'] for s in region_stats) / len(region_stats)
+            layer_q98 = sum(s['q98'] for s in region_stats) / len(region_stats)
+            layer_q99 = sum(s['q99'] for s in region_stats) / len(region_stats)
             
             # Store statistics
             stats = {
