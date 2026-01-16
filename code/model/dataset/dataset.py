@@ -684,7 +684,7 @@ class UrbanInpaintingDataset(Dataset):
             print(f"Found {len(region_patches)} valid patches for region {region}")
             all_patches.extend(region_patches)
                     
-        print(f"\nTotal patches across all regions: {len(all_patches)}")
+        print(f"\nTotal {self.split} patches across all regions: {len(all_patches)}")
         return all_patches
     
     def _create_inpainting_mask(self, H, W, street_blocks_layer=None, patch_info=None):
