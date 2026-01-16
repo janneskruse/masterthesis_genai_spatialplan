@@ -25,155 +25,143 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from helpers.load_configs import load_configs
 
 
-def visualize_sample(sample_data, save_path=None):
+def visualize_sample(sample_data, mode='default', save_path=None):
     """
     Visualize a dataset sample with all its components.
     
     Args:
-        sample_data: Tuple of (image, conditions) from dataset
+        sample_data: Tuple from dataset - format depends on mode
+        mode: Dataset mode string (e.g., 'default', 'vae:semantic', 'diffusion:satellite')
         save_path: Optional path to save visualization
     """
-    if len(sample_data) == 2:
-        im, cond_input = sample_data
+    # All modes return (tensor, dict)
+    im, output_dict = sample_data
+    
+    # Parse mode to determine what we're visualizing
+    if mode != 'default':
+        mode_parts = mode.split(':')
+        mode_type = mode_parts[0]
+        mode_target = mode_parts[1] if len(mode_parts) > 1 else None
     else:
-        im = sample_data
-        cond_input = None
+        mode_type = 'default'
+        mode_target = None
+    
     
     # Convert tensors to numpy
     im_np = im.numpy()
     
-    # Create figure
-    if cond_input is not None and 'image' in cond_input:
-        spatial_cond = cond_input['image'].numpy()
-        num_cond_channels = spatial_cond.shape[0]
-        
-        # Calculate grid layout
-        n_rows = 2 + (num_cond_channels + 2) // 3  # RGB + mask + conditions
-        n_cols = 3
-        
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
-        axes = axes.flatten()
-    else:
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    # Extract metadata and conditioning
+    meta = output_dict.get('meta', {})
+    spatial_names = meta.get('spatial_names', [])
+    cond_image = output_dict.get('image', None)
     
-    idx = 0
+    # Determine what to visualize
+    num_main_channels = im_np.shape[0]
+    num_cond_channels = 0 if cond_image is None else cond_image.shape[0]
     
-    # Plot RGB satellite image (target)
-    if im_np.shape[0] == 3:
+    # Calculate grid layout
+    total_viz = num_main_channels + num_cond_channels
+    n_cols = min(3, total_viz)
+    n_rows = (total_viz + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 5 * n_rows))
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+    
+    idx = 0  # Track position in axes array
+    
+    # Visualize main tensor (RGB, multi-channel, or latent)
+    is_rgb = (num_main_channels == 3 and mode_type == 'default')
+    is_latent = (mode_type == 'diffusion')
+    
+    if is_rgb:
+        # RGB visualization
         rgb = im_np.transpose(1, 2, 0)
-        # Denormalize from [-1, 1] to [0, 1]
-        rgb = (rgb + 1) / 2
+        rgb = (rgb + 1) / 2  # Denormalize from [-1, 1] to [0, 1]
         rgb = np.clip(rgb, 0, 1)
         
-        # Apply brightness/contrast enhancement for better visualization
-        # Stretch to use full dynamic range
+        # Enhance contrast
         rgb_min = rgb.min()
         rgb_max = rgb.max()
         if rgb_max > rgb_min:
             rgb = (rgb - rgb_min) / (rgb_max - rgb_min)
-        
-        # Apply gamma correction to brighten
-        rgb = np.power(rgb, 0.7)  # gamma < 1 brightens the image
+        rgb = np.power(rgb, 0.7)  # Gamma correction
         
         axes[idx].imshow(rgb)
-        axes[idx].set_title('Target RGB Image', fontsize=12, fontweight='bold')
+        axes[idx].set_title('Target RGB', fontsize=12, fontweight='bold')
         axes[idx].axis('off')
         idx += 1
-    
-    if cond_input is not None:
-        # Plot mask
-        if 'mask' in cond_input:
-            mask = cond_input['mask'].numpy()[0]
-            axes[idx].imshow(mask, cmap='gray')
-            axes[idx].set_title('Inpainting Mask\n(1=regenerate, 0=keep)', fontsize=12, fontweight='bold')
+        
+    elif is_latent:
+        # Latent space visualization (show first few channels)
+        num_to_show = min(6, num_main_channels)
+        for i in range(num_to_show):
+            if idx >= len(axes):
+                break
+            axes[idx].imshow(im_np[i], cmap='viridis')
+            axes[idx].set_title(f'Latent Ch {i}', fontsize=10)
             axes[idx].axis('off')
             idx += 1
-        
-        # Plot spatial conditions
-        if 'image' in cond_input:
-            spatial_cond = cond_input['image'].numpy()
-            spatial_names = cond_input.get('meta', {}).get('spatial_names', [])
-            
-            # Plot masked image first (RGB)
-            if len(spatial_names) > 0 and 'masked_image' in spatial_names[0]:
-                masked_rgb = spatial_cond[:3].transpose(1, 2, 0)
-                masked_rgb = (masked_rgb + 1) / 2
-                masked_rgb = np.clip(masked_rgb, 0, 1)
-                axes[idx].imshow(masked_rgb)
-                axes[idx].set_title('Masked Input\n(Context)', fontsize=12, fontweight='bold')
-                axes[idx].axis('off')
-                idx += 1
+    
+    else:
+        # Multi-channel visualization (VAE mode)
+        for i in range(num_main_channels):
+            if idx >= len(axes):
+                break
+            channel_name = spatial_names[i] if i < len(spatial_names) else f'Channel {i}'
+            cmap = _get_colormap_for_channel(channel_name)
+            axes[idx].imshow(im_np[i], cmap=cmap)
+            axes[idx].set_title(f'{channel_name}', fontsize=10)
+            axes[idx].axis('off')
+            idx += 1
                 
-            # rocket_colors = sns.color_palette("rocket", as_cmap=True)
-            # Create colormap from black (0) to red-orange from rocket (1)
-            # colors = [(0, 0, 0), rocket_colors(0.3)]  # Black to red-orange
-            colors = [(0, 0, 0), (255,255,255)]  # Black to white
-            n_bins = 100
-            cmap_name = 'black_white'
-            cm_binary = LinearSegmentedColormap.from_list(cmap_name, colors, N=n_bins)
-            
-            # Plot each conditioning channel
-            for i in range(spatial_cond.shape[0]):
+    
+    # Visualize conditioning channels
+    if cond_image is not None:
+        cond_np = cond_image.numpy()
+        cond_names = output_dict.get('pixel_space_names', spatial_names[num_main_channels:])
+        
+        for i in range(cond_np.shape[0]):
+            if idx >= len(axes):
+                break
+            channel_name = cond_names[i] if i < len(cond_names) else f'Cond {i}'
+            cmap = _get_colormap_for_channel(channel_name)
+            axes[idx].imshow(cond_np[i], cmap=cmap)
+            axes[idx].set_title(f'{channel_name}', fontsize=10)
+            axes[idx].axis('off')
+            idx += 1
+    
+    # Visualize latent-space conditioning (diffusion mode)
+    if mode_type == 'diffusion':
+        for key, value in output_dict.items():
+            if key not in ['meta', 'image', 'pixel_space_names'] and isinstance(value, torch.Tensor):
                 if idx >= len(axes):
                     break
-                
-                channel = spatial_cond[i]
-                
-                # Get channel name
-                if i < len(spatial_names):
-                    name = spatial_names[i]
-                else:
-                    name = f'Channel {i}'
-                
-                # Skip masked_image channels (already plotted)
-                if 'masked_image:' in name:
-                    continue
-                
-                
-                # Plot channel
-                if 'mask' in name.lower():
-                    # Inpainting mask - use custom black to red-orange colormap
-                    axes[idx].imshow(channel, cmap=cm_binary, vmin=0, vmax=1)
-                elif 'temp' in name.lower() or 'lst' in name.lower():
-                    # Temperature - use seaborn rocket colormap
-                    axes[idx].imshow(channel, cmap=sns.color_palette("rocket", as_cmap=True))
-                elif 'vegetation' in name.lower() or 'ndvi' in name.lower():
-                    # Vegetation (filtered NDVI) - use custom colormap: black for -1, then greens from RdYlGn
-                    # Values at -1.0 (filtered out) will be black, positive NDVI will use green gradient
-                    rdylgn = cm.get_cmap('RdYlGn', 256)
-                    # Take only the greenish part
-                    newcolors = rdylgn(np.linspace(0.1, 1, 256))
-                    # Set first color to black for -1.0 values
-                    newcolors[0] = [0, 0, 0, 1]
-                    vegcmap = ListedColormap(newcolors)
-                    axes[idx].imshow(channel, cmap=vegcmap, vmin=-1, vmax=1)
-                elif 'height' in name.lower():
-                    # Heights - use seaborn rocket colormap
-                    axes[idx].imshow(channel, cmap=sns.color_palette("rocket", as_cmap=True))
-                else:
-                    axes[idx].imshow(channel, cmap=cm_binary)
-                
-                axes[idx].set_title(name, fontsize=10)
-                axes[idx].axis('off')
-                idx += 1
-        
-        # Print metadata
-        if 'meta' in cond_input:
-            meta = cond_input['meta']
-            print("\n" + "="*50)
-            print("Sample Metadata:")
-            print("="*50)
-            for key, value in meta.items():
-                if key != 'spatial_names':
-                    print(f"  {key}: {value}")
-            if 'spatial_names' in meta:
-                print(f"\n  Spatial condition channels ({len(meta['spatial_names'])}):")
-                for name in meta['spatial_names']:
-                    print(f"    - {name}")
+                latent_cond = value.numpy()
+                if latent_cond.ndim >= 3:
+                    axes[idx].imshow(latent_cond[0], cmap='viridis')
+                    axes[idx].set_title(f'Latent: {key}', fontsize=10)
+                    axes[idx].axis('off')
+                    idx += 1
     
     # Hide unused axes
     for i in range(idx, len(axes)):
         axes[i].axis('off')
+    
+    # Print metadata
+    print("\n" + "="*60)
+    print(f"Sample Metadata ({mode}):")
+    print("="*60)
+    for key, value in meta.items():
+        if key not in ['spatial_names']:
+            print(f"  {key}: {value}")
+    if spatial_names:
+        print(f"\n  Channels ({len(spatial_names)}):")
+        for name in spatial_names[:10]:  # Limit to first 10
+            print(f"    - {name}")
+        if len(spatial_names) > 10:
+            print(f"    ... and {len(spatial_names) - 10} more")
     
     plt.tight_layout()
     
@@ -186,54 +174,57 @@ def visualize_sample(sample_data, save_path=None):
     plt.close()
 
 
-def validate_dataset(num_samples=5, config=None, mode='semantic'):
+def _get_colormap_for_channel(channel_name: str):
+    """Get appropriate colormap based on channel name."""
+    name_lower = channel_name.lower()
+    
+    if 'mask' in name_lower:
+        colors = [(0, 0, 0), (1, 1, 1)]
+        return LinearSegmentedColormap.from_list('binary', colors, N=100)
+    elif 'temp' in name_lower or 'lst' in name_lower:
+        return sns.color_palette("rocket", as_cmap=True)
+    elif 'vegetation' in name_lower or 'ndvi' in name_lower:
+        rdylgn = cm.get_cmap('RdYlGn', 256)
+        newcolors = rdylgn(np.linspace(0.1, 1, 256))
+        newcolors[0] = [0, 0, 0, 1]
+        return ListedColormap(newcolors)
+    elif 'height' in name_lower:
+        return sns.color_palette("rocket", as_cmap=True)
+    else:
+        return 'gray'
+
+
+def validate_dataset(num_samples=5, config=None, mode='default'):
     """
     Validate dataset loading and visualize samples.
     
     Args:
         num_samples: Number of samples to visualize
         config: Configuration dict (if None, will load from load_configs)
-        mode: 'semantic' or 'satellite' - which stage to validate
+        mode: Dataset mode - 'default', 'vae:<group>', or 'diffusion:<stage>'
     """
-    stage_name = "Semantic (Stage 1)" if mode == 'semantic' else "Satellite (Stage 2)"
-    print("="*50)
-    print(f"Dataset Validation - {stage_name}")
-    print("="*50)
+    print("="*60)
+    print(f"Dataset Validation - Mode: {mode}")
+    print("="*60)
     
     ###### setup config variables #######
     if config is None:
         config = load_configs()
-    # repo_dir = config['repo_dir']
     data_config = config['data_config']
-    
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
-    
-    # Load mode-specific configs
-    ldm_config = config['ldm_params']
-    autoencoder_config = config['autoencoder_params']
     train_config = config['train_params']
     
-    if mode == 'semantic':
-        mode_ldm_config = ldm_config['semantic']
-        mode_autoencoder_config = autoencoder_config['semantic']
-        mode_train_config = train_config['semantic']
-    else:  # satellite
-        mode_ldm_config = ldm_config['satellite']
-        mode_autoencoder_config = autoencoder_config['satellite']
-        mode_train_config = train_config['satellite']
-    
-    print(f"\n✓ Loaded configuration for {stage_name}")
+    print(f"\n✓ Loaded configuration")
     
     # Create dataset
-    print(f"\nLoading {mode} dataset...")
+    print(f"\nLoading dataset with mode '{mode}'...")
     try:
         dataset = UrbanInpaintingDataset(
             split='train',
-            use_latents=False,
-            latent_path=None,
+            use_cached_patches=False,  # Use on-the-fly for validation
             mode=mode
         )
-        print(f"✓ Successfully loaded {mode} dataset!")
+        print(f"✓ Successfully loaded dataset!")
     except Exception as e:
         print(f"✗ Error loading dataset: {e}")
         import traceback
@@ -241,33 +232,23 @@ def validate_dataset(num_samples=5, config=None, mode='semantic'):
         return
     
     # Dataset info
-    print("\n" + "="*50)
+    print("\n" + "="*60)
     print("Dataset Information")
-    print("="*50)
+    print("="*60)
+    print(f"  Mode: {dataset.mode}")
     print(f"  Number of patches: {len(dataset)}")
-    print(f"  Patch size: {dataset.patch_size}x{dataset.patch_size} pixels")
-    print(f"  Image channels: {dataset.im_channels}")
+    print(f"  Patch size: {dataset.patch_size}x{dataset.patch_size}")
     print(f"  Regions: {dataset.regions}")
     
-    # Print selected dates per region if available
-    if hasattr(dataset, 'data_layers_per_region') and dataset.data_layers_per_region:
-        print(f"  Selected dates per region:")
-        for region, layers in dataset.data_layers_per_region.items():
-            if 'date' in layers:
-                print(f"    - {region}: {layers['date']}")
-    
-    print(f"  Conditioning types: {dataset.condition_types}")
-    print(f"  OSM layers: {dataset.osm_layers}")
-    print(f"  Environmental layers: {dataset.environmental_layers}")
-    
     # Test loading samples
-    print("\n" + "="*50)
+    print("\n" + "="*60)
     print("Testing Sample Loading")
-    print("="*50)
+    print("="*60)
     
     # Create output directory
     task_name = train_config.get('task_name', 'urban_inpainting')
-    output_dir = f"{big_data_storage_path}/results/{task_name}/dataset_validation_{mode}"
+    mode_safe = mode.replace(':', '_')
+    output_dir = f"{big_data_storage_path}/results/{task_name}/dataset_validation_{mode_safe}"
     os.makedirs(output_dir, exist_ok=True)
     
     for i in range(min(num_samples, len(dataset))):
@@ -275,30 +256,18 @@ def validate_dataset(num_samples=5, config=None, mode='semantic'):
         
         try:
             sample = dataset[i]
+            im, output_dict = sample
             
-            # Check shapes
-            if len(sample) == 2:
-                im, cond = sample
-                print(f"  Image shape: {im.shape}")
-                print(f"  Image range: [{im.min():.3f}, {im.max():.3f}]")
-                
-                if 'image' in cond:
-                    print(f"  Spatial condition shape: {cond['image'].shape}")
-                    print(f"  Spatial condition range: [{cond['image'].min():.3f}, {cond['image'].max():.3f}]")
-                
-                if 'mask' in cond:
-                    print(f"  Mask shape: {cond['mask'].shape}")
-                    print(f"  Mask unique values: {torch.unique(cond['mask']).tolist()}")
-                    mask_ratio = (cond['mask'] == 1).float().mean().item()
-                    print(f"  Mask ratio (to regenerate): {mask_ratio:.2%}")
-            else:
-                im = sample
-                print(f"  Image shape: {im.shape}")
-                print(f"  Image range: [{im.min():.3f}, {im.max():.3f}]")
+            print(f"  Main tensor shape: {im.shape}")
+            print(f"  Main tensor range: [{im.min():.3f}, {im.max():.3f}]")
+            
+            if 'image' in output_dict and output_dict['image'] is not None:
+                print(f"  Conditioning shape: {output_dict['image'].shape}")
+                print(f"  Conditioning range: [{output_dict['image'].min():.3f}, {output_dict['image'].max():.3f}]")
             
             # Visualize
             save_path = os.path.join(output_dir, f'sample_{i}.png')
-            visualize_sample(sample, save_path)
+            visualize_sample(sample, mode=mode, save_path=save_path)
             
             print(f"  ✓ Sample {i+1} validated successfully")
             
@@ -307,41 +276,22 @@ def validate_dataset(num_samples=5, config=None, mode='semantic'):
             import traceback
             traceback.print_exc()
     
-    print("\n" + "="*50)
+    print("\n" + "="*60)
     print("Validation Complete!")
-    print("="*50)
-    print(f"\nVisualization saved to: {output_dir}")
-    print("\nIf all samples loaded successfully, your dataset is ready for training!")
+    print("="*60)
+    print(f"\nVisualizations saved to: {output_dir}")
 
 
 if __name__ == '__main__':
-    # Create parser with all arguments
     parser = argparse.ArgumentParser(description='Validate urban inpainting dataset')
     
-    # Add config file arguments
     from helpers.load_configs import add_config_arguments
     add_config_arguments(parser)
     
-    # Add validation-specific arguments
-    parser.add_argument(
-        '--num_samples',
-        type=int,
-        default=5,
-        help='Number of samples to visualize'
-    )
-    parser.add_argument(
-        '--mode',
-        type=str,
-        default='semantic',
-        choices=['semantic', 'satellite'],
-        help='Dataset mode/stage to validate: semantic (Stage 1) or satellite (Stage 2)'
-    )
+    parser.add_argument('--num_samples', type=int, default=5, help='Number of samples to visualize')
+    parser.add_argument('--mode', type=str, default='default',
+                       help='Dataset mode: "default", "vae:<group>", or "diffusion:<stage>"')
     
-    # Parse arguments
     args = parser.parse_args()
-    
-    # Load configs using the parser
     config = load_configs(parser)
-    
-    # Run validation
     validate_dataset(args.num_samples, config, args.mode)
