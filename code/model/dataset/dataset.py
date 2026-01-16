@@ -1161,4 +1161,16 @@ class UrbanInpaintingDataset(Dataset):
                 df = pd.DataFrame(records)
                 df.to_csv(save_path, index=False)
                 print(f"Saved {stat_name} stats to {save_path}")
-        
+    
+    def close(self):
+        """
+        Close any open resources (e.g., Xarray datasets)
+        """
+        import gc
+        if hasattr(self, 'datasets'):
+            for region, ds in self.datasets.items():
+                ds.close()
+                print(f"Closed dataset for region: {region}")
+                del ds
+            del self.datasets
+            gc.collect()
