@@ -239,12 +239,6 @@ class UrbanInpaintingDataset(Dataset):
         # Compute global statistics for normalization
         self._compute_layer_statistics()
         
-        # Close datasets and explicitly free memory after statistics computation
-        print("\nFreeing memory after statistics computation...")
-        for region in self.regions:
-            self.datasets[region].close()
-            del self.datasets[region]
-        
         # Force garbage collection
         import gc
         gc.collect()
@@ -266,6 +260,8 @@ class UrbanInpaintingDataset(Dataset):
         Statistics are stored in self.layer_stats.
         Uses xarray's efficient methods for computation.
         """
+        import gc
+                
         print(f"\n{'='*60}")
         print("Computing global layer statistics for normalization...")
         print(f"{'='*60}")
@@ -366,6 +362,9 @@ class UrbanInpaintingDataset(Dataset):
             # Close dataset for this region to free memory
             print(f"  ✓ Closing dataset for {region}...")
             merged_xs.close()
+            # force garbage collection
+            del self.datasets[region]
+            gc.collect()
         
         # Now combine statistics across all regions for each layer
         print(f"\nCombining statistics across regions...")
