@@ -290,44 +290,48 @@ class UrbanInpaintingDataset(Dataset):
             
             print(f"  {region}: {len(valid_dates)} valid date(s)")
         
-        for layer_name in self.all_layer_names:
-            if layer_name == 'inpainting_mask':
-                # Skip inpainting mask (generated on-the-fly)
+        # Compute statistics per region first, then combine across regions
+        # This allows closing datasets after processing each region to free memory
+        all_region_stats = {}  # {layer_name: [region_stats]}
+        
+        for region in self.regions:
+            print(f"\nProcessing region: {region}")
+            merged_xs = self.datasets[region]
+            valid_dates = region_valid_dates[region]
+            
+            if len(valid_dates) == 0:
+                print(f"  ⚠ No valid dates found for region {region}")
                 continue
             
-            layer_config = self.layers_registry[layer_name]
-            source_layer = get_layer_info(self.layers_registry, layer_name).get('layer', layer_name)
-            layer_channels = layer_config.get('channels', None)
+            selected_date = valid_dates[0]
+            print(f"  Using date: {selected_date}")
             
-            # Check if this layer needs normalization
-            normalize_method = layer_config.get('normalize', None)
-            if normalize_method is None:
-                continue
-            if normalize_method == 'custom':
-                normalize_params = layer_config.get('normalize_params', {})
-                if 'min' in normalize_params and 'max' in normalize_params:
-                    # Custom min/max provided - skip stats computation
-                    print(f"  ✓ Skipping '{layer_name}' (custom min/max provided)")
+            # Compute statistics for all layers in this region
+            for layer_name in self.all_layer_names:
+                if layer_name == 'inpainting_mask':
+                    # Skip inpainting mask (generated on-the-fly)
                     continue
-            
-            print(f"\nComputing statistics for '{layer_name}' (source: {source_layer})...")
-            
-            # Compute statistics per region/date using xarray, then combine
-            region_stats = []
-            
-            for region in self.regions:
-                merged_xs = self.datasets[region]
-                valid_dates = region_valid_dates[region]
+                
+                layer_config = self.layers_registry[layer_name]
+                source_layer = get_layer_info(self.layers_registry, layer_name).get('layer', layer_name)
+                layer_channels = layer_config.get('channels', None)
+                
+                # Check if this layer needs normalization
+                normalize_method = layer_config.get('normalize', None)
+                if normalize_method is None:
+                    continue
+                if normalize_method == 'custom':
+                    normalize_params = layer_config.get('normalize_params', {})
+                    if 'min' in normalize_params and 'max' in normalize_params:
+                        # Custom min/max provided - skip stats computation
+                        if layer_name not in all_region_stats:
+                            print(f"  ✓ Skipping '{layer_name}' (custom min/max provided)")
+                        continue
                 
                 if source_layer not in merged_xs:
                     print(f"  ⚠ Layer '{source_layer}' not found in {region}")
                     continue
                 
-                if len(valid_dates) == 0:
-                    print(f"  ⚠ No valid dates found for region {region}")
-                    continue
-                
-                selected_date=valid_dates[0]
                 date_data = merged_xs.sel(time=selected_date)
                 
                 if source_layer not in date_data:
@@ -340,8 +344,9 @@ class UrbanInpaintingDataset(Dataset):
                     layer_da = date_data[source_layer]
                 
                 # Compute all statistics using xarray methods
-                print(f"    Computing stats for {region} - {selected_date}...")
+                print(f"    Computing stats for '{layer_name}'...")
                 stats = {
+                    'region': region,
                     'min': float(layer_da.min().compute()),
                     'max': float(layer_da.max().compute()),
                     'mean': float(layer_da.mean().compute()),
@@ -352,14 +357,27 @@ class UrbanInpaintingDataset(Dataset):
                     'q98': float(layer_da.quantile(0.98).compute()),
                     'q99': float(layer_da.quantile(0.99).compute()),
                 }
-                region_stats.append(stats)
+                
+                # Store region stats for this layer
+                if layer_name not in all_region_stats:
+                    all_region_stats[layer_name] = []
+                all_region_stats[layer_name].append(stats)
             
+            # Close dataset for this region to free memory
+            print(f"  ✓ Closing dataset for {region}...")
+            merged_xs.close()
+        
+        # Now combine statistics across all regions for each layer
+        print(f"\nCombining statistics across regions...")
+        for layer_name, region_stats in all_region_stats.items():
             if len(region_stats) == 0:
                 print(f"  ⚠ No valid data found for '{layer_name}'")
                 continue
             
-            # Combine statistics from all regions/dates
-            print(f"  Combining statistics from {len(region_stats)} region/date combinations...")
+            layer_config = self.layers_registry[layer_name]
+            source_layer = get_layer_info(self.layers_registry, layer_name).get('layer', layer_name)
+            
+            print(f"  Combining '{layer_name}' from {len(region_stats)} regions...")
             
             # Global min/max (simple)
             layer_min = min(s['min'] for s in region_stats)
@@ -380,7 +398,7 @@ class UrbanInpaintingDataset(Dataset):
             layer_variance = pooled_e_x2 - (layer_mean ** 2)
             layer_std = np.sqrt(max(0, layer_variance))
             
-            # Percentiles: average across regions/dates (reasonable approximation)
+            # Percentiles: average across regions (reasonable approximation)
             layer_q01 = sum(s['q01'] for s in region_stats) / len(region_stats)
             layer_q02 = sum(s['q02'] for s in region_stats) / len(region_stats)
             layer_q98 = sum(s['q98'] for s in region_stats) / len(region_stats)
@@ -400,8 +418,7 @@ class UrbanInpaintingDataset(Dataset):
             
             self.layer_stats[layer_name] = stats
             
-            print(f"  ✓ min={stats['min']:.3f}, max={stats['max']:.3f}, mean={stats['mean']:.3f}, std={stats['std']:.3f}")
-            print(f"    q01={stats['q01']:.3f}, q99={stats['q99']:.3f}")
+            print(f"    ✓ min={stats['min']:.3f}, max={stats['max']:.3f}, mean={stats['mean']:.3f}, std={stats['std']:.3f}")
         
         print(f"\n✓ Computed statistics for {len(self.layer_stats)} layers")
         print(f"{'='*60}\n")
