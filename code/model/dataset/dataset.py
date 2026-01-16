@@ -327,32 +327,32 @@ class UrbanInpaintingDataset(Dataset):
                     print(f"  ⚠ No valid dates found for region {region}")
                     continue
                 
-                for date in valid_dates:
-                    date_data = merged_xs.sel(time=date)
-                    
-                    if source_layer not in date_data:
-                        continue
-                    
-                    # Extract layer data
-                    if layer_channels is not None:
-                        layer_da = date_data[source_layer].sel(channel=layer_channels)
-                    else:
-                        layer_da = date_data[source_layer]
-                    
-                    # Compute all statistics using xarray methods
-                    print(f"    Computing stats for {region} - {date}...")
-                    stats = {
-                        'min': float(layer_da.min().compute()),
-                        'max': float(layer_da.max().compute()),
-                        'mean': float(layer_da.mean().compute()),
-                        'std': float(layer_da.std().compute()),
-                        'count': int(layer_da.notnull().sum().compute()),
-                        'q01': float(layer_da.quantile(0.01).compute()),
-                        'q02': float(layer_da.quantile(0.02).compute()),
-                        'q98': float(layer_da.quantile(0.98).compute()),
-                        'q99': float(layer_da.quantile(0.99).compute()),
-                    }
-                    region_stats.append(stats)
+                selected_date=valid_dates[0]
+                date_data = merged_xs.sel(time=selected_date)
+                
+                if source_layer not in date_data:
+                    continue
+                
+                # Extract layer data
+                if layer_channels is not None:
+                    layer_da = date_data[source_layer].sel(channel=layer_channels)
+                else:
+                    layer_da = date_data[source_layer]
+                
+                # Compute all statistics using xarray methods
+                print(f"    Computing stats for {region} - {selected_date}...")
+                stats = {
+                    'min': float(layer_da.min().compute()),
+                    'max': float(layer_da.max().compute()),
+                    'mean': float(layer_da.mean().compute()),
+                    'std': float(layer_da.std().compute()),
+                    'count': int(layer_da.notnull().sum().compute()),
+                    'q01': float(layer_da.quantile(0.01).compute()),
+                    'q02': float(layer_da.quantile(0.02).compute()),
+                    'q98': float(layer_da.quantile(0.98).compute()),
+                    'q99': float(layer_da.quantile(0.99).compute()),
+                }
+                region_stats.append(stats)
             
             if len(region_stats) == 0:
                 print(f"  ⚠ No valid data found for '{layer_name}'")
