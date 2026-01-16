@@ -266,6 +266,10 @@ class UrbanInpaintingDataset(Dataset):
         This ensures consistent normalization across all patches.
         Statistics are stored in self.layer_stats.
         """
+        print(f"\n{'='*60}")
+        print("Global layer statistics for normalization...")
+        print(f"{'='*60}")
+        
         stats_dir = Path(self.big_data_storage_path) / "processed" / self.config['train_params']['task_name'] / "stats"
         stats_path = stats_dir / f"layer_statistics_stats_{self.split}.csv"
         
@@ -290,10 +294,14 @@ class UrbanInpaintingDataset(Dataset):
             
             print(f"✓ Loaded statistics for {len(self.layer_stats)} layers from cache\n")
             return
-        
-        print(f"\n{'='*60}")
-        print("Computing global layer statistics for normalization...")
-        print(f"{'='*60}")
+        else:
+            if stats_path.exists():
+                print(f"\n{'='*60}")
+                print(f"Recomputing layer statistics (overwriting {stats_path})...")
+                print(f"{'='*60}")
+            else:
+                print(f"Cache path {str(stats_path)} for statistics does not exist. Computing statistics...")
+
         import gc
         
         rgb_layer = get_layer_info(self.layers_registry, 'rgb')
