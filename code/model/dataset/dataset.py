@@ -405,7 +405,9 @@ class UrbanInpaintingDataset(Dataset):
         print(f"{'='*60}\n")
         
         # saving stats
-        self.stats['layer_statistics'] = self.layer_stats
+        stats_frame = self.layer_stats.transpose()
+        stats_frame['layer_name'] = stats_frame.index
+        self.stats['layer_statistics'] = stats_frame
         self.save_stats(stats_dir)
         
     
