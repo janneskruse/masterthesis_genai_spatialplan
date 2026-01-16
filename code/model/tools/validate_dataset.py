@@ -202,7 +202,7 @@ def _get_colormap_for_channel(channel_name: str):
         return 'gray'
 
 
-def validate_dataset(num_samples=5, config=None, mode='default'):
+def validate_dataset(num_samples=5, config=None, mode='default', use_cached_patches=False):
     """
     Validate dataset loading and visualize samples.
     
@@ -210,6 +210,7 @@ def validate_dataset(num_samples=5, config=None, mode='default'):
         num_samples: Number of samples to visualize
         config: Configuration dict (if None, will load from load_configs)
         mode: Dataset mode - 'default', 'vae:<group>', or 'diffusion:<stage>'
+        use_cached_patches: Whether to use cached patches (default: False for validation)
     """
     print("="*60)
     print(f"Dataset Validation - Mode: {mode}")
@@ -226,10 +227,11 @@ def validate_dataset(num_samples=5, config=None, mode='default'):
     
     # Create dataset
     print(f"\nLoading dataset with mode '{mode}'...")
+    print(f"Using {'cached patches' if use_cached_patches else 'on-the-fly loading'}")
     try:
         dataset = UrbanInpaintingDataset(
             split='train',
-            use_cached_patches=False,  # Use on-the-fly for validation
+            use_cached_patches=use_cached_patches,
             mode=mode
         )
         print(f"✓ Successfully loaded dataset!")
@@ -299,7 +301,9 @@ if __name__ == '__main__':
     parser.add_argument('--num_samples', type=int, default=5, help='Number of samples to visualize')
     parser.add_argument('--mode', type=str, default='default',
                        help='Dataset mode: "default", "vae:<group>", or "diffusion:<stage>"')
+    parser.add_argument('--use_cached_patches', action='store_true',
+                       help='Use cached patches instead of on-the-fly loading (default: False)')
     
     args = parser.parse_args()
     config = load_configs(parser)
-    validate_dataset(args.num_samples, config, args.mode)
+    validate_dataset(args.num_samples, config, args.mode, args.use_cached_patches)
