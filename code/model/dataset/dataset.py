@@ -1163,12 +1163,12 @@ class UrbanInpaintingDataset(Dataset):
         
         import pandas as pd
         for stat_name, records in self.stats.items():
-            save_path = f"{save_path}/{stat_name}_stats_{self.split}.csv"
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            file_path = f"{save_path}/{stat_name}_stats_{self.split}.csv"
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
             if records:
                 df = pd.DataFrame(records)
-                df.to_csv(save_path, index=False)
-                print(f"Saved {stat_name} stats to {save_path}")
+                df.to_csv(file_path, index=False)
+                print(f"Saved {stat_name} stats to {file_path}")
     
     def close(self):
         """
