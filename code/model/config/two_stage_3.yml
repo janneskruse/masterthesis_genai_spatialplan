@@ -65,8 +65,8 @@ layers:
     type: 'continuous'
     normalize: 'custom'
     normalize_params:
-      min: 250  # Kelvin
-      max: 320  # Kelvin
+      min: 0  # degree celsius
+      max: 80 # degree celsius
   
   # Inpainting mask (generated on-the-fly)
   inpainting_mask:
