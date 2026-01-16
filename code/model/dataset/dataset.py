@@ -821,7 +821,7 @@ class UrbanInpaintingDataset(Dataset):
             image_meta = patch_data['meta'].copy()
             image_meta['spatial_names'] = target_names
             
-            return image, image_meta
+            return image, {'image': None,'meta': image_meta}
         
         else:  # self.mode_type == 'diffusion'
             # Diffusion mode: Load prediction latent + conditioning (pixel + latent space)
