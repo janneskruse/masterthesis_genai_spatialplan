@@ -405,9 +405,10 @@ class UrbanInpaintingDataset(Dataset):
         print(f"{'='*60}\n")
         
         # saving stats
-        stats_frame = self.layer_stats.transpose()
-        stats_frame['layer_name'] = stats_frame.index
-        self.stats['layer_statistics'] = stats_frame
+        stats_df = pd.DataFrame.from_dict(self.layer_stats, orient='index')
+        stats_df['layer_name'] = stats_df.index
+        stats_df = stats_df.reset_index(drop=True)
+        self.stats['layer_statistics'] = stats_df.to_dict('records')
         self.save_stats(stats_dir)
         
     
@@ -1162,8 +1163,6 @@ class UrbanInpaintingDataset(Dataset):
         """
         Save dataset statistics to CSV files
         """
-        
-        import pandas as pd
         for stat_name, records in self.stats.items():
             file_path = f"{save_path}/{stat_name}_stats_{self.split}.csv"
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
