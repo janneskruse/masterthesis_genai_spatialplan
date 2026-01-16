@@ -269,6 +269,12 @@ class UrbanInpaintingDataset(Dataset):
             normalize_method = layer_config.get('normalize', None)
             if normalize_method is None:
                 continue
+            if normalize_method == 'custom':
+                normalize_params = layer_config.get('normalize_params', {})
+                if 'min' in normalize_params and 'max' in normalize_params:
+                    # Custom min/max provided - skip stats computation
+                    print(f"  ✓ Skipping '{layer_name}' (custom min/max provided)")
+                    continue
             
             print(f"\nComputing statistics for '{layer_name}' (source: {source_layer})...")
             
