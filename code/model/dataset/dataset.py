@@ -21,7 +21,7 @@ from model.utils.diffusion_utils import load_latents
 from model.utils.read_yaml import get_nested
 from model.utils.diffusion_utils import load_single_latent
 from model.utils.data_utils import apply_layer_transform
-from model.utils.config_utils import compute_patch_and_latent_sizes
+from model.utils.config_utils import compute_patch_and_latent_sizes, get_default_configs
 from model.utils.layer_config import (
     get_layer_info,
     count_layer_channels,
@@ -94,18 +94,42 @@ class UrbanInpaintingDataset(Dataset):
         self.vae_groups = config.get('vae_groups', {})
         self.diffusion_stages = config.get('diffusion_stages', {})
         
-        # Legacy configs (keep for backward compatibility during transition)
-        ldm_config = config.get('ldm_params', {})
-        autoencoder_config = config.get('autoencoder_params', {})
-        
-        # For legacy mode compatibility
-        if mode in ['semantic', 'satellite']:
-            self.ldm_config = ldm_config.get(mode, ldm_config)
-            self.autoencoder_config = autoencoder_config.get(mode, autoencoder_config)
+        # Get config for current mode
+        if self.mode_type == 'vae':
+            # VAE mode: use the target group's config
+            if self.mode_target not in self.vae_groups:
+                raise ValueError(
+                    f"VAE group '{self.mode_target}' not found in config. "
+                    f"Available groups: {list(self.vae_groups.keys())}"
+                )
+            vae_config = self.vae_groups[self.mode_target]
+            # Use diffusion params as default U-Net config (for patch size calculation)
+            unet_config = config.get('diffusion_stages', {}).get(self.mode_target, {}).get('unet_config', {})
+            if not unet_config:
+                unet_config = get_default_configs(self.vae_groups, self.diffusion_stages)[1]
+            
+        elif self.mode_type == 'diffusion':
+            # Diffusion mode: use the target stage's config
+            if self.mode_target not in self.diffusion_stages:
+                raise ValueError(
+                    f"Diffusion stage '{self.mode_target}' not found in config. "
+                    f"Available stages: {list(self.diffusion_stages.keys())}"
+                )
+            stage_config = self.diffusion_stages[self.mode_target]
+            pred_group = stage_config.get('prediction_group')
+            
+            if pred_group not in self.vae_groups:
+                raise ValueError(
+                    f"Prediction group '{pred_group}' not found in VAE groups. "
+                    f"Available: {list(self.vae_groups.keys())}"
+                )
+            
+            vae_config = self.vae_groups[pred_group]
+            unet_config = stage_config.get('unet_config', {})
+            
         else:
-            # Use first available config as default
-            self.ldm_config = ldm_config
-            self.autoencoder_config = autoencoder_config
+            # Default mode: use first available configs or defaults
+            vae_config, unet_config = get_default_configs(self.vae_groups, self.diffusion_stages)
         
         # Basic parameters
         big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
@@ -118,11 +142,11 @@ class UrbanInpaintingDataset(Dataset):
         self.latent_path = latent_path
         self.use_latents = bool(use_latents)
 
-        # Compute patch and latent sizes
+        # Compute patch and latent sizes using mode-specific configs
         patch_size, latent_size, vae_downsample_factor, unet_downsample_factor, total_divisor = compute_patch_and_latent_sizes(
             dataset_config,
-            self.autoencoder_config,
-            self.ldm_config,
+            vae_config,
+            unet_config,
             use_latents=self.use_latents,
             self=self
         )
@@ -130,6 +154,7 @@ class UrbanInpaintingDataset(Dataset):
         # Store parameters
         self.split = split
         self.patch_size = patch_size
+        self.latent_size = latent_size
         self.stride_overlap = dataset_config.get('stride_overlap', 2)
         self.stride = int(patch_size // self.stride_overlap)  # compute stride based on overlap
         self.im_channels = im_channels
@@ -150,10 +175,8 @@ class UrbanInpaintingDataset(Dataset):
             'size_px': 64
         })
         
-        # Legacy conditioning configuration (keep for backward compatibility during transition)
-        # TODO: Remove once fully migrated to new config structure
-        condition_config = self.ldm_config.get('condition_config', {})
-        self.condition_types = condition_config.get('condition_types', [])
+        # Alias for backward compatibility
+        self.hole_config = self.inpainting_config
         
         # Select regions based on split
         train_regions = dataset_config.get('train_regions', ['Dresden', 'Hamburg', 'Stuttgart'])
@@ -542,13 +565,13 @@ class UrbanInpaintingDataset(Dataset):
             merged_xs = self.datasets[region]
         
             # Get valid dates with planetscope data
-            valid_planet_dates = (
+            valid_dates = (
                 merged_xs[rgb_layer_name]
                 .notnull()
                 .sum(dim=['x', 'y']) > 0
             ).any(dim='channel').compute()
         
-            valid_dates = merged_xs['time'].where(valid_planet_dates, drop=True).values
+            valid_dates = merged_xs['time'].where(valid_dates, drop=True).values
         
             if len(valid_dates) == 0:
                 print(f"No valid dates found for region {region}")
@@ -611,7 +634,7 @@ class UrbanInpaintingDataset(Dataset):
             print(f"Found {len(region_patches)} valid patches for region {region}")
             all_patches.extend(region_patches)
                     
-        print(f"\nTotal patches across all {self.split} regions: {len(all_patches)}")
+        print(f"\nTotal patches across all regions: {len(all_patches)}")
         return all_patches
     
     def _create_inpainting_mask(self, H, W, street_blocks_layer=None, patch_info=None):
@@ -855,13 +878,6 @@ class UrbanInpaintingDataset(Dataset):
                     return image, {'image': None, 'meta': image_meta}
             
             elif self.mode_type == 'vae':
-                # VAE mode: Extract layers specified in VAE group config
-                if self.mode_target not in self.vae_groups:
-                    raise ValueError(
-                        f"VAE group '{self.mode_target}' not found in config. "
-                        f"Available groups: {list(self.vae_groups.keys())}"
-                    )
-                
                 vae_config = self.vae_groups[self.mode_target]
                 target_layers = vae_config.get('layers', [])
                 
@@ -896,9 +912,84 @@ class UrbanInpaintingDataset(Dataset):
                 return image, image_meta
             
             else:  # self.mode_type == 'diffusion'
-                # Diffusion mode: Return full unified patch for now
-                # TODO: Implement diffusion-specific composition in next step
-                return unified_image, patch_data['meta']
+                # Diffusion mode: Load prediction latent + conditioning (pixel + latent space)
+                stage_config = self.diffusion_stages[self.mode_target]
+                pred_group = stage_config.get('prediction_group')
+                conditioning_config = stage_config.get('conditioning', {})
+                
+                # Get latent directories from VAE group configs
+                big_data_storage_path = self.data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
+                results_dir = Path(big_data_storage_path) / "results" / self.config['train_params']['task_name']
+                
+                # Load prediction latent
+                pred_latents_dir = self.vae_groups[pred_group].get('latents_dir', f'{pred_group}_latents')
+                pred_latent_path = results_dir / pred_latents_dir / f"latent_{cache_idx}.pt"
+                
+                if not pred_latent_path.exists():
+                    raise FileNotFoundError(
+                        f"Prediction latent not found: {pred_latent_path}. "
+                        f"Run VAE training for group '{pred_group}' first."
+                    )
+                
+                pred_latent = torch.load(pred_latent_path)
+                
+                # Build conditioning dictionary
+                cond = {'meta': patch_data['meta'].copy()}
+                
+                # Use pre-computed latent resolution (all VAEs must have same downsampling)
+                latent_h = self.latent_size
+                latent_w = self.latent_size
+                
+                # Add pixel-space conditioning (downsampled to latent resolution)
+                pixel_cond_list = []
+                pixel_cond_names = []
+                
+                for cond_spec in conditioning_config.get('pixel_space', []):
+                    if cond_spec['type'] == 'inpainting_mask':
+                        # Find mask in unified patch
+                        mask_matches = get_layer_channels_from_names(spatial_names, 'inpainting_mask')
+                        if len(mask_matches) > 0:
+                            mask_idx = mask_matches[0][0]
+                            mask_full = unified_image[mask_idx:mask_idx+1, :, :]  # [1, H, W]
+                            
+                            # Downsample to latent resolution
+                            mask_latent = mask_full.unsqueeze(0)  # [1, 1, H, W]
+                            mask_latent = torch.nn.functional.interpolate(
+                                mask_latent,
+                                size=(latent_h, latent_w),
+                                mode='nearest'
+                            ).squeeze(0)  # [1, H_latent, W_latent]
+                            
+                            pixel_cond_list.append(mask_latent)
+                            pixel_cond_names.append('inpainting_mask')
+                
+                if pixel_cond_list:
+                    cond['image'] = torch.cat(pixel_cond_list, dim=0)
+                    cond['pixel_space_names'] = pixel_cond_names
+                
+                # Add latent-space conditioning (load from disk)
+                for cond_spec in conditioning_config.get('latent_space', []):
+                    group_name = cond_spec['group']
+                    
+                    if group_name not in self.vae_groups:
+                        raise ValueError(
+                            f"Conditioning group '{group_name}' not found in VAE groups"
+                        )
+                    
+                    # Load conditioning latent
+                    cond_latents_dir = self.vae_groups[group_name].get('latents_dir', f'{group_name}_latents')
+                    cond_latent_path = results_dir / cond_latents_dir / f"latent_{cache_idx}.pt"
+                    
+                    if not cond_latent_path.exists():
+                        raise FileNotFoundError(
+                            f"Conditioning latent for group '{group_name}' not found: {cond_latent_path}. "
+                            f"Run VAE training for group '{group_name}' first."
+                        )
+                    
+                    cond_latent = torch.load(cond_latent_path)
+                    cond[group_name] = cond_latent
+                
+                return pred_latent, cond
     
     def _getitem_xarray(self, index: int):
         """Extract patch on-the-fly from Xarray (existing logic)"""
@@ -1332,18 +1423,6 @@ class UrbanInpaintingDataset(Dataset):
         cond_inputs['meta'] = patch_data['conditioning']['meta'].copy()
         
         return cond_inputs
-
-    
-    def _compute_conditioning_channels(self) -> int:
-        """
-        Compute total number of conditioning channels (legacy method).
-        
-        Note: This is kept for backward compatibility but should be updated
-        to reflect the new unified patch structure.
-        """
-        # In new structure, all layers are in patch_data['image']
-        # This method is now mainly for legacy compatibility
-        return self.total_channels
     
     def _print_summary(self):
         """Print dataset configuration summary"""

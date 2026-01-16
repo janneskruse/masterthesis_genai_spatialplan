@@ -141,6 +141,34 @@ def get_all_channels(condition_config, include_mask=None):
     
     return all_channels
 
+
+def get_default_configs(vae_groups: dict, diffusion_stages: dict) -> tuple[dict, dict]:
+    """
+    Extract default VAE and U-Net configs from the first available groups/stages.
+    
+    Used as fallback when mode-specific configs are not available.
+    
+    Args:
+        vae_groups: Dictionary of VAE group configurations
+        diffusion_stages: Dictionary of diffusion stage configurations
+        
+    Returns:
+        tuple: (vae_config, unet_config) dictionaries
+    """
+    # Get first VAE group config (or empty dict)
+    first_vae_group = list(vae_groups.keys())[0] if vae_groups else None
+    vae_config = vae_groups[first_vae_group] if first_vae_group else {}
+    
+    # Get first diffusion stage U-Net config (or empty dict)
+    first_diffusion_stage = list(diffusion_stages.keys())[0] if diffusion_stages else None
+    if first_diffusion_stage:
+        unet_config = diffusion_stages[first_diffusion_stage].get('unet_config', {})
+    else:
+        unet_config = {}
+    
+    return vae_config, unet_config
+
+
 def compute_patch_and_latent_sizes(
     dataset_config: dict,
     autoencoder_config: dict,
