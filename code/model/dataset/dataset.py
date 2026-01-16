@@ -739,23 +739,20 @@ class UrbanInpaintingDataset(Dataset):
         else:
             return self._getitem_xarray(index)
         
-    def _getitem_cached(self, index: int):
+    def _compose_batch_by_mode(self, unified_image: torch.Tensor, patch_data: Dict, index: int):
         """
-        Load pre-saved patch from disk and compose based on mode.
+        Compose dataset output based on mode (shared logic for cached and on-the-fly loading).
         
+        Args:
+            unified_image: [C_total, H, W] tensor with all layers
+            patch_data: Dictionary with 'meta' containing 'spatial_names' and other metadata
+            index: Dataset index (for loading latents in diffusion mode)
+            
         Returns:
-            - default mode: (image, conditioning_dict) or just image
+            - default mode: (image, conditioning_dict) or (image, {'image': None, 'meta': ...})
             - vae mode: (image, metadata_dict)
             - diffusion mode: (pred_latent, conditioning_dict)
         """
-        y, x, region, cache_idx = self.patches[index]
-        
-        # Load from cache
-        patch_path = self.cache_dir / f"patch_{self.split}_{cache_idx}.pt"
-        patch_data = torch.load(patch_path)
-        
-        # Compose dataset based on mode
-        unified_image = patch_data['image']
         spatial_names = patch_data['meta']['spatial_names']
             
         if self.mode_type == 'default':
@@ -893,440 +890,44 @@ class UrbanInpaintingDataset(Dataset):
             
             return pred_latent, cond
     
-    def _getitem_xarray(self, index: int):
+    def _getitem_cached(self, index: int):
         """
-        Extract patch on-the-fly from Xarray.
-        
-        TODO: Refactor this method to use new config-driven structure like _getitem_cached.
-        For now, this is a stub that will raise an error if called.
-        """
-        raise NotImplementedError(
-            "_getitem_xarray needs to be refactored to use the new config-driven structure. "
-            "Please use cached patches (use_cached_patches=True) for training, "
-            "or run prepare_cached_patches() first to generate the cache."
-        )
-            # Load prediction latent from file
-            latent_path = self.latent_maps[index]
-            latent = load_single_latent(latent_path, device=None)  # Load to CPU
-            
-            # Check if we have separate conditioning latents
-            if self.latent_cond_maps is not None and len(self.latent_cond_maps) > 0:
-                # Load conditioning latent
-                latent_cond_path = self.latent_cond_maps[index]
-                latent_cond = load_single_latent(latent_cond_path, device=None)
-                
-                # SAFETY CHECK: Verify indices match
-                pred_idx = int(Path(latent_path).stem.split('_')[-1])
-                cond_idx = int(Path(latent_cond_path).stem.split('_')[-1])
-                
-                if pred_idx != cond_idx:
-                    raise RuntimeError(
-                        f"Latent index mismatch at dataset index {index}! "
-                        f"Prediction latent: {pred_idx}, Conditioning latent: {cond_idx}. "
-                        f"This indicates a data corruption issue. Please regenerate latents."
-                    )
-                
-                # Calculate latent space dimensions
-                latent_h = ps // self.vae_downsample_factor
-                latent_w = ps // self.vae_downsample_factor
-                
-                # Use conditioning latent directly (no interpolation needed!)
-                # Prepare minimal conditioning (just mask, latent_cond has the rest)
-                cond_inputs = {}
-                spatial = []
-                spatial_names = []
-                
-                # Still need mask in pixel/latent space
-                street_blocks_layer = None
-                if 'street_blocks' in data_layers and self.hole_config['type'] == 'street_blocks':
-                    street_blocks_layer = data_layers['street_blocks'].isel(
-                        y=slice(y, y+ps),
-                        x=slice(x, x+ps)
-                    ).values
-                
-                patch_info = {
-                    'index': index,
-                    'region': region,
-                    'y': y,
-                    'x': x,
-                    'split': self.split
-                }
-                inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer=street_blocks_layer, patch_info=patch_info)
-                
-                # Downsample mask to latent resolution
-                mask_latent = torch.from_numpy(inpaint_mask).float()
-                mask_latent = mask_latent.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
-                mask_latent = torch.nn.functional.interpolate(
-                    mask_latent,
-                    size=(latent_h, latent_w),
-                    mode='nearest'
-                )
-                mask_latent = mask_latent.squeeze(0)  # [1,H_latent,W_latent]
-                
-                # Combine: mask + conditioning latent
-                spatial.append(torch.from_numpy(mask_latent.numpy()).float())
-                spatial_names.append('inpaint_mask')
-                
-                # Add conditioning latent channels with proper semantic names
-                # The conditioning VAE encodes all OSM + environmental channels
-                # We need to maintain the semantic names for auxiliary loss extraction
-                conditioning_channel_names = []
-                for layer_name in self.osm_layers:
-                    layer_idx = self.osm_layers.index(layer_name)
-                    layer_config = self.osm_layer_configs[layer_idx]
-                    display_name = layer_config.get('key', layer_name)
-                    # Apply context suffix if in semantic mode
-                    display_name = self._apply_context_suffix(display_name, [layer_config])
-                    conditioning_channel_names.append(f'osm:{display_name}')
-                
-                for layer_name in self.environmental_layers:
-                    layer_idx = self.environmental_layers.index(layer_name)
-                    layer_config = self.env_layer_configs[layer_idx]
-                    display_name = layer_config.get('key', layer_name)
-                    # Apply context suffix if in semantic mode
-                    display_name = self._apply_context_suffix(display_name, [layer_config])
-                    conditioning_channel_names.append(f'env:{display_name}')
-                
-                # Verify channel count matches
-                if len(conditioning_channel_names) != latent_cond.shape[0]:
-                    print(f"⚠ WARNING: Conditioning channel mismatch!")
-                    print(f"  Expected {len(conditioning_channel_names)} channels: {conditioning_channel_names}")
-                    print(f"  Got {latent_cond.shape[0]} latent channels")
-                    # Fallback to generic names
-                    conditioning_channel_names = [f'latent_cond_{i}' for i in range(latent_cond.shape[0])]
-                
-                for i in range(latent_cond.shape[0]):
-                    spatial.append(latent_cond[i:i+1])
-                    spatial_names.append(conditioning_channel_names[i])
-                
-                cond_inputs['image'] = torch.cat(spatial, dim=0)
-                cond_inputs['meta'] = {
-                    'y': y,
-                    'x': x,
-                    'time': str(data_layers['date']),
-                    'region': region,
-                    'spatial_names': spatial_names,
-                    'uses_latent_conditioning': True
-                }
-                
-                if len(self.condition_types) == 0:
-                    return latent
-                else:
-                    return latent, cond_inputs
-            
-            # Fall back to pixel-space interpolation if no conditioning latents
-            latent_h = ps // self.vae_downsample_factor
-            
-            # Prepare conditioning inputs
-            cond_inputs = {}
-            
-            # Create inpainting mask in original resolution
-            street_blocks_layer = None
-            if 'street_blocks' in data_layers and self.hole_config['type'] == 'street_blocks':
-                street_blocks_layer = data_layers['street_blocks'].isel(
-                    y=slice(y, y+ps),
-                    x=slice(x, x+ps)
-                ).values
-            
-            patch_info = {
-                'index': index,
-                'region': region,
-                'y': y,
-                'x': x,
-                'split': self.split
-            }
-            inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer=street_blocks_layer, patch_info=patch_info)
-            
-            # Prepare spatial conditioning
-            spatial = []
-            spatial_names = []
-            
-            if 'inpainting' in self.condition_types:
-                # Downsample mask to latent resolution
-                mask_latent = torch.from_numpy(inpaint_mask).float()
-                mask_latent = mask_latent.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
-                mask_latent = torch.nn.functional.interpolate(
-                    mask_latent,
-                    size=(latent_h, latent_w),
-                    mode='nearest'
-                )
-                mask_latent = mask_latent.squeeze(0)  # [1,H_latent,W_latent]
-                self._append_spatial(spatial, spatial_names, mask_latent.numpy(), 'inpaint_mask')
-            
-            if 'osm_features' in self.condition_types:
-                osm_layers = []
-                osm_layer_names = []  # Track which layers are included
-                
-                for idx, layer_name in enumerate(self.osm_layers):
-                    if layer_name in data_layers and data_layers[layer_name] is not None:
-                        layer_patch = data_layers[layer_name].isel(
-                            y=slice(y, y+ps),
-                            x=slice(x, x+ps)
-                        ).values
-                        
-                        # Apply normalization and filters
-                        layer_patch = self._apply_layer_transform(layer_patch, layer_name, idx, 'osm')
-                        layer_patch = self._to_chw(layer_patch)
-                        osm_layers.append(layer_patch)
-                        
-                        # Use custom key from config
-                        layer_config = self.osm_layer_configs[idx]
-                        display_name = layer_config.get('key', layer_name)
-                        osm_layer_names.append(display_name)
-                
-                if osm_layers:
-                    osm_features = np.concatenate(osm_layers, axis=0)
-                    # Downsample to latent resolution
-                    osm_features = torch.from_numpy(osm_features).float().unsqueeze(0)
-                    osm_features = torch.nn.functional.interpolate(
-                        osm_features,
-                        size=(latent_h, latent_w),
-                        mode='bilinear',
-                        align_corners=False
-                    ).squeeze(0)
-                    self._append_spatial(spatial, spatial_names, osm_features.numpy(), 'osm', channel_names=osm_layer_names, layer_configs=self.osm_layer_configs)
-            
-            if 'environmental' in self.condition_types:
-                env_layers = []
-                env_layer_names = []  # Track which layers are included
-                
-                for idx, layer_name in enumerate(self.environmental_layers):
-                    if layer_name in data_layers and data_layers[layer_name] is not None:
-                        layer_patch = data_layers[layer_name].isel(
-                            y=slice(y, y+ps),
-                            x=slice(x, x+ps)
-                        ).values
-                        
-                        # Apply normalization and filters
-                        layer_patch = self._apply_layer_transform(layer_patch, layer_name, idx, 'env')
-                        layer_patch = self._to_chw(layer_patch)
-                        env_layers.append(layer_patch)
-                        
-                        # Use custom key from config
-                        layer_config = self.env_layer_configs[idx]
-                        display_name = layer_config.get('key', layer_name)
-                        env_layer_names.append(display_name)
-                
-                if env_layers:
-                    env_features = np.concatenate(env_layers, axis=0)
-                    # Downsample to latent resolution
-                    env_features = torch.from_numpy(env_features).float().unsqueeze(0)
-                    env_features = torch.nn.functional.interpolate(
-                        env_features,
-                        size=(latent_h, latent_w),
-                        mode='bilinear',
-                        align_corners=False
-                    ).squeeze(0)
-                    self._append_spatial(spatial, spatial_names, env_features.numpy(), 'env', channel_names=env_layer_names, layer_configs=self.env_layer_configs)
-            
-            if spatial:
-                cond_inputs['image'] = torch.cat(spatial, dim=0)
-            
-            # Add meta information
-            cond_inputs['meta'] = {
-                'y': y,
-                'x': x,
-                'time': str(data_layers['date']),
-                'region': region,
-                'spatial_names': spatial_names
-            }
-            
-            if len(self.condition_types) == 0:
-                return latent
-            else:
-                return latent, cond_inputs
-        
-        ##### Return raw satellite image and conditioning #####
-        # Extract satellite image patch (main input)
-        img_patch = img_patch = data_layers['satellite'].isel(
-            y=slice(y, y+ps), 
-            x=slice(x, x+ps)
-        ).values.astype(np.float32)
-        
-        # convert to CHW and normalize
-        img_patch = self._to_chw(img_patch)
-        img_patch = self._normalize_layer(img_patch, 'satellite')
-        
-        # street blocks mask
-        street_blocks_layer = None
-        if 'street_blocks' in data_layers and self.hole_config['type'] == 'street_blocks':
-            street_blocks_layer = data_layers['street_blocks'].isel(
-                y=slice(y, y+ps),
-                x=slice(x, x+ps)
-            ).values
-        
-        # Create inpainting mask
-        patch_info = {
-            'index': index,
-            'region': region,
-            'y': y,
-            'x': x,
-            'split': self.split
-        }
-        inpaint_mask = self._create_inpainting_mask(ps, ps, street_blocks_layer=street_blocks_layer, patch_info=patch_info)
-        
-        # Prepare conditioning inputs
-        cond_inputs = {}
-        
-        # put spatial conditions together into one image tensor
-        spatial = []
-        spatial_names = []
-
-        # inpainting context
-        if 'inpainting' in self.condition_types:
-            # Only include masked RGB if explicitly requested
-            if 'masked_rgb' in self.condition_types:
-                masked_image = img_patch * (1.0 - inpaint_mask)
-                rgb_names = ['blue', 'green', 'red']
-                self._append_spatial(spatial, spatial_names, masked_image, 'masked_image', channel_names=rgb_names)
-            
-            # Always include mask for inpainting
-            self._append_spatial(spatial, spatial_names, inpaint_mask, 'inpaint_mask')
-        
-        if 'osm_features' in self.condition_types:
-            osm_layers = []
-            osm_layer_names = []  # Track display names
-            for idx, layer_name in enumerate(self.osm_layers):
-                if layer_name in data_layers and data_layers[layer_name] is not None:
-                    layer_patch = data_layers[layer_name].isel(
-                        y=slice(y, y+ps),
-                        x=slice(x, x+ps)
-                    ).values
-                    # Apply normalization and filters
-                    layer_patch = self._apply_layer_transform(layer_patch, layer_name, idx, 'osm')
-                    layer_patch = self._to_chw(layer_patch)
-                    osm_layers.append(layer_patch)
-                    
-                    # Extract display name
-                    layer_config = self.osm_layer_configs[idx]
-                    display_name = layer_config.get('key', layer_name)
-                    osm_layer_names.append(display_name)
-            
-            if osm_layers:
-                osm_features = np.concatenate(osm_layers, axis=0)
-                self._append_spatial(spatial, spatial_names, osm_features, 'osm', channel_names=osm_layer_names, layer_configs=self.osm_layer_configs)
-        
-        if 'environmental' in self.condition_types:
-            # Environmental data (NDVI, LST)
-            env_layers = []
-            env_layer_names = []  # Track display names
-            for idx, layer_name in enumerate(self.environmental_layers):
-                if layer_name in data_layers and data_layers[layer_name] is not None:
-                    layer_patch = data_layers[layer_name].isel(
-                        y=slice(y, y+ps),
-                        x=slice(x, x+ps)
-                    ).values
-                    # Apply normalization and filters
-                    layer_patch = self._apply_layer_transform(layer_patch, layer_name, idx, 'env')
-                    layer_patch = self._to_chw(layer_patch)
-                    env_layers.append(layer_patch)
-                    
-                    # Extract display name
-                    layer_config = self.env_layer_configs[idx]
-                    display_name = layer_config.get('key', layer_name)
-                    env_layer_names.append(display_name)
-            
-            if env_layers:
-                env_features = np.concatenate(env_layers, axis=0)
-                self._append_spatial(spatial, spatial_names, env_features, 'env', channel_names=env_layer_names, layer_configs=self.env_layer_configs)
-        
-        if 'temperature_threshold' in self.condition_types:
-            # Temperature optimization target (scalar or spatially varying)
-            if 'landsat_surface_temp_b10_masked' in data_layers and data_layers['landsat_surface_temp_b10_masked'] is not None:
-                lst_patch = data_layers['landsat_surface_temp_b10_masked'].isel(
-                    y=slice(y, y+ps),
-                    x=slice(x, x+ps)
-                ).values
-                lst_patch = self._normalize_layer(lst_patch, 'landsat_surface_temp_b10_masked')
-                lst_patch = self._to_chw(lst_patch)
-                # Store as target for optimization
-                cond_inputs['temperature_target'] = torch.from_numpy(lst_patch).float()
-        
-        if spatial:
-            cond_inputs['image'] = torch.cat(spatial, dim=0)   # [C_total,H,W]
-
-
-        # Add meta information
-        cond_inputs['meta'] = {
-            'y': y, 
-            'x': x, 
-            'time': str(data_layers['date']), 
-            'region': region, 
-            'spatial_names': spatial_names
-        }
-
-        
-        # Convert target image to tensor
-        im_tensor = torch.from_numpy(img_patch).float()
-        if len(self.condition_types) == 0:
-            return im_tensor
-        else:
-            return im_tensor, cond_inputs
-
-
-    def _prepare_latent_conditioning(
-        self,
-        patch_data: Dict[str, torch.Tensor],
-        y: int,
-        x: int,
-        region: str
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Prepare conditioning inputs for latent-based training.
-        
-        Downsamples spatial conditioning to latent resolution, using appropriate
-        interpolation for each channel type (nearest for mask, bilinear for features).
-        
-        Args:
-            patch_data: Cached patch data with 'image' and 'conditioning'
-            y, x: Patch coordinates
-            region: Region name
+        Load pre-saved patch from disk and compose based on mode.
         
         Returns:
-            Conditioning dict with downsampled spatial features
+            - default mode: (image, conditioning_dict) or just image
+            - vae mode: (image, metadata_dict)
+            - diffusion mode: (pred_latent, conditioning_dict)
         """
-        ps = self.patch_size
-        latent_h = ps // self.vae_downsample_factor
-        latent_w = ps // self.vae_downsample_factor
+        y, x, region, cache_idx = self.patches[index]
         
-        cond_inputs = {}
+        # Load from cache
+        patch_path = self.cache_dir / f"patch_{self.split}_{cache_idx}.pt"
+        patch_data = torch.load(patch_path)
         
-        if patch_data['conditioning'] is None or 'image' not in patch_data['conditioning']:
-            return cond_inputs
+        # Compose using shared logic
+        unified_image = patch_data['image']
+        return self._compose_batch_by_mode(unified_image, patch_data, index)
+    
+    def _getitem_xarray(self, index: int):
+        """
+        Extract patch on-the-fly from Xarray and compose based on mode.
         
-        full_cond = patch_data['conditioning']['image']  # [C, H, W]
-        spatial_names = patch_data['conditioning']['meta'].get('spatial_names', [])
+        This method mirrors _getitem_cached but extracts data from Xarray instead of loading from disk.
         
-        # Separate mask from other features for appropriate downsampling
-        downsampled_channels = []
+        Returns:
+            - default mode: (image, conditioning_dict) or just image
+            - vae mode: (image, metadata_dict)
+            - diffusion mode: (pred_latent, conditioning_dict)
+        """
+        y, x, region = self.patches[index]
         
-        for idx, channel_name in enumerate(spatial_names):
-            if not 'masked_rgb' in self.condition_types and 'masked_image' in channel_name.lower():
-                continue
-            
-            channel = full_cond[idx:idx+1, :, :]  # [1, H, W]
-            
-            # Use nearest interpolation for mask to preserve binary values,
-            # bilinear for continuous features
-            if 'mask' in channel_name.lower():
-                mode = 'nearest'
-            else:
-                mode = 'bilinear'
-            
-            channel_resized = torch.nn.functional.interpolate(
-                channel.unsqueeze(0),  # [1, 1, H, W]
-                size=(latent_h, latent_w),
-                mode=mode,
-                align_corners=False if mode == 'bilinear' else None
-            ).squeeze(0)  # [1, H_latent, W_latent]
-            
-            downsampled_channels.append(channel_resized)
+        # Extract unified patch from Xarray (same as when caching)
+        patch_data = self._extract_patch_from_xarray(y, x, region, index)
         
-        # Concatenate all channels
-        cond_inputs['image'] = torch.cat(downsampled_channels, dim=0)  # [C, H_latent, W_latent]
-        cond_inputs['meta'] = patch_data['conditioning']['meta'].copy()
-        
-        return cond_inputs
+        # Compose using shared logic
+        unified_image = patch_data['image']
+        return self._compose_batch_by_mode(unified_image, patch_data, index)
     
     def _print_summary(self):
         """Print dataset configuration summary"""
