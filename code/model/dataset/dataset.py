@@ -48,6 +48,7 @@ class UrbanInpaintingDataset(Dataset):
                  use_cached_patches: bool = True,
                  cache_dir: Optional[str] = None,
                  mode: str = 'default',
+                 recompute_layer_stats: bool = False
         ):
         """
         :param split: 'train' or 'val'
@@ -68,6 +69,7 @@ class UrbanInpaintingDataset(Dataset):
         self.data_config = data_config
         self.dataset_config = dataset_config
         self.mode = mode
+        self.recompute_layer_stats = recompute_layer_stats
         
         # Validate mode format
         if mode != 'default':
@@ -264,10 +266,35 @@ class UrbanInpaintingDataset(Dataset):
         This ensures consistent normalization across all patches.
         Statistics are stored in self.layer_stats.
         """
-        import gc
+        stats_dir = Path(self.big_data_storage_path) / "processed" / self.config['train_params']['task_name'] / "stats"
+        stats_path = stats_dir / f"layer_statistics_stats_{self.split}.csv"
+        
+        if stats_path.exists() and not self.recompute_layer_stats:
+            print(f"\n{'='*60}")
+            print(f"Loading cached layer statistics from {stats_path}...")
+            print(f"{'='*60}")
+            
+            stats_df = pd.read_csv(stats_path)
+            for _, row in stats_df.iterrows():
+                layer_name = row['layer_name']
+                self.layer_stats[layer_name] = {
+                    'min': row['min'],
+                    'max': row['max'],
+                    'mean': row['mean'],
+                    'std': row['std'],
+                    'q01': row['q01'],
+                    'q99': row['q99'],
+                    'q02': row['q02'],
+                    'q98': row['q98'],
+                }
+            
+            print(f"✓ Loaded statistics for {len(self.layer_stats)} layers from cache\n")
+            return
+        
         print(f"\n{'='*60}")
         print("Computing global layer statistics for normalization...")
         print(f"{'='*60}")
+        import gc
         
         rgb_layer = get_layer_info(self.layers_registry, 'rgb')
         rgb_layer_name = rgb_layer.get('layer', 'planetscope_sr_4band')
@@ -368,6 +395,11 @@ class UrbanInpaintingDataset(Dataset):
         
         print(f"\n✓ Computed statistics for {len(self.layer_stats)} layers")
         print(f"{'='*60}\n")
+        
+        # saving stats
+        self.stats['layer_statistics'] = self.layer_stats
+        self.save_stats(stats_path)
+        
     
     def _load_cached_patches(self) -> bool:
         """
