@@ -227,6 +227,8 @@ class UrbanInpaintingDataset(Dataset):
         
     def _initialize_xarray_loading(self):
         """Initialize on-the-fly Xarray data loading"""
+        import gc
+        
         processed_data_path = self.data_config.get("big_data_storage_path", "/work/zt75vipu-master/data") + "/processed"
         zarr_name = self.dataset_config.get('zarr_name', 'input_data.zarr')
     
@@ -239,13 +241,16 @@ class UrbanInpaintingDataset(Dataset):
         # Compute global statistics for normalization
         self._compute_layer_statistics()
         
-        # Force garbage collection
-        import gc
-        gc.collect()
-        
         # Reload datasets for patch loading
         print("Reloading datasets for patch extraction...")
         for region in self.regions:
+            # close previous dataset
+            self.datasets[region].close()
+            
+            # free resources
+            del self.datasets[region]
+            gc.collect() # Force garbage collection
+            
             region_zarr_path = os.path.join(processed_data_path, region.lower(), zarr_name)
             self.datasets[region] = xr.open_zarr(region_zarr_path, consolidated=True)
         
@@ -258,10 +263,7 @@ class UrbanInpaintingDataset(Dataset):
         
         This ensures consistent normalization across all patches.
         Statistics are stored in self.layer_stats.
-        Uses xarray's efficient methods for computation.
         """
-        import gc
-                
         print(f"\n{'='*60}")
         print("Computing global layer statistics for normalization...")
         print(f"{'='*60}")
@@ -269,155 +271,95 @@ class UrbanInpaintingDataset(Dataset):
         rgb_layer = get_layer_info(self.layers_registry, 'rgb')
         rgb_layer_name = rgb_layer.get('layer', 'planetscope_sr_4band')
         
-        # Pre-compute valid dates per region (do this once instead of per layer)
-        region_valid_dates = {}
-        print("\nIdentifying valid dates per region...")
-        for region in self.regions:
-            merged_xs = self.datasets[region]
-            
-            valid_dates = (
-                merged_xs[rgb_layer_name]
-                .notnull()
-                .sum(dim=['x', 'y']) > 0
-            ).any(dim='channel').compute()
-            
-            valid_dates = merged_xs['time'].where(valid_dates, drop=True).values
-            region_valid_dates[region] = valid_dates
-            
-            print(f"  {region}: {len(valid_dates)} valid date(s)")
-        
-        # Compute statistics per region first, then combine across regions
-        # This allows closing datasets after processing each region to free memory
-        all_region_stats = {}  # {layer_name: [region_stats]}
-        
-        for region in self.regions:
-            print(f"\nProcessing region: {region}")
-            merged_xs = self.datasets[region]
-            valid_dates = region_valid_dates[region]
-            
-            if len(valid_dates) == 0:
-                print(f"  ⚠ No valid dates found for region {region}")
+        for layer_name in self.all_layer_names:
+            if layer_name == 'inpainting_mask':
+                # Skip inpainting mask (generated on-the-fly)
                 continue
             
-            selected_date = valid_dates[0]
-            print(f"  Using date: {selected_date}")
+            layer_config = self.layers_registry[layer_name]
+            source_layer = get_layer_info(self.layers_registry, layer_name).get('layer', layer_name)
+            layer_channels = layer_config.get('channels', None)
             
-            # Compute statistics for all layers in this region
-            for layer_name in self.all_layer_names:
-                if layer_name == 'inpainting_mask':
-                    # Skip inpainting mask (generated on-the-fly)
+            # Check if this layer needs normalization
+            normalize_method = layer_config.get('normalize', None)
+            if normalize_method is None:
+                continue
+            if normalize_method == 'custom':
+                normalize_params = layer_config.get('normalize_params', {})
+                if 'min' in normalize_params and 'max' in normalize_params:
+                    # Custom min/max provided - skip stats computation
+                    print(f"  ✓ Skipping '{layer_name}' (custom min/max provided)")
                     continue
-                
-                layer_config = self.layers_registry[layer_name]
-                source_layer = get_layer_info(self.layers_registry, layer_name).get('layer', layer_name)
-                layer_channels = layer_config.get('channels', None)
-                
-                # Check if this layer needs normalization
-                normalize_method = layer_config.get('normalize', None)
-                if normalize_method is None:
-                    continue
-                if normalize_method == 'custom':
-                    normalize_params = layer_config.get('normalize_params', {})
-                    if 'min' in normalize_params and 'max' in normalize_params:
-                        # Custom min/max provided - skip stats computation
-                        if layer_name not in all_region_stats:
-                            print(f"  ✓ Skipping '{layer_name}' (custom min/max provided)")
-                        continue
+            
+            print(f"\nComputing statistics for '{layer_name}' (source: {source_layer})...")
+            
+            # Collect data across all regions and dates
+            all_data = []
+            
+            for region in self.regions:
+                merged_xs = self.datasets[region]
                 
                 if source_layer not in merged_xs:
                     print(f"  ⚠ Layer '{source_layer}' not found in {region}")
                     continue
                 
-                date_data = merged_xs.sel(time=selected_date)
-                
-                if source_layer not in date_data:
+                # Get valid dates
+                valid_dates = (
+                    merged_xs[rgb_layer_name]
+                    .notnull()
+                    .sum(dim=['x', 'y']) > 0
+                ).any(dim='channel').compute()
+            
+                valid_dates = merged_xs['time'].where(valid_dates, drop=True).values
+            
+                if len(valid_dates) == 0:
+                    print(f"No valid dates found for region {region}")
                     continue
                 
-                # Extract layer data
-                if layer_channels is not None:
-                    layer_da = date_data[source_layer].sel(channel=layer_channels)
-                else:
-                    layer_da = date_data[source_layer]
-                
-                # Compute all statistics using xarray methods
-                print(f"    Computing stats for '{layer_name}'...")
-                stats = {
-                    'region': region,
-                    'min': float(layer_da.min().compute()),
-                    'max': float(layer_da.max().compute()),
-                    'mean': float(layer_da.mean().compute()),
-                    'std': float(layer_da.std().compute()),
-                    'count': int(layer_da.notnull().sum().compute()),
-                    'q01': float(layer_da.quantile(0.01).compute()),
-                    'q02': float(layer_da.quantile(0.02).compute()),
-                    'q98': float(layer_da.quantile(0.98).compute()),
-                    'q99': float(layer_da.quantile(0.99).compute()),
-                }
-                
-                # Store region stats for this layer
-                if layer_name not in all_region_stats:
-                    all_region_stats[layer_name] = []
-                all_region_stats[layer_name].append(stats)
+                for date in valid_dates:
+                    date_data = merged_xs.sel(time=date)
+                    
+                    if source_layer not in date_data:
+                        continue
+                    
+                    # Extract layer data
+                    if layer_channels is not None:
+                        layer_da = date_data[source_layer].sel(channel=layer_channels)
+                    else:
+                        layer_da = date_data[source_layer]
+                    
+                    # Load data (materialize from dask)
+                    data_np = layer_da.values
+                    
+                    # Remove NaN values
+                    data_np = data_np[~np.isnan(data_np)]
+                    
+                    if len(data_np) > 0:
+                        all_data.append(data_np)
             
-            # Close dataset for this region to free memory
-            print(f"  ✓ Closing dataset for {region}...")
-            merged_xs.close()
-            # force garbage collection
-            del self.datasets[region]
-            gc.collect()
-        
-        # Now combine statistics across all regions for each layer
-        print(f"\nCombining statistics across regions...")
-        for layer_name, region_stats in all_region_stats.items():
-            if len(region_stats) == 0:
+            if not all_data:
                 print(f"  ⚠ No valid data found for '{layer_name}'")
                 continue
             
-            layer_config = self.layers_registry[layer_name]
-            source_layer = get_layer_info(self.layers_registry, layer_name).get('layer', layer_name)
+            # Concatenate all data
+            all_data_concat = np.concatenate(all_data)
             
-            print(f"  Combining '{layer_name}' from {len(region_stats)} regions...")
-            
-            # Global min/max (simple)
-            layer_min = min(s['min'] for s in region_stats)
-            layer_max = max(s['max'] for s in region_stats)
-            
-            # Global mean/std (weighted by count)
-            total_count = sum(s['count'] for s in region_stats)
-            layer_mean = sum(s['mean'] * s['count'] for s in region_stats) / total_count
-            
-            # Global std using pooled variance formula
-            pooled_var_sum = 0.0
-            for s in region_stats:
-                # Var_i = std_i^2, so E[X^2]_i = Var_i + mean_i^2
-                e_x2_i = (s['std'] ** 2) + (s['mean'] ** 2)
-                pooled_var_sum += e_x2_i * s['count']
-            
-            pooled_e_x2 = pooled_var_sum / total_count
-            layer_variance = pooled_e_x2 - (layer_mean ** 2)
-            layer_std = np.sqrt(max(0, layer_variance))
-            
-            # Percentiles: average across regions (reasonable approximation)
-            layer_q01 = sum(s['q01'] for s in region_stats) / len(region_stats)
-            layer_q02 = sum(s['q02'] for s in region_stats) / len(region_stats)
-            layer_q98 = sum(s['q98'] for s in region_stats) / len(region_stats)
-            layer_q99 = sum(s['q99'] for s in region_stats) / len(region_stats)
-            
-            # Store statistics
+            # Compute statistics
             stats = {
-                'min': layer_min,
-                'max': layer_max,
-                'mean': layer_mean,
-                'std': layer_std,
-                'q01': layer_q01,
-                'q99': layer_q99,
-                'q02': layer_q02,
-                'q98': layer_q98,
+                'min': float(np.min(all_data_concat)),
+                'max': float(np.max(all_data_concat)),
+                'mean': float(np.mean(all_data_concat)),
+                'std': float(np.std(all_data_concat)),
+                'q01': float(np.percentile(all_data_concat, 1)),
+                'q99': float(np.percentile(all_data_concat, 99)),
+                'q02': float(np.percentile(all_data_concat, 2)),
+                'q98': float(np.percentile(all_data_concat, 98)),
             }
             
             self.layer_stats[layer_name] = stats
             
-            print(f"    ✓ min={stats['min']:.3f}, max={stats['max']:.3f}, mean={stats['mean']:.3f}, std={stats['std']:.3f}")
+            print(f"  ✓ min={stats['min']:.3f}, max={stats['max']:.3f}, mean={stats['mean']:.3f}, std={stats['std']:.3f}")
+            print(f"    q01={stats['q01']:.3f}, q99={stats['q99']:.3f}")
         
         print(f"\n✓ Computed statistics for {len(self.layer_stats)} layers")
         print(f"{'='*60}\n")
