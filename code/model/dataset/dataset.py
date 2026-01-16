@@ -239,13 +239,19 @@ class UrbanInpaintingDataset(Dataset):
         # Compute global statistics for normalization
         self._compute_layer_statistics()
         
-        # close the dataset and reload (for memory efficiency)
+        # Close datasets and explicitly free memory after statistics computation
+        print("\nFreeing memory after statistics computation...")
         for region in self.regions:
             self.datasets[region].close()
-            
-            # free all resources
             del self.datasets[region]
-            
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        # Reload datasets for patch loading
+        print("Reloading datasets for patch extraction...")
+        for region in self.regions:
             region_zarr_path = os.path.join(processed_data_path, region.lower(), zarr_name)
             self.datasets[region] = xr.open_zarr(region_zarr_path, consolidated=True)
         
@@ -258,6 +264,7 @@ class UrbanInpaintingDataset(Dataset):
         
         This ensures consistent normalization across all patches.
         Statistics are stored in self.layer_stats.
+        Uses xarray's efficient methods for computation.
         """
         print(f"\n{'='*60}")
         print("Computing global layer statistics for normalization...")
@@ -265,6 +272,23 @@ class UrbanInpaintingDataset(Dataset):
         
         rgb_layer = get_layer_info(self.layers_registry, 'rgb')
         rgb_layer_name = rgb_layer.get('layer', 'planetscope_sr_4band')
+        
+        # Pre-compute valid dates per region (do this once instead of per layer)
+        region_valid_dates = {}
+        print("\nIdentifying valid dates per region...")
+        for region in self.regions:
+            merged_xs = self.datasets[region]
+            
+            valid_dates = (
+                merged_xs[rgb_layer_name]
+                .notnull()
+                .sum(dim=['x', 'y']) > 0
+            ).any(dim='channel').compute()
+            
+            valid_dates = merged_xs['time'].where(valid_dates, drop=True).values
+            region_valid_dates[region] = valid_dates
+            
+            print(f"  {region}: {len(valid_dates)} valid date(s)")
         
         for layer_name in self.all_layer_names:
             if layer_name == 'inpainting_mask':
@@ -288,27 +312,19 @@ class UrbanInpaintingDataset(Dataset):
             
             print(f"\nComputing statistics for '{layer_name}' (source: {source_layer})...")
             
-            # Collect data across all regions and dates
-            all_data = []
+            # Collect all data for this layer across regions and dates
+            all_data_arrays = []
             
             for region in self.regions:
                 merged_xs = self.datasets[region]
+                valid_dates = region_valid_dates[region]
                 
                 if source_layer not in merged_xs:
                     print(f"  ⚠ Layer '{source_layer}' not found in {region}")
                     continue
                 
-                # Get valid dates
-                valid_dates = (
-                    merged_xs[rgb_layer_name]
-                    .notnull()
-                    .sum(dim=['x', 'y']) > 0
-                ).any(dim='channel').compute()
-            
-                valid_dates = merged_xs['time'].where(valid_dates, drop=True).values
-            
                 if len(valid_dates) == 0:
-                    print(f"No valid dates found for region {region}")
+                    print(f"  ⚠ No valid dates found for region {region}")
                     continue
                 
                 for date in valid_dates:
@@ -323,32 +339,38 @@ class UrbanInpaintingDataset(Dataset):
                     else:
                         layer_da = date_data[source_layer]
                     
-                    # Load data (materialize from dask)
-                    data_np = layer_da.values
-                    
-                    # Remove NaN values
-                    data_np = data_np[~np.isnan(data_np)]
-                    
-                    if len(data_np) > 0:
-                        all_data.append(data_np)
+                    all_data_arrays.append(layer_da)
             
-            if not all_data:
+            if len(all_data_arrays) == 0:
                 print(f"  ⚠ No valid data found for '{layer_name}'")
                 continue
             
-            # Concatenate all data
-            all_data_concat = np.concatenate(all_data)
+            # Concatenate all data arrays
+            combined_data = xr.concat(all_data_arrays, dim='combined')
             
-            # Compute statistics
+            # Use xarray's efficient methods for statistics
+            print(f"  Computing min/max/mean/std...")
+            layer_min = float(combined_data.min().compute())
+            layer_max = float(combined_data.max().compute())
+            layer_mean = float(combined_data.mean().compute())
+            layer_std = float(combined_data.std().compute())
+            
+            print(f"  Computing percentiles...")
+            layer_q01 = float(combined_data.quantile(0.01).compute())
+            layer_q02 = float(combined_data.quantile(0.02).compute())
+            layer_q98 = float(combined_data.quantile(0.98).compute())
+            layer_q99 = float(combined_data.quantile(0.99).compute())
+            
+            # Store statistics
             stats = {
-                'min': float(np.min(all_data_concat)),
-                'max': float(np.max(all_data_concat)),
-                'mean': float(np.mean(all_data_concat)),
-                'std': float(np.std(all_data_concat)),
-                'q01': float(np.percentile(all_data_concat, 1)),
-                'q99': float(np.percentile(all_data_concat, 99)),
-                'q02': float(np.percentile(all_data_concat, 2)),
-                'q98': float(np.percentile(all_data_concat, 98)),
+                'min': layer_min,
+                'max': layer_max,
+                'mean': layer_mean,
+                'std': layer_std,
+                'q01': layer_q01,
+                'q99': layer_q99,
+                'q02': layer_q02,
+                'q98': layer_q98,
             }
             
             self.layer_stats[layer_name] = stats
