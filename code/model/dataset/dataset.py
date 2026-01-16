@@ -182,7 +182,11 @@ class UrbanInpaintingDataset(Dataset):
         self.datasets = {}
         self.data_layers_per_region = {}
         
-        # store statistics
+        # Store statistics for normalization
+        # Structure: {'layer_name': {'min': float, 'max': float, 'mean': float, 'std': float, 'q01': float, 'q99': float}}
+        self.layer_stats = {}
+        
+        # Store runtime statistics (for tracking)
         self.stats = {
             "inpainting_mask": []
         }
@@ -232,9 +236,113 @@ class UrbanInpaintingDataset(Dataset):
             print(f"Loading zarr dataset from {region_zarr_path}...")
             self.datasets[region] = xr.open_zarr(region_zarr_path, consolidated=True)
         
+        # Compute global statistics for normalization
+        self._compute_layer_statistics()
+        
         # Load patches
         self.patches = self._load_patches()
         
+    def _compute_layer_statistics(self):
+        """
+        Compute global statistics for each layer across all regions and dates.
+        
+        This ensures consistent normalization across all patches.
+        Statistics are stored in self.layer_stats.
+        """
+        print(f"\n{'='*60}")
+        print("Computing global layer statistics for normalization...")
+        print(f"{'='*60}")
+        
+        rgb_layer = get_layer_info(self.layers_registry, 'rgb')
+        rgb_layer_name = rgb_layer.get('layer', 'planetscope_sr_4band')
+        
+        for layer_name in self.all_layer_names:
+            if layer_name == 'inpainting_mask':
+                # Skip inpainting mask (generated on-the-fly)
+                continue
+            
+            layer_config = self.layers_registry[layer_name]
+            source_layer = get_layer_info(self.layers_registry, layer_name).get('layer', layer_name)
+            layer_channels = layer_config.get('channels', None)
+            
+            # Check if this layer needs normalization
+            normalize_method = layer_config.get('normalize', None)
+            if normalize_method is None:
+                continue
+            
+            print(f"\nComputing statistics for '{layer_name}' (source: {source_layer})...")
+            
+            # Collect data across all regions and dates
+            all_data = []
+            
+            for region in self.regions:
+                merged_xs = self.datasets[region]
+                
+                if source_layer not in merged_xs:
+                    print(f"  ⚠ Layer '{source_layer}' not found in {region}")
+                    continue
+                
+                # Get valid dates
+                valid_dates = (
+                    merged_xs[rgb_layer_name]
+                    .notnull()
+                    .sum(dim=['x', 'y']) > 0
+                ).any(dim='channel').compute()
+            
+                valid_dates = merged_xs['time'].where(valid_dates, drop=True).values
+            
+                if len(valid_dates) == 0:
+                    print(f"No valid dates found for region {region}")
+                    continue
+                
+                for date in valid_dates:
+                    date_data = merged_xs.sel(time=date)
+                    
+                    if source_layer not in date_data:
+                        continue
+                    
+                    # Extract layer data
+                    if layer_channels is not None:
+                        layer_da = date_data[source_layer].sel(channel=layer_channels)
+                    else:
+                        layer_da = date_data[source_layer]
+                    
+                    # Load data (materialize from dask)
+                    data_np = layer_da.values
+                    
+                    # Remove NaN values
+                    data_np = data_np[~np.isnan(data_np)]
+                    
+                    if len(data_np) > 0:
+                        all_data.append(data_np)
+            
+            if not all_data:
+                print(f"  ⚠ No valid data found for '{layer_name}'")
+                continue
+            
+            # Concatenate all data
+            all_data_concat = np.concatenate(all_data)
+            
+            # Compute statistics
+            stats = {
+                'min': float(np.min(all_data_concat)),
+                'max': float(np.max(all_data_concat)),
+                'mean': float(np.mean(all_data_concat)),
+                'std': float(np.std(all_data_concat)),
+                'q01': float(np.percentile(all_data_concat, 1)),
+                'q99': float(np.percentile(all_data_concat, 99)),
+                'q02': float(np.percentile(all_data_concat, 2)),
+                'q98': float(np.percentile(all_data_concat, 98)),
+            }
+            
+            self.layer_stats[layer_name] = stats
+            
+            print(f"  ✓ min={stats['min']:.3f}, max={stats['max']:.3f}, mean={stats['mean']:.3f}, std={stats['std']:.3f}")
+            print(f"    q01={stats['q01']:.3f}, q99={stats['q99']:.3f}")
+        
+        print(f"\n✓ Computed statistics for {len(self.layer_stats)} layers")
+        print(f"{'='*60}\n")
+    
     def _load_cached_patches(self) -> bool:
         """
         Load pre-saved patches from disk.
@@ -562,8 +670,11 @@ class UrbanInpaintingDataset(Dataset):
                 x=slice(x, x+ps)
             ).values.astype(np.float32)
             
-            # Apply transformations (filtering, normalization)
-            layer_data = apply_layer_transform(layer_data, layer_config)
+            # Get global statistics for this layer (if available)
+            layer_statistics = self.layer_stats.get(layer_name, None)
+            
+            # Apply transformations (filtering, normalization with global stats)
+            layer_data = apply_layer_transform(layer_data, layer_config, layer_statistics)
             
             # Convert to CHW format
             layer_data = self._to_chw(layer_data)

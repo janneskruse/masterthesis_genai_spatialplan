@@ -89,7 +89,7 @@ def apply_filter(data, layer_config: Dict):
         else:
             return np.where(mask, data, 0.0)
 
-def apply_layer_transform(data, layer_config):
+def apply_layer_transform(data, layer_config, layer_statistics=None):
     """
     Apply transformations to layer data including filtering and normalization.
     
@@ -98,6 +98,7 @@ def apply_layer_transform(data, layer_config):
     Args:
         data: numpy array or torch tensor of layer data
         layer_config: Layer configuration dict with optional 'filter' and 'normalize' keys
+        layer_statistics: Optional dict with global statistics (min, max, mean, std, q01, q99, etc.)
         
     Returns:
         Transformed data (same type as input)
@@ -117,19 +118,19 @@ def apply_layer_transform(data, layer_config):
         else:
             data = (data > 0.5).astype(np.float32)
     
-    # Step 3: Apply normalization
-    data = normalize_layer(data, layer_config)
+    # Step 3: Apply normalization with global statistics
+    data = normalize_layer(data, layer_config, layer_statistics)
     
     return data
 
-def normalize_layer(data, layer_config):
+def normalize_layer(data, layer_config, layer_statistics=None):
     """
-    Normalize data layer based on configuration.
+    Normalize data layer based on configuration using global statistics.
     
     Supports multiple normalization strategies:
-    - 'minmax': Normalize to [0, 1] using min-max scaling
-    - 'standardize': Z-score normalization (mean=0, std=1)
-    - 'percentile': Clip to percentiles then normalize to [0, 1]
+    - 'minmax': Normalize to [0, 1] using global min-max scaling
+    - 'standardize': Z-score normalization using global mean and std
+    - 'percentile': Clip to global percentiles then normalize to [0, 1]
     - 'clip': Clip to specified range (no scaling)
     - 'custom': Custom min/max normalization with specified bounds
     - None: No normalization (binary layers, already normalized data)
@@ -139,6 +140,8 @@ def normalize_layer(data, layer_config):
     Args:
         data: Input data (torch.Tensor or numpy array)
         layer_config: Layer configuration with optional 'normalize' key
+        layer_statistics: Optional dict with global statistics (min, max, mean, std, q01, q99, etc.)
+                         If None, falls back to patch-wise statistics (not recommended)
         
     Returns:
         Normalized data (same type as input)
@@ -173,46 +176,77 @@ def normalize_layer(data, layer_config):
     
     # Apply normalization method
     if normalize_method == 'minmax':
-        # Normalize to [0, 1]
-        if is_torch:
-            data_min = data.min()
-            data_max = data.max()
-            if data_max > data_min:
-                data = (data - data_min) / (data_max - data_min + 1e-8)
+        # Normalize to [0, 1] using global statistics
+        if layer_statistics is not None:
+            data_min = layer_statistics['min']
+            data_max = layer_statistics['max']
         else:
-            data_min = data.min()
-            data_max = data.max()
-            if data_max > data_min:
+            # Fallback to patch-wise (not recommended)
+            if is_torch:
+                data_min = data.min().item()
+                data_max = data.max().item()
+            else:
+                data_min = data.min()
+                data_max = data.max()
+        
+        if data_max > data_min:
+            if is_torch:
+                data = (data - data_min) / (data_max - data_min + 1e-8)
+            else:
                 data = (data - data_min) / (data_max - data_min + 1e-8)
     
     elif normalize_method == 'standardize':
-        # Z-score normalization: (x - mean) / std
-        if is_torch:
-            mean = data.mean()
-            std = data.std()
-            if std > 1e-8:
-                data = (data - mean) / std
+        # Z-score normalization using global statistics: (x - mean) / std
+        if layer_statistics is not None:
+            mean = layer_statistics['mean']
+            std = layer_statistics['std']
         else:
-            mean = data.mean()
-            std = data.std()
-            if std > 1e-8:
+            # Fallback to patch-wise (not recommended)
+            if is_torch:
+                mean = data.mean().item()
+                std = data.std().item()
+            else:
+                mean = data.mean()
+                std = data.std()
+        
+        if std > 1e-8:
+            if is_torch:
+                data = (data - mean) / std
+            else:
                 data = (data - mean) / std
     
     elif normalize_method == 'percentile':
-        # Clip to percentiles then normalize to [0, 1]
+        # Clip to global percentiles then normalize to [0, 1]
         lower_percentile = layer_config.get('lower_percentile', 2)
         upper_percentile = layer_config.get('upper_percentile', 98)
         
+        if layer_statistics is not None:
+            # Use precomputed global percentiles
+            # Map percentile to closest available (1, 2, 98, 99)
+            if lower_percentile <= 1:
+                p_low = layer_statistics['q01']
+            else:
+                p_low = layer_statistics['q02']
+            
+            if upper_percentile >= 99:
+                p_high = layer_statistics['q99']
+            else:
+                p_high = layer_statistics['q98']
+        else:
+            # Fallback to patch-wise (not recommended)
+            if is_torch:
+                p_low = torch.quantile(data, lower_percentile / 100.0).item()
+                p_high = torch.quantile(data, upper_percentile / 100.0).item()
+            else:
+                p_low = np.percentile(data, lower_percentile)
+                p_high = np.percentile(data, upper_percentile)
+        
+        # Clip and normalize
         if is_torch:
-            # PyTorch doesn't have percentile, use quantile
-            p_low = torch.quantile(data, lower_percentile / 100.0)
-            p_high = torch.quantile(data, upper_percentile / 100.0)
             data = torch.clamp(data, p_low, p_high)
             if p_high > p_low:
                 data = (data - p_low) / (p_high - p_low + 1e-8)
         else:
-            p_low = np.percentile(data, lower_percentile)
-            p_high = np.percentile(data, upper_percentile)
             data = np.clip(data, p_low, p_high)
             if p_high > p_low:
                 data = (data - p_low) / (p_high - p_low + 1e-8)
