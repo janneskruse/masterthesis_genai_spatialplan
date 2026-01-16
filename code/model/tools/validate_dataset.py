@@ -202,7 +202,7 @@ def _get_colormap_for_channel(channel_name: str):
         return 'gray'
 
 
-def validate_dataset(num_samples=5, config=None, mode='default', use_cached_patches=False):
+def validate_dataset(num_samples=5, config=None, mode='default', use_cached_patches=False, recompute_layer_stats=False):
     """
     Validate dataset loading and visualize samples.
     
@@ -232,7 +232,8 @@ def validate_dataset(num_samples=5, config=None, mode='default', use_cached_patc
         dataset = UrbanInpaintingDataset(
             split='train',
             use_cached_patches=use_cached_patches,
-            mode=mode
+            mode=mode,
+            recompute_layer_stats=recompute_layer_stats
         )
         print(f"✓ Successfully loaded dataset!")
     except Exception as e:
@@ -303,7 +304,9 @@ if __name__ == '__main__':
                        help='Dataset mode: "default", "vae:<group>", or "diffusion:<stage>"')
     parser.add_argument('--use_cached_patches', action='store_true',
                        help='Use cached patches instead of on-the-fly loading (default: False)')
+    parser.add_argument('--recompute_layer_stats', action='store_true',
+                       help='Recompute layer statistics even if cached stats exist (default: False)')
     
     args = parser.parse_args()
     config = load_configs(parser)
-    validate_dataset(args.num_samples, config, args.mode, args.use_cached_patches)
+    validate_dataset(args.num_samples, config, args.mode, args.use_cached_patches, args.recompute_layer_stats)
