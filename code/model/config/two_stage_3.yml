@@ -20,6 +20,9 @@ layers:
   buildings:
     layer: 'buildings'
     type: 'binary'
+    dice_loss:
+      use_dice: True
+      weight: 0.5  # Dice loss for crisp edges and reduced salt-and-pepper noise
     
   buildings_heights:
     layer: 'buildings_heights'
@@ -290,7 +293,7 @@ train_params:
       lr: 0.0001
       kl_weight: 0.000001
       binary_channel_weight: 1.0
-      continuous_channel_weight: 1.0
+      continuous_channel_weight: 2.0  # Increase weight for buildings_heights to compete with 3 binary layers
       dice_weight: 0.5  # Default dice weight
       use_discriminator: False
       use_perceptual: False
