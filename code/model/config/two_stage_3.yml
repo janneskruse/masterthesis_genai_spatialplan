@@ -16,6 +16,7 @@ layers:
     channels: ['red', 'green', 'blue']
     type: 'continuous'
     normalize: 'percentile'  # normalize to [0,1] via percentile clipping
+    loss_type: 'l1'  # L1 loss for better edge preservation in satellite imagery
     
   # OpenStreetMap features
   buildings:
@@ -298,11 +299,13 @@ train_params:
       tanh_activation: False  # Binary + continuous mixed
       img_save_steps: 64
       # Per-layer dice loss configuration (overrides defaults from layer registry)
-      layer_dice_config:
-        streets:
-          weight: 0.75
-        water:
-          weight: 0.75
+      # layer_dice_config:
+      #   streets:
+      #     use_dice: True
+      #     weight: 0.75
+      #   water:
+      #     use_dice: True
+      #     weight: 0.75
       
     environmental:
       epochs: 50

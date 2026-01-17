@@ -13,8 +13,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision.utils import save_image, make_grid
 
 # Local imports
-from model.utils.config_utils import get_prediction_channels, get_all_channels
-from model.utils.layer_config import get_conditioning_layers, is_binary_layer, get_layer_info, get_layer_dice_config
+from model.utils.layer_config import is_binary_layer, get_layer_dice_config
 
 def save_vae_reconstruction_samples(
     input_tensor: torch.Tensor,
@@ -190,8 +189,8 @@ def compute_reconstruction_loss(
     
     Handles:
     - Binary layers: BCE with logits + optional Dice loss
-    - Continuous layers: MSE loss
-    - RGB layers: MSE loss (perceptual loss handled externally)
+    - Continuous layers: MSE/L1/Smooth-L1 loss (configurable per layer)
+    - RGB layers: MSE/L1 loss (perceptual loss handled externally)
     
     Args:
         recon: Reconstructed tensor [B, C, H, W] (logits for binary channels, values for continuous)
@@ -203,6 +202,12 @@ def compute_reconstruction_loss(
         continuous_weight: Weight for continuous channel losses
         layer_dice_config: Optional dict mapping layer names to dice config overrides
         posw_ema: Optional PosWeightEMA tracker for stable class weighting
+        
+    Layer Config Options:
+        - loss_type: 'mse' (default), 'l1', or 'smooth_l1'
+          * 'mse': Better convergence, standard for VAE
+          * 'l1': Better edge preservation, robust to outliers (recommended for RGB)
+          * 'smooth_l1': Hybrid approach, robust to outliers with smooth gradients
         
     Returns:
         Dictionary with losses per channel type, total loss tensor
@@ -258,10 +263,14 @@ def compute_reconstruction_loss(
             binary_loss += loss * binary_weight
             binary_count += 1
             
-        # Continuous channels use MSE loss
+        # Continuous channels use MSE or L1 loss based on config
         else:
             # Check if this is a height channel that needs masking
             mask_layer = layer_info.get('mask_layer', None)
+            
+            # Get loss type from config (default: 'mse')
+            # Options: 'mse' (L2), 'l1' (MAE), 'smooth_l1'
+            loss_type = layer_info.get('loss_type', 'mse')
             
             if mask_layer:
                 # Find mask channel index
@@ -276,15 +285,38 @@ def compute_reconstruction_loss(
                     # Apply loss only where mask is active
                     masked_recon = recon_ch * mask
                     masked_target = target_ch * mask
-                    loss = F.mse_loss(masked_recon, masked_target, reduction='mean')
+                    
+                    if loss_type == 'l1':
+                        loss = F.l1_loss(masked_recon, masked_target, reduction='mean')
+                    elif loss_type == 'smooth_l1':
+                        loss = F.smooth_l1_loss(masked_recon, masked_target, reduction='mean')
+                    else:  # 'mse'
+                        loss = F.mse_loss(masked_recon, masked_target, reduction='mean')
                 else:
-                    # Mask layer not found, use regular MSE
-                    loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
+                    # Mask layer not found, use regular loss
+                    if loss_type == 'l1':
+                        loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
+                    elif loss_type == 'smooth_l1':
+                        loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
+                    else:  # 'mse'
+                        loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
             else:
                 # Regular continuous channel (e.g., LST, NDVI, RGB channels)
-                loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
+                if loss_type == 'l1':
+                    loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
+                elif loss_type == 'smooth_l1':
+                    loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
+                else:  # 'mse'
+                    loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
             
-            losses[f'{channel_name}_mse'] = loss.item()
+            # Log appropriate loss metric
+            if loss_type == 'l1':
+                losses[f'{channel_name}_l1'] = loss.item()
+            elif loss_type == 'smooth_l1':
+                losses[f'{channel_name}_smooth_l1'] = loss.item()
+            else:
+                losses[f'{channel_name}_mse'] = loss.item()
+            
             continuous_loss += loss * continuous_weight
             continuous_count += 1
     
