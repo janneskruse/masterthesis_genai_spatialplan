@@ -229,8 +229,6 @@ def compute_reconstruction_loss(
         layer_info = layers_registry.get(layer_name, {})
         is_binary = is_binary_layer(layer_info)
         
-        print(f"Computing loss for channel '{channel_name}' (layer: '{layer_name}'), binary: {is_binary}")
-        
         # Binary channels use BCE with logits + optional Dice loss
         if is_binary:
             # Clamp target to valid range (recon_ch is logits, no clamping)
@@ -253,11 +251,6 @@ def compute_reconstruction_loss(
             
             use_dice = dice_config.get('use_dice', False)
             dice_weight = dice_config.get('weight', 0.5)
-            
-            # DEBUG: Log Dice configuration for buildings (first batch only)
-            if layer_name == 'buildings' and idx == 0:
-                import sys
-                print(f"[DEBUG] Buildings Dice config:", dice_config, file=sys.stderr, flush=True)
             
             # Compute Dice loss if enabled for this layer
             if use_dice:

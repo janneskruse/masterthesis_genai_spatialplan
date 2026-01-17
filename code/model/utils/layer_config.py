@@ -127,15 +127,7 @@ def get_layer_dice_config(layers_registry: Dict, layer_name: str) -> Dict:
     Returns:
         Dict with 'use_dice' (bool) and 'weight' (float)
     """
-    
-    print("Layer dice config request for layer:", layer_name)
-    
     layer_config = layers_registry.get(layer_name, {})
-    
-    # DEBUG: Log what we receive from config (only once)
-    if layer_name == 'buildings' and 'dice_loss' in layer_config:
-        import sys
-        print(f"[DEBUG get_layer_dice_config] buildings layer_config from registry:", layer_config, file=sys.stderr, flush=True)
     
     # Default dice config based on layer characteristics
     default_dice_config = {
