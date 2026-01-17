@@ -127,6 +127,9 @@ def get_layer_dice_config(layers_registry: Dict, layer_name: str) -> Dict:
     Returns:
         Dict with 'use_dice' (bool) and 'weight' (float)
     """
+    
+    print("Layer dice config request for layer:", layer_name)
+    
     layer_config = layers_registry.get(layer_name, {})
     
     # DEBUG: Log what we receive from config (only once)
