@@ -201,7 +201,7 @@ def compute_reconstruction_loss(
         binary_weight: Weight for binary channel losses
         continuous_weight: Weight for continuous channel losses
         layer_dice_config: Optional dict mapping layer names to dice config overrides
-        posw_ema: Optional PosWeightEMA tracker for stable class weighting
+        posw_ema: Optional PosWeightEMA tracker for stable class weighting (indexed by binary channel index)
         
     Layer Config Options:
         - loss_type: 'mse' (default), 'l1', or 'smooth_l1'
@@ -219,6 +219,7 @@ def compute_reconstruction_loss(
     
     binary_count = 0
     continuous_count = 0
+    binary_ch_idx = 0  # Separate index for binary channels only
     
     for idx, (channel_name, layer_name) in enumerate(zip(channel_names, layer_names)):
         recon_ch = recon[:, idx:idx+1, :, :]
@@ -235,7 +236,7 @@ def compute_reconstruction_loss(
             
             # Compute BCE with logits and class-imbalance weighting
             if posw_ema is not None:
-                pw = posw_ema.update(idx, target_ch)
+                pw = posw_ema.update(binary_ch_idx, target_ch)
                 bce = F.binary_cross_entropy_with_logits(
                     recon_ch, target_ch, pos_weight=pw, reduction='mean'
                 )
@@ -262,6 +263,7 @@ def compute_reconstruction_loss(
             losses[f'{channel_name}_bce'] = bce.item()
             binary_loss += loss * binary_weight
             binary_count += 1
+            binary_ch_idx += 1  # Increment binary channel index
             
         # Continuous channels use MSE or L1 loss based on config
         else:
