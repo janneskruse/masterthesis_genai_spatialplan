@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --time=3:00:00
-#SBATCH --job-name="vae_semantic_cond_ddp"
+#SBATCH --job-name="train_vae_environmental_ddp"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
