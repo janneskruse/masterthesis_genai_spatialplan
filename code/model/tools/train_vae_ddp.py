@@ -29,7 +29,8 @@ from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.vae_utils import save_vae_reconstruction_samples, PosWeightEMA, compute_reconstruction_loss
-from helpers.load_configs import load_configs
+from model.utils.layer_config import count_layer_channels, get_layer_info
+from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
 load_cuda()
@@ -234,7 +235,7 @@ def train_vae(mode: str = 'satellite'):
         print(f"{'='*50}")
         print(yaml.dump(config, default_flow_style=False))
     
-    dataset_config = config['dataset_params']
+    # dataset_config = config['dataset_params']
     train_config_global = config['train_params']
     
     # Validate VAE group exists
@@ -253,8 +254,6 @@ def train_vae(mode: str = 'satellite'):
     group_layers = vae_group_config.get('layers', [])
     if not group_layers:
         raise ValueError(f"VAE group '{mode}' has no layers defined")
-    
-    from model.utils.layer_config import count_layer_channels, get_layer_info
     
     num_input_channels = 0
     layer_names = []
@@ -300,8 +299,6 @@ def train_vae(mode: str = 'satellite'):
     use_discriminator = train_config.get('use_discriminator', True)
     use_perceptual = train_config.get('use_perceptual', True)
     penalize_out_of_range = train_config.get('penalize_out_of_range', False)
-    tanh_activation = train_config.get('tanh_activation', False)
-    tanh_scaling = train_config.get('tanh_scaling', 0.95)
     binary_channel_weight = train_config.get('binary_channel_weight', 1.0)
     continuous_channel_weight = train_config.get('continuous_channel_weight', 1.0)
     dice_weight = train_config.get('dice_weight', 0.5)
@@ -749,12 +746,10 @@ def train_vae(mode: str = 'satellite'):
     cleanup_distributed()
 
 if __name__ == '__main__':
-    import argparse
     
     parser = argparse.ArgumentParser(description='Train VAE DDP for Urban Inpainting')
     
     # Add config file arguments
-    from helpers.load_configs import add_config_arguments
     add_config_arguments(parser)
     
     parser.add_argument('--mode', type=str, required=True,
