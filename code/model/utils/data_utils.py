@@ -300,25 +300,35 @@ def normalize_layer(data, layer_config, layer_statistics=None):
 
 def collate_fn(batch):
     """
-    Custom collate function to make sure conditioning inputs are properly batched.
+    Custom collate function for batching dataset outputs.
+    
+    Handles all modes:
+    - default/vae: (image, {'image': tensor|None, 'meta': dict})
+    - diffusion: (latent, {'meta': dict, 'image': tensor, 'group_name': tensor, ...})
+    
+    Stacks first element (images/latents) and all tensor values in the dict.
+    Preserves 'meta' as list of dicts, skips None values.
     """
     if isinstance(batch[0], tuple):
-        # With conditioning
+        # Stack first element (images or latents)
         images = torch.stack([item[0] for item in batch])
         
-        # Get first sample to check keys
+        # Batch the conditioning dictionary
         sample_cond = batch[0][1]
-        
         cond_inputs = {}
+        
         for key in sample_cond.keys():
             if key == 'meta':
-                # Meta is a dict, just collect as list, don't stack
+                # Metadata: collect as list, don't stack
                 cond_inputs[key] = [item[1][key] for item in batch]
+            elif sample_cond[key] is None:
+                # None values: skip (e.g., VAE mode where 'image' is None)
+                cond_inputs[key] = None
             else:
-                # Stack tensors
+                # Tensors: stack along batch dimension
                 cond_inputs[key] = torch.stack([item[1][key] for item in batch])
         
         return images, cond_inputs
     else:
-        # Just images, no conditioning
+        # Just tensors, no conditioning
         return torch.stack(batch)
