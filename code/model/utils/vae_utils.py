@@ -265,49 +265,17 @@ def compute_reconstruction_loss(
             
         # Continuous channels use MSE or L1 loss based on config
         else:
-            # Check if this is a height channel that needs masking
-            mask_layer = layer_info.get('mask_layer', None)
-            
             # Get loss type from config (default: 'mse')
             # Options: 'mse' (L2), 'l1' (MAE), 'smooth_l1'
             loss_type = layer_info.get('loss_type', 'mse')
             
-            if mask_layer:
-                # Find mask channel index
-                mask_idx = None
-                for i, (ch_name, l_name) in enumerate(zip(channel_names, layer_names)):
-                    if l_name == mask_layer:
-                        mask_idx = i
-                        break
-                
-                if mask_idx is not None:
-                    mask = target[:, mask_idx:mask_idx+1, :, :]
-                    # Apply loss only where mask is active
-                    masked_recon = recon_ch * mask
-                    masked_target = target_ch * mask
-                    
-                    if loss_type == 'l1':
-                        loss = F.l1_loss(masked_recon, masked_target, reduction='mean')
-                    elif loss_type == 'smooth_l1':
-                        loss = F.smooth_l1_loss(masked_recon, masked_target, reduction='mean')
-                    else:  # 'mse'
-                        loss = F.mse_loss(masked_recon, masked_target, reduction='mean')
-                else:
-                    # Mask layer not found, use regular loss
-                    if loss_type == 'l1':
-                        loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
-                    elif loss_type == 'smooth_l1':
-                        loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
-                    else:  # 'mse'
-                        loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
-            else:
-                # Regular continuous channel (e.g., LST, NDVI, RGB channels)
-                if loss_type == 'l1':
-                    loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
-                elif loss_type == 'smooth_l1':
-                    loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
-                else:  # 'mse'
-                    loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
+            # Apply loss directly - masking is already handled in dataset
+            if loss_type == 'l1':
+                loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
+            elif loss_type == 'smooth_l1':
+                loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
+            else:  # 'mse'
+                loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
             
             # Log appropriate loss metric
             if loss_type == 'l1':
