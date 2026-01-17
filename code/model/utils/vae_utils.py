@@ -304,11 +304,10 @@ def compute_reconstruction_loss(
                     mask_weight = mask * mask_loss_weight + (1 - mask) * 1.0
                     weighted_loss = loss_per_pixel * mask_weight
                     
-                    # CRITICAL: Normalize to keep loss scale similar to unweighted case
-                    # This prevents gradient explosion while preserving the relative importance
-                    # Mean loss = sum(loss * weight) / sum(weight) instead of mean(loss * weight)
-                    total_weight = mask_weight.sum() + 1e-8
-                    loss = weighted_loss.sum() / total_weight
+                    # Normalize by mean weight to keep loss scale consistent across batches
+                    # This prevents loss magnitude from varying with mask coverage percentage
+                    mean_weight = mask_weight.mean() + 1e-8
+                    loss = weighted_loss.sum() / (mask_weight.numel() * mean_weight)
                     
                     # Log mask coverage for debugging
                     mask_coverage = mask.mean().item()
