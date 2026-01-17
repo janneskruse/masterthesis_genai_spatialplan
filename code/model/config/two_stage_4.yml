@@ -268,7 +268,7 @@ diffusion_stages:
 
 train_params:
   seed: 3
-  task_name: 'two_stage_3'
+  task_name: 'two_stage_4'
   
   # VAE training (per group)
   vae_training:
