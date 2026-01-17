@@ -182,7 +182,8 @@ def compute_reconstruction_loss(
     recon, target, channel_names, layer_names,
     layers_registry,
     binary_weight=1.0, continuous_weight=1.0, 
-    layer_dice_config=None, posw_ema=None
+    layer_dice_config=None, posw_ema=None,
+    all_channels_tensor=None  # Full tensor with all channels for mask lookup
 ):
     """
     Compute reconstruction loss for any tensor using dynamic layer configuration.
@@ -191,6 +192,7 @@ def compute_reconstruction_loss(
     - Binary layers: BCE with logits + optional Dice loss
     - Continuous layers: MSE/L1/Smooth-L1 loss (configurable per layer)
     - RGB layers: MSE/L1 loss (perceptual loss handled externally)
+    - Masked layers: Loss weighted by mask layer (e.g., buildings_heights masked by buildings)
     
     Args:
         recon: Reconstructed tensor [B, C, H, W] (logits for binary channels, values for continuous)
@@ -202,12 +204,15 @@ def compute_reconstruction_loss(
         continuous_weight: Weight for continuous channel losses
         layer_dice_config: Optional dict mapping layer names to dice config overrides
         posw_ema: Optional PosWeightEMA tracker for stable class weighting (indexed by binary channel index)
+        all_channels_tensor: Full input/target tensor with all channels (for mask layer lookup)
         
     Layer Config Options:
         - loss_type: 'mse' (default), 'l1', or 'smooth_l1'
           * 'mse': Better convergence, standard for VAE
           * 'l1': Better edge preservation, robust to outliers (recommended for RGB)
           * 'smooth_l1': Hybrid approach, robust to outliers with smooth gradients
+        - mask_layer: Name of binary layer to use as loss mask (e.g., 'buildings' for 'buildings_heights')
+        - mask_loss_weight: Weight boost for masked regions (default: 1.0, recommend 3.0-5.0)
         
     Returns:
         Dictionary with losses per channel type, total loss tensor
@@ -271,13 +276,54 @@ def compute_reconstruction_loss(
             # Options: 'mse' (L2), 'l1' (MAE), 'smooth_l1'
             loss_type = layer_info.get('loss_type', 'mse')
             
-            # Apply loss directly - masking is already handled in dataset
-            if loss_type == 'l1':
-                loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
-            elif loss_type == 'smooth_l1':
-                loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
-            else:  # 'mse'
-                loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
+            # Check if this layer should be masked by another layer
+            mask_layer_name = layer_info.get('mask_layer', None)
+            mask_loss_weight = layer_info.get('mask_loss_weight', 3.0)  # Weight boost for masked regions
+            
+            if mask_layer_name and all_channels_tensor is not None:
+                # Find mask layer index in channel_names
+                try:
+                    mask_idx = layer_names.index(mask_layer_name)
+                    mask = all_channels_tensor[:, mask_idx:mask_idx+1, :, :]
+                    
+                    # Binarize mask (handle both binary logits and 0/1 values)
+                    if layers_registry.get(mask_layer_name, {}).get('type') == 'binary':
+                        mask = (torch.sigmoid(mask) > 0.5).float()
+                    else:
+                        mask = (mask > 0.5).float()
+                    
+                    # Compute loss with mask weighting
+                    if loss_type == 'l1':
+                        loss_per_pixel = F.l1_loss(recon_ch, target_ch, reduction='none')
+                    elif loss_type == 'smooth_l1':
+                        loss_per_pixel = F.smooth_l1_loss(recon_ch, target_ch, reduction='none')
+                    else:  # 'mse'
+                        loss_per_pixel = F.mse_loss(recon_ch, target_ch, reduction='none')
+                    
+                    # Apply mask weighting: higher weight inside mask, lower outside
+                    weighted_loss = loss_per_pixel * (mask * mask_loss_weight + (1 - mask) * 1.0)
+                    loss = weighted_loss.mean()
+                    
+                    # Log mask coverage for debugging
+                    mask_coverage = mask.mean().item()
+                    losses[f'{channel_name}_mask_coverage'] = mask_coverage
+                    
+                except ValueError:
+                    # Mask layer not found, fall back to unmasked loss
+                    if loss_type == 'l1':
+                        loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
+                    elif loss_type == 'smooth_l1':
+                        loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
+                    else:
+                        loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
+            else:
+                # No masking - standard loss
+                if loss_type == 'l1':
+                    loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
+                elif loss_type == 'smooth_l1':
+                    loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
+                else:  # 'mse'
+                    loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
             
             # Log appropriate loss metric
             if loss_type == 'l1':

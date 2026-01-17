@@ -28,7 +28,8 @@ layers:
     layer: 'buildings_heights'
     type: 'continuous'
     normalize: 'minmax'
-    mask_layer: 'buildings'  # Apply building mask to height values
+    mask_layer: 'buildings'  # Apply building mask to height values (dataset + loss)
+    mask_loss_weight: 5.0  # Focus loss on building regions (3.0-10.0 recommended)
     
   streets:
     layer: 'streets'

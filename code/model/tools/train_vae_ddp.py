@@ -584,7 +584,8 @@ def train_vae(mode: str = 'satellite'):
                 binary_weight=binary_channel_weight,
                 continuous_weight=continuous_channel_weight,
                 layer_dice_config=layer_dice_config,
-                posw_ema=posw_ema
+                posw_ema=posw_ema,
+                all_channels_tensor=input_tensor  # Pass full tensor for mask lookup
             )
                 
             # Out-of-bounds penalization for satellite
