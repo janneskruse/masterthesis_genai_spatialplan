@@ -15,7 +15,7 @@ def add_config_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
     Returns:
         The same parser with config arguments added
     """
-    parser.add_argument('--config', type=str, default='two_stage_3.yml', 
+    parser.add_argument('--config', type=str, default='two_stage_4.yml', 
                        help='Path to the experiment config file')
     parser.add_argument('--data_config', type=str, default='config.yml', 
                        help='Path to the data config file')
