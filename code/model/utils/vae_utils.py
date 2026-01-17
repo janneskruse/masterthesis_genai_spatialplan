@@ -252,6 +252,11 @@ def compute_reconstruction_loss(
             use_dice = dice_config.get('use_dice', False)
             dice_weight = dice_config.get('weight', 0.5)
             
+            # DEBUG: Log Dice configuration for buildings (first batch only)
+            if layer_name == 'buildings' and idx == 0:
+                import sys
+                print(f"[DEBUG] Buildings Dice config:", dice_config, file=sys.stderr, flush=True)
+            
             # Compute Dice loss if enabled for this layer
             if use_dice:
                 dice = dice_loss_from_logits(recon_ch, target_ch)
