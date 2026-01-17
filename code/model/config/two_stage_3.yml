@@ -2,8 +2,6 @@
 # Stage 1: Generate semantic layouts (buildings/roads/vegetation/height) with LST control
 # Stage 2: Render satellite imagery from semantics
 
-cluster: True
-
 # ===========================================================================
 # GLOBAL LAYER REGISTRY
 # Defines all available data layers and their properties

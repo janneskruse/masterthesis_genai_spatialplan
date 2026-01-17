@@ -55,8 +55,7 @@ srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
     python3 -u train_vae_ddp.py --config $CONFIG_PATH \
-    --mode semantic \
-    --latent_type conditioning
+    --mode environmental
 "
 
 # Capture the exit code of srun/python
@@ -66,13 +65,3 @@ echo "=================================================="
 echo "Job finished at: $(date)"
 echo "Training exit code: $EXIT_CODE"
 echo "=================================================="
-
-
-# Only submit next job if training succeeded
-if [ $EXIT_CODE -eq 0 ]; then
-    echo "Training completed successfully. Submitting diffusion training..."
-    sbatch train_semantic_diffusion_inpainting_ddp.sh --config $CONFIG_PATH
-else
-    echo "Training failed with exit code $EXIT_CODE. Skipping diffusion training."
-    exit $EXIT_CODE
-fi

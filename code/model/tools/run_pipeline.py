@@ -2,6 +2,7 @@
 """
 Quick start script for urban inpainting training pipeline.
 Runs all steps in sequence with error checking.
+Config-driven: dynamically submits jobs for all VAE groups and diffusion stages.
 """
 ###### import libraries ######
 # Standard libraries
@@ -13,7 +14,6 @@ from pathlib import Path
 
 # local imports
 from helpers.load_configs import load_configs
-from model.utils.config_utils import get_config_value
 
 
 def run_command(cmd, description):
@@ -35,6 +35,26 @@ def run_command(cmd, description):
     return True
 
 
+def find_sbatch_script(mode_type, mode_name, script_dir):
+    """
+    Find sbatch script for a given mode.
+    
+    Args:
+        mode_type: 'vae' or 'diffusion'
+        mode_name: e.g., 'semantic', 'satellite', 'environmental'
+        script_dir: Directory containing sbatch scripts
+        
+    Returns:
+        Path to script if found, None otherwise
+    """
+    script_name = f"train_{mode_name}_{mode_type}_ddp.sh"
+    script_path = script_dir / script_name
+    
+    if script_path.exists():
+        return script_path
+    return None
+
+
 def main():
     # Create parser with all arguments
     parser = argparse.ArgumentParser(description='Urban inpainting training pipeline')
@@ -51,14 +71,11 @@ def main():
         default=False
     )
     parser.add_argument(
-        '--skip-semantic-vae',
-        action='store_true',
-        help='Skip Semantic VAE training (if already trained)'
-    )
-    parser.add_argument(
-        '--skip-satellite-vae',
-        action='store_true',
-        help='Skip Satellite VAE training (if already trained)'
+        '--skip-modes',
+        nargs='+',
+        default=[],
+        help='List of modes to skip (e.g., vae:semantic diffusion:satellite)',
+        metavar='MODE'
     )
     
     # Parse arguments
@@ -71,17 +88,16 @@ def main():
     
     # Load configs using the parser
     config = load_configs(parser)
-    # data_config = config['data_config']
     big_data_storage_path = config['dataset_params']['big_data_storage_path']
     task_name = config['train_params']['task_name']
     
-    cluster_run = config.get('cluster', False)
+    # Get script directory
+    script_dir = Path(__file__).parent
     
-    # Change to model directory
-    # script_dir = os.path.dirname(os.path.abspath(__file__))
-    # model_dir = os.path.dirname(script_dir)
-    # os.chdir(model_dir)
-    # print(f"Working directory: {os.getcwd()}\n")
+    # Parse skip modes
+    skip_modes = set(args.skip_modes)
+    if skip_modes:
+        print(f"Skip modes: {', '.join(skip_modes)}\n")
     
     success = True
     
@@ -93,86 +109,95 @@ def main():
             print("\n⚠️  Dataset validation failed. Please fix dataset issues before continuing.")
             return 1
     
-    # Step 2: Create patches
-    cache_dir_base = Path(big_data_storage_path) / "processed" / task_name
-    cache_dir_semantic = cache_dir_base / "semantic"
-    cache_dir_satellite = cache_dir_base / "satellite"
+    # Step 2: Check for cached patches
+    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "default"
     
-    # Check if cache directories exist and have files
     print("\nChecking for existing cached patches...")
-    print(f"Semantic cache dir: {cache_dir_semantic}")
-    print(f"Satellite cache dir: {cache_dir_satellite}")
-    semantic_has_files = cache_dir_semantic.exists() and len(list(cache_dir_semantic.glob("*.pt"))) > 0
-    satellite_has_files = cache_dir_satellite.exists() and len(list(cache_dir_satellite.glob("*.pt"))) > 0
+    print(f"Cache directory: {cache_dir}")
     
-    if not semantic_has_files or not satellite_has_files:
-        print("\nCached patches not found or incomplete.")
-        if not semantic_has_files:
-            print(" - Semantic cached patches missing.")
-        if not satellite_has_files:
-            print(" - Satellite cached patches missing.")
+    has_cached_patches = cache_dir.exists() and len(list(cache_dir.glob("*.pt"))) > 0
+    
+    if not has_cached_patches:
+        print("\nCached patches not found.")
         print("Starting patch preparation step...")
         cmd = f"python prepare_patches.py --config {args.config}"
         success = run_command(cmd, "Create Patches")
         if not success:
             print("\n⚠️  Patch preparation failed. Check error messages above.")
             return 1
-    
-    # Step 2: Submit pipelines
-    if not args.skip_semantic_vae:
-        if cluster_run:
-            cmd = f"sbatch train_semantic_vae_ddp.sh --config {args.config}"
-        else:
-            cmd = f"python train_semantic_vae.py --config {args.config}"
-        success = run_command(cmd, "Semantic VAE Training")
-        if not success:
-            print("\n⚠️  Semantic VAE training failed. Check error messages above.")
-            return 1
-    else: # submit diffusion training directly if VAE training is skipped
-        print("\n⚠️  Skipping Semantic VAE training as per user request.")
-        print("    Proceeding to Semantic Diffusion training step.\n")
-        if cluster_run:
-            cmd = f"sbatch train_semantic_diffusion_inpainting_ddp.sh --config {args.config}"
-        else:
-            cmd = f"python train_semantic_diffusion_inpainting.py --config {args.config}"
-        success = run_command(cmd, "Semantic Diffusion Training")
-        if not success:
-            print("\n⚠️  Semantic Diffusion training failed. Check error messages above.")
-            return 1
-    
-    if not args.skip_satellite_vae:
-        if cluster_run:
-            cmd = f"sbatch train_satellite_vae_ddp.sh --config {args.config}"
-        else:
-            cmd = f"python train_satellite_vae.py --config {args.config}"
-        success = run_command(cmd, "Satellite VAE Training")
-        if not success:
-            print("\n⚠️  Satellite VAE training failed. Check error messages above.")
-            return 1
     else:
-        print("\n⚠️  Skipping Satellite VAE training as per user request.\n")   
-        print("    Proceeding to Satellite Diffusion training step.\n")
-        if cluster_run:
-            cmd = f"sbatch train_satellite_diffusion_inpainting_ddp.sh --config {args.config}"
-        else:
-            cmd = f"python train_satellite_diffusion_inpainting.py --config {args.config}"
-        success = run_command(cmd, "Satellite Diffusion Training")
-        if not success:
-            print("\n⚠️  Satellite Diffusion training failed. Check error messages above.")
-            return 1
+        print(f"✓ Found {len(list(cache_dir.glob('*.pt')))} cached patches\n")
+    
+    # Step 3: Submit VAE training jobs for all groups
+    # VAE sbatch scripts should chain to diffusion training when complete
+    vae_groups = config.get('vae_groups', {})
+    diffusion_stages = config.get('diffusion_stages', {})
+    
+    print("\n" + "="*60)
+    print(f"SUBMITTING VAE TRAINING JOBS ({len(vae_groups)} groups)")
+    print("="*60)
+    print("Note: VAE sbatch scripts will automatically trigger diffusion training upon completion")
+    
+    for group_name in vae_groups.keys():
+        mode_str = f"vae:{group_name}"
         
+        if mode_str in skip_modes:
+            print(f"\n⚠️  Skipping VAE training for '{group_name}' (user requested)")
+            
+            # Check if we should submit diffusion for this group instead
+            corresponding_diffusion = None
+            for stage_name, stage_config in diffusion_stages.items():
+                pred_group = stage_config.get('prediction_group')
+                if pred_group == group_name:
+                    corresponding_diffusion = stage_name
+                    break
+            
+            if corresponding_diffusion:
+                diffusion_mode_str = f"diffusion:{corresponding_diffusion}"
+                if diffusion_mode_str not in skip_modes:
+                    print(f"    → Submitting Diffusion training for '{corresponding_diffusion}' instead")
+                    
+                    sbatch_script = find_sbatch_script('diffusion_inpainting', corresponding_diffusion, script_dir)
+                    
+                    if sbatch_script is None:
+                        print(f"\n⚠️  Sbatch script not found for Diffusion stage '{corresponding_diffusion}'")
+                        print(f"    Expected: {script_dir / f'train_{corresponding_diffusion}_diffusion_inpainting_ddp.sh'}")
+                        print(f"    Skipping...")
+                        continue
+                    
+                    cmd = f"sbatch {sbatch_script} --config {args.config}"
+                    success = run_command(cmd, f"Diffusion Training: {corresponding_diffusion}")
+                    
+                    if not success:
+                        print(f"\n⚠️  Diffusion training submission failed for '{corresponding_diffusion}'")
+                        return 1
+            continue
+        
+        # Find sbatch script
+        sbatch_script = find_sbatch_script('vae', group_name, script_dir)
+        
+        if sbatch_script is None:
+            print(f"\n⚠️  Sbatch script not found for VAE group '{group_name}'")
+            print(f"    Expected: {script_dir / f'train_{group_name}_vae_ddp.sh'}")
+            print(f"    Skipping this group...")
+            continue
+        
+        # Submit VAE job (will chain to diffusion in sbatch script)
+        cmd = f"sbatch {sbatch_script} --config {args.config}"
+        success = run_command(cmd, f"VAE Training: {group_name}")
+        
+        if not success:
+            print(f"\n⚠️  VAE training submission failed for '{group_name}'")
+            return 1
     
     # Success!
     print("\n" + "="*60)
-    if cluster_run:
-        print("🎉 PIPELINE SUBMITTED TO CLUSTER SUCCESSFULLY!")
-    else:
-        print("🎉 PIPELINE COMPLETED SUCCESSFULLY!")
+    print("🎉 PIPELINE SUBMITTED TO CLUSTER SUCCESSFULLY!")
     print("="*60)
-    print("\nCheck outputs in: urban_layout_inpainting/")
-    print("  - VAE samples: vae_samples/")
-    print("  - Inpainting samples: inpainting_samples/")
-    print("\nTo generate more samples:")
+    print(f"\nResults will be saved to:")
+    print(f"  {Path(big_data_storage_path) / 'results' / task_name}")
+    print("\nMonitor job status with: squeue -u $USER")
+    print("\nTo generate samples after training:")
     print(f"  python sample_urban_inpainting.py --config {args.config} --num_samples 16")
     print()
     
