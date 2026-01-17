@@ -135,11 +135,17 @@ def get_layer_dice_config(layers_registry: Dict, layer_name: str) -> Dict:
         'weight': 0.5
     }
     
-    # Thin structures benefit from dice loss
-    thin_layers = ['streets', 'water']  # Add more as needed
-    if layer_name in thin_layers:
+    # Binary layers benefit from dice loss (buildings, streets, water, vegetation)
+    # Buildings and other binary masks need Dice to prevent salt-and-pepper noise
+    binary_layers_with_dice = ['buildings', 'streets', 'water', 'vegetation']
+    if layer_name in binary_layers_with_dice:
         default_dice_config['use_dice'] = True
-        default_dice_config['weight'] = 0.75  # Higher weight for thin structures
+        if layer_name == 'buildings':
+            default_dice_config['weight'] = 0.5  # Standard weight for buildings
+        elif layer_name in ['streets', 'water']:
+            default_dice_config['weight'] = 0.75  # Higher weight for thin structures
+        else:
+            default_dice_config['weight'] = 0.5  # Default for other binary layers
     
     # Override with explicit config
     if 'dice_loss' in layer_config:
