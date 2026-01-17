@@ -1,0 +1,342 @@
+# Configuration for Two-Stage Semantic Urban Inpainting
+# Stage 1: Generate semantic layouts (buildings/roads/vegetation/height) with LST control
+# Stage 2: Render satellite imagery from semantics
+
+# ===========================================================================
+# GLOBAL LAYER REGISTRY
+# Defines all available data layers and their properties
+# ===========================================================================
+
+layers:
+  # Satellite RGB imagery
+  rgb:
+    layer: 'planetscope_sr_4band'
+    channels: ['red', 'green', 'blue']
+    type: 'continuous'
+    normalize: 'percentile'  # normalize to [0,1] via percentile clipping
+    loss_type: 'l1'  # L1 loss for better edge preservation in satellite imagery
+    
+  # OpenStreetMap features
+  buildings:
+    layer: 'buildings'
+    type: 'binary'
+    dice_loss:
+      use_dice: True
+      weight: 0.5  # Dice loss for crisp edges and reduced salt-and-pepper noise
+    
+  buildings_heights:
+    layer: 'buildings_heights'
+    type: 'continuous'
+    normalize: 'minmax'
+    mask_layer: 'buildings'  # Apply building mask to height values
+    
+  streets:
+    layer: 'streets'
+    type: 'binary'
+    dice_loss:
+      use_dice: True
+      weight: 0.75  # Higher weight for thin structures
+    
+  street_blocks:
+    layer: 'street_blocks'
+    type: 'binary'
+    
+  water:
+    layer: 'water'
+    type: 'binary'
+    dice_loss:
+      use_dice: True
+      weight: 0.75
+    
+  # Derived vegetation mask from NDVI
+  vegetation:
+    layer: 'ndvi'
+    type: 'binary'
+    filter:
+      gte: 0.7
+      
+  # Environmental layers
+  ndvi:
+    layer: 'ndvi'
+    type: 'continuous'
+    normalize: 'clip'
+    clip_range: [-1, 1]
+    
+  lst:
+    layer: 'landsat_surface_temp_b10_masked'
+    type: 'continuous'
+    normalize: 'custom'
+    normalize_params:
+      min: 0  # degree celsius
+      max: 80 # degree celsius
+  
+  # Inpainting mask (generated on-the-fly)
+  inpainting_mask:
+    layer: 'inpainting_mask'  # Special layer: generated per patch
+    type: 'binary'
+
+# ===========================================================================
+# INPAINTING PARAMETERS
+# Shared across all training stages
+# ===========================================================================
+
+inpainting_params:
+  type: 'street_blocks'
+  max_coverage_percent: 25
+  size_px: 80
+  min_size_px: 40
+  max_size_px: 120
+
+# ===========================================================================
+# DATASET PARAMETERS
+# ===========================================================================
+
+dataset_params:
+  big_data_storage_path: "/work/zt75vipu-thesis/data"
+  train_regions: ['Dresden', 'Hamburg', 'Stuttgart']
+  eval_regions: ['Leipzig']
+  zarr_name: "input_config_ge25_cc10_2019_2024_clipped.zarr"
+  res: 3  # resolution in meters
+  patch_size_m: 800  # patch size in meters
+  min_valid_percent: 90
+  stride_overlap: 2  # 50% overlap
+
+# ===========================================================================
+# VAE GROUP CONFIGURATIONS
+# Each VAE specializes in encoding a semantic layer group
+# ===========================================================================
+
+vae_groups:
+  # RGB satellite imagery VAE
+  satellite:
+    layers: ['rgb']
+    z_channels: 4
+    down_channels: [32, 64, 128, 128]
+    mid_channels: [128, 128]
+    down_sample: [True, True, False]  # 2× downsample → 64×64 latent
+    attn_down: [False, False, False]
+    norm_channels: 32
+    num_heads: 2
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+    checkpoint_name: 'satellite_vae_ckpt.pth'
+    latents_dir: 'satellite_latents'
+    stats_dir: 'satellite_stats'
+    samples_dir: 'satellite_samples'
+    
+  # Land-use/urban layout VAE
+  semantic:
+    layers: ['buildings', 'streets', 'buildings_heights', 'vegetation'] 
+    z_channels: 4  # Tight bottleneck for clean binary representations
+    down_channels: [32, 64, 128, 128]
+    mid_channels: [128, 128]
+    down_sample: [True, True, False]  # Only 2× downsample → 64×64 latent (was 3× → 32×32)
+    attn_down: [False, False, False]
+    norm_channels: 32
+    num_heads: 2
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+    checkpoint_name: 'semantic_vae_ckpt.pth'
+    latents_dir: 'semantic_latents'
+    stats_dir: 'semantic_stats'
+    samples_dir: 'semantic_samples'
+    
+  # Environmental conditions VAE
+  environmental:
+    layers: ['lst', 'ndvi']
+    z_channels: 2
+    down_channels: [16, 32, 64, 64]
+    mid_channels: [64, 64]
+    down_sample: [True, True, False]  # 2× downsample → 64×64 latent
+    attn_down: [False, False, False]
+    norm_channels: 16
+    num_heads: 2
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+    checkpoint_name: 'environmental_vae_ckpt.pth'
+    latents_dir: 'environmental_latents'
+    stats_dir: 'environmental_stats'
+    samples_dir: 'environmental_samples'
+
+# ===========================================================================
+# DIFFUSION PARAMETERS
+# ===========================================================================
+
+diffusion_params:
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+
+# ===========================================================================
+# DIFFUSION STAGES
+# Define what each stage generates and conditions on
+# ===========================================================================
+
+diffusion_stages:
+  # Stage 1: Generate semantic urban layout
+  semantic:
+    prediction_group: 'semantic'
+    
+    # U-Net architecture
+    unet_config:
+      down_channels: [32, 64, 128, 256]
+      mid_channels: [256, 256, 128]
+      down_sample: [True, True, False]
+      attn_down: [True, True, False]
+      time_emb_dim: 128
+      norm_channels: 32
+      num_heads: 4
+      conv_out_channels: 128
+      num_down_layers: 2
+      num_mid_layers: 2
+      num_up_layers: 2
+    
+    # Conditioning inputs
+    conditioning:
+      # Pixel-space conditioning (not encoded through VAE)
+      pixel_space:
+        - type: 'inpainting_mask'
+          channels: 1
+          
+      # # Latent-space conditioning (encoded through respective VAEs)
+      # latent_space:
+      #   - group: 'environmental'
+      #     layers: ['lst']  # Control temperature
+          
+      #   - group: 'semantics'
+      #     layers: ['street_blocks']  # Constrain to valid blocks
+    
+    # Inpainting configuration
+    inpainting:
+      mode: 'hard'  # or 'sdlike'
+      loss: 'masked'  # or 'weighted'
+      mask_loss_weight: 8.0
+      outside_weight: 0.0
+      
+      cfg:
+        drop_prob: 0.1
+        drop_groups: None
+  
+  # Stage 2: Render satellite RGB from semantic layout
+  satellite:
+    prediction_group: 'rgb'
+    
+    # U-Net architecture
+    unet_config:
+      down_channels: [32, 64, 128, 256]
+      mid_channels: [256, 256, 128]
+      down_sample: [True, True, False]
+      attn_down: [True, True, False]
+      time_emb_dim: 128
+      norm_channels: 32
+      num_heads: 4
+      conv_out_channels: 128
+      num_down_layers: 2
+      num_mid_layers: 2
+      num_up_layers: 2
+    
+    # Conditioning inputs
+    conditioning:
+      pixel_space:
+        - type: 'inpainting_mask'
+          channels: 1
+          
+      latent_space:
+        - group: 'semantic'
+          layers: ['buildings', 'streets', 'buildings_heights', 'vegetation']
+          
+        - group: 'environmental'
+          layers: ['ndvi', 'lst']
+    
+    # Inpainting configuration
+    inpainting:
+      mode: 'hard'
+      loss: 'masked'
+      mask_loss_weight: 8.0
+      outside_weight: 0.0
+      
+      cfg:
+        drop_prob: 0.1
+        drop_groups: ['semantic', 'environmental']
+
+# ===========================================================================
+# TRAINING PARAMETERS
+# ===========================================================================
+
+train_params:
+  seed: 3
+  task_name: 'two_stage_3'
+  
+  # VAE training (per group)
+  vae_training:
+    satellite:
+      epochs: 50
+      batch_size: 2
+      lr: 0.0001
+      kl_weight: 0.000001
+      perceptual_weight: 1.0
+      disc_weight: 0.5
+      disc_start: 10000
+      use_discriminator: True
+      use_perceptual: True
+      penalize_out_of_range: True
+      tanh_activation: True
+      tanh_scaling: 0.95
+      img_save_steps: 64
+
+    semantic:
+      epochs: 50
+      batch_size: 4
+      lr: 0.0001
+      kl_weight: 0.000001
+      binary_channel_weight: 1.0
+      continuous_channel_weight: 2.0  # Increase weight for buildings_heights to compete with 3 binary layers
+      dice_weight: 0.5  # Default dice weight
+      perceptual_weight: 0.0  # Not useful for semantic binary masks
+      disc_weight: 0.5  # Adversarial loss to enforce sharp edges
+      disc_start: 5000  # Start discriminator after 5k steps (~30 epochs at batch_size=4)
+      use_discriminator: True  # Critical for sharp building edges
+      use_perceptual: False  # LPIPS not useful for binary/height data
+      tanh_activation: False  # Binary + continuous mixed
+      img_save_steps: 64
+      # Per-layer dice loss configuration (overrides defaults from layer registry)
+      # layer_dice_config:
+      #   streets:
+      #     use_dice: True
+      #     weight: 0.75
+      #   water:
+      #     use_dice: True
+      #     weight: 0.75
+      
+    environmental:
+      epochs: 50
+      batch_size: 8
+      lr: 0.0001
+      kl_weight: 0.000001
+      use_discriminator: False
+      use_perceptual: False
+      tanh_activation: True
+      tanh_scaling: 0.95
+      img_save_steps: 64
+  
+  # Diffusion training (per stage)
+  diffusion_training:
+    semantic:
+      epochs: 300
+      batch_size: 4
+      lr: 0.00001
+      checkpoint_name: 'semantic_diffusion_ckpt.pth'
+      
+    satellite:
+      epochs: 400
+      batch_size: 4
+      lr: 0.00001
+      checkpoint_name: 'satellite_diffusion_ckpt.pth'
+  
+  # Sampling
+  num_samples: 16
+  num_grid_rows: 4
+  cf_guidance_scale: 7.5
