@@ -292,7 +292,7 @@ def compute_reconstruction_loss(
                     else:
                         mask = (mask > 0.5).float()
                     
-                    # Compute loss with mask weighting
+                    # Compute loss with mask weighting (NORMALIZED by mask coverage)
                     if loss_type == 'l1':
                         loss_per_pixel = F.l1_loss(recon_ch, target_ch, reduction='none')
                     elif loss_type == 'smooth_l1':
@@ -300,9 +300,14 @@ def compute_reconstruction_loss(
                     else:  # 'mse'
                         loss_per_pixel = F.mse_loss(recon_ch, target_ch, reduction='none')
                     
-                    # Apply mask weighting: higher weight inside mask, lower outside
-                    weighted_loss = loss_per_pixel * (mask * mask_loss_weight + (1 - mask) * 1.0)
-                    loss = weighted_loss.mean()
+                    # Apply mask weighting
+                    mask_weight = mask * mask_loss_weight + (1 - mask) * 1.0
+                    weighted_loss = loss_per_pixel * mask_weight
+                    
+                    # Normalize by effective weight to prevent scale dependence
+                    # This makes loss independent of mask coverage percentage
+                    mean_weight = mask_weight.mean() + 1e-8
+                    loss = weighted_loss.sum() / (mask_weight.numel() * mean_weight)
                     
                     # Log mask coverage for debugging
                     mask_coverage = mask.mean().item()
