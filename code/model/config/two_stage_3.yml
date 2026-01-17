@@ -131,7 +131,7 @@ vae_groups:
     z_channels: 4  # Tight bottleneck for clean binary representations
     down_channels: [32, 64, 128, 128]
     mid_channels: [128, 128]
-    down_sample: [True, True, True]
+    down_sample: [True, True, False]  # Only 2× downsample → 64×64 latent (was 3× → 32×32)
     attn_down: [False, False, False]
     norm_channels: 32
     num_heads: 2
@@ -295,8 +295,11 @@ train_params:
       binary_channel_weight: 1.0
       continuous_channel_weight: 2.0  # Increase weight for buildings_heights to compete with 3 binary layers
       dice_weight: 0.5  # Default dice weight
-      use_discriminator: False
-      use_perceptual: False
+      perceptual_weight: 0.0  # Not useful for semantic binary masks
+      disc_weight: 0.5  # Adversarial loss to enforce sharp edges
+      disc_start: 5000  # Start discriminator after 5k steps (~30 epochs at batch_size=4)
+      use_discriminator: True  # Critical for sharp building edges
+      use_perceptual: False  # LPIPS not useful for binary/height data
       tanh_activation: False  # Binary + continuous mixed
       img_save_steps: 64
       # Per-layer dice loss configuration (overrides defaults from layer registry)
