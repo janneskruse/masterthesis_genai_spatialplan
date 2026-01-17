@@ -229,6 +229,8 @@ def compute_reconstruction_loss(
         layer_info = layers_registry.get(layer_name, {})
         is_binary = is_binary_layer(layer_info)
         
+        print(f"Computing loss for channel '{channel_name}' (layer: '{layer_name}'), binary: {is_binary}")
+        
         # Binary channels use BCE with logits + optional Dice loss
         if is_binary:
             # Clamp target to valid range (recon_ch is logits, no clamping)
