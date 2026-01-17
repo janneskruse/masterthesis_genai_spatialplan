@@ -101,7 +101,7 @@ def train_lst_predictor():
     if world_size > 1:
         dist.barrier()
     
-    cache_dir = f"{big_data_storage_path}/processed/{task_name}/semantic_patches"
+    cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     ########## Load Dataset #############

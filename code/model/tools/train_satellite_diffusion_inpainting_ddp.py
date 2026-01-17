@@ -112,7 +112,7 @@ def train():
     
     # Task name from base config, mode-specific cache
     task_name = train_config.get('task_name', 'urban_inpainting')
-    cache_dir = f"{big_data_storage_path}/processed/{task_name}/satellite"
+    cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     # Create output directory

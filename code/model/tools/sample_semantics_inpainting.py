@@ -261,7 +261,7 @@ def sample_semantics(
     
     # Load dataset to get conditioning examples
     task_name = train_config.get('task_name', 'urban_inpainting')
-    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "semantic"
+    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
     use_cached_patches = cache_dir.exists()
     
     # Check if latents exist for val split

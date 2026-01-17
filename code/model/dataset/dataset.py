@@ -196,7 +196,7 @@ class UrbanInpaintingDataset(Dataset):
         # Cache directory setup
         if cache_dir is None:
             task_name = config['train_params']['task_name']
-            cache_dir = Path(big_data_storage_path) / "processed" / task_name / self.mode
+            cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
             
         self.cache_dir = Path(cache_dir)
         self.use_cached_patches = use_cached_patches
@@ -667,6 +667,8 @@ class UrbanInpaintingDataset(Dataset):
         print(f"\n✓ Successfully cached {len(metadata_records)} patches")
         print(f"✓ Metadata saved to: {metadata_path}")
         print(f"✓ Total disk usage: ~{self._estimate_cache_size()} MB\n")
+        
+        return self.cache_dir
     
     def _extract_patch_from_xarray(
         self, 

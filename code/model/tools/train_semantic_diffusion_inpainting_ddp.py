@@ -156,7 +156,7 @@ def train():
             print(f"  This is a known limitation - conditioning quality may be suboptimal")
             print(f"  Recommendation: Ensure VAE was trained with condition_latents=True")
     
-    cache_dir = f"{big_data_storage_path}/processed/{train_config.get('task_name', 'urban_inpainting')}/semantic"
+    cache_dir = f"{big_data_storage_path}/processed/{train_config.get('task_name', 'urban_inpainting')}/patches"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     # Create output directory

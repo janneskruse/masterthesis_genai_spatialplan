@@ -329,7 +329,7 @@ def train_vae(mode: str = 'satellite'):
     if world_size > 1:
         dist.barrier()
     
-    cache_dir = f"{big_data_storage_path}/processed/{task_name}/vae:{mode}"
+    cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     ########## Load Dataset #############

@@ -33,7 +33,7 @@ def analyze_mask_coverage(num_samples=50):
     task_name = train_config.get('task_name', 'urban_inpainting')
     
     # Check cache directory
-    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "semantic"
+    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
     use_cached_patches = cache_dir.exists()
     
     # Check if latents exist for val split

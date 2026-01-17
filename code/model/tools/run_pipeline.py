@@ -110,7 +110,7 @@ def main():
             return 1
     
     # Step 2: Check for cached patches
-    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "default"
+    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
     
     print("\nChecking for existing cached patches...")
     print(f"Cache directory: {cache_dir}")
