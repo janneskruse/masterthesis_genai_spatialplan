@@ -297,8 +297,8 @@ train_params:
       dice_weight: 0.5  # Default dice weight
       perceptual_weight: 0.0  # Not useful for semantic binary masks
       disc_weight: 0.5  # Adversarial loss to enforce sharp edges
-      disc_start: 5000  # Start discriminator after 5k steps (~30 epochs at batch_size=4)
-      use_discriminator: True  # Critical for sharp building edges
+      # disc_start: 5000  # Start discriminator after 5k steps (~30 epochs at batch_size=4)
+      use_discriminator: False
       use_perceptual: False  # LPIPS not useful for binary/height data
       tanh_activation: False  # Binary + continuous mixed
       img_save_steps: 64
