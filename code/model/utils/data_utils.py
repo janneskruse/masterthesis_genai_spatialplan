@@ -89,7 +89,7 @@ def apply_filter(data, layer_config: Dict):
         else:
             return np.where(mask, data, 0.0)
 
-def apply_layer_transform(data, layer_config, layer_statistics=None):
+def apply_layer_transform(data, layer_config, layer_statistics=None, mask_data=None):
     """
     Apply transformations to layer data including filtering and normalization.
     
@@ -97,8 +97,9 @@ def apply_layer_transform(data, layer_config, layer_statistics=None):
     
     Args:
         data: numpy array or torch tensor of layer data
-        layer_config: Layer configuration dict with optional 'filter' and 'normalize' keys
+        layer_config: Layer configuration dict with optional 'filter', 'normalize', and 'mask_layer' keys
         layer_statistics: Optional dict with global statistics (min, max, mean, std, q01, q99, etc.)
+        mask_data: Optional mask array to apply (for layers with mask_layer config)
         
     Returns:
         Transformed data (same type as input)
@@ -120,6 +121,16 @@ def apply_layer_transform(data, layer_config, layer_statistics=None):
     
     # Step 3: Apply normalization with global statistics
     data = normalize_layer(data, layer_config, layer_statistics)
+    
+    # Step 4: Apply mask if specified (e.g., building heights masked by buildings)
+    if mask_data is not None:
+        mask_layer_name = layer_config.get('mask_layer', None)
+        if mask_layer_name:
+            # Apply mask: zero out values where mask is 0
+            if is_torch:
+                data = data * mask_data
+            else:
+                data = data * mask_data
     
     return data
 

@@ -695,6 +695,10 @@ class UrbanInpaintingDataset(Dataset):
         layer_names = []  # Track which layer each channel belongs to
         channel_names = []  # Track full channel names (e.g., 'rgb:red', 'buildings')
         
+        # Dictionary to store processed layers (to avoid reprocessing)
+        processed_layers = {}
+        
+        # First pass: extract and transform all layers
         for layer_name in self.all_layer_names:
             layer_config = self.layers_registry[layer_name]
             source_layer = get_layer_info(self.layers_registry, layer_name).get('layer', layer_name)
@@ -721,12 +725,7 @@ class UrbanInpaintingDataset(Dataset):
                 
                 # Convert to CHW tensor
                 inpaint_mask = self._to_chw(inpaint_mask)
-                layer_tensor = torch.from_numpy(inpaint_mask).float()
-                layer_tensors.append(layer_tensor)
-                
-                # Single channel layer
-                layer_names.append('inpainting_mask')
-                channel_names.append('inpainting_mask')
+                processed_layers[layer_name] = inpaint_mask
                 continue
             
             if source_layer not in data_layers:
@@ -743,10 +742,32 @@ class UrbanInpaintingDataset(Dataset):
             layer_statistics = self.layer_stats.get(layer_name, None)
             
             # Apply transformations (filtering, normalization with global stats)
-            layer_data = apply_layer_transform(layer_data, layer_config, layer_statistics)
+            # Note: masking will be applied in second pass
+            layer_data = apply_layer_transform(layer_data, layer_config, layer_statistics, mask_data=None)
             
             # Convert to CHW format
             layer_data = self._to_chw(layer_data)
+            
+            # Store processed layer
+            processed_layers[layer_name] = layer_data
+        
+        # Second pass: apply masks and build final tensor
+        for layer_name in self.all_layer_names:
+            if layer_name not in processed_layers:
+                continue
+                
+            layer_config = self.layers_registry[layer_name]
+            layer_data = processed_layers[layer_name]
+            
+            # Apply mask if this layer needs it
+            mask_layer_name = layer_config.get('mask_layer', None)
+            if mask_layer_name:
+                if mask_layer_name in processed_layers:
+                    mask_data = processed_layers[mask_layer_name]
+                    # Apply mask: zero out values where mask is 0
+                    layer_data = layer_data * mask_data
+                else:
+                    print(f"⚠ Warning: Mask layer '{mask_layer_name}' not found for '{layer_name}'")
             
             # Convert to tensor
             layer_tensor = torch.from_numpy(layer_data).float()
@@ -762,6 +783,10 @@ class UrbanInpaintingDataset(Dataset):
         
         # Stack all layers into one tensor
         unified_patch = torch.cat(layer_tensors, dim=0)  # [C_total, H, W]
+        
+        # free memory
+        del layer_tensors
+        del processed_layers
         
         # Create metadata
         metadata = {
