@@ -19,7 +19,6 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
-from torchvision.utils import save_image, make_grid
 
 # Local imports
 from model.dataset.dataset import UrbanInpaintingDataset
@@ -29,90 +28,11 @@ from model.diffusion_blocks.lpips import LPIPS
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
-from model.utils.config_utils import get_prediction_channels, get_all_channels
-from model.utils.layer_config import get_conditioning_layers, is_binary_layer, get_layer_info, get_layer_dice_config
-from model.utils.vae_utils import save_vae_reconstruction_samples
+from model.utils.vae_utils import save_vae_reconstruction_samples, PosWeightEMA, compute_reconstruction_loss
 from helpers.load_configs import load_configs
 
 # Load CUDA
 load_cuda()
-
-
-def bce_with_logits_pos_weight(logits, targets, pos_weight=None, eps=1e-6):
-    """
-    Binary cross-entropy with logits and class-imbalance weighting.
-    
-    Args:
-        logits: [B,1,H,W] raw decoder output (unbounded)
-        targets: [B,1,H,W] in {0,1}
-        pos_weight: Optional pre-computed positive weight (scalar or tensor)
-        eps: Small epsilon for numerical stability
-        
-    Returns:
-        BCE loss with logits and optional positive weighting
-    """
-    targets = targets.clamp(0.0, 1.0)
-    
-    if pos_weight is None:
-        # Compute per-batch positive weight
-        pos = targets.mean().clamp(eps, 1 - eps)
-        pos_weight = ((1 - pos) / pos).detach()  # scalar
-    
-    return F.binary_cross_entropy_with_logits(
-        logits, targets, pos_weight=pos_weight, reduction='mean'
-    )
-
-
-def dice_loss_from_logits(logits, targets, eps=1e-6):
-    """
-    Dice loss for thin structures (streets, vegetation edges).
-    Applies sigmoid to logits before computing overlap.
-    
-    Args:
-        logits: [B,1,H,W] raw decoder output
-        targets: [B,1,H,W] in {0,1}
-        eps: Small epsilon for numerical stability
-        
-    Returns:
-        Dice loss (1 - Dice coefficient)
-    """
-    targets = targets.clamp(0.0, 1.0)
-    probs = torch.sigmoid(logits)
-    
-    intersection = (probs * targets).sum(dim=(2, 3))
-    union = probs.sum(dim=(2, 3)) + targets.sum(dim=(2, 3))
-    dice = 1 - (2 * intersection + eps) / (union + eps)
-    
-    return dice.mean()
-
-
-class PosWeightEMA:
-    """
-    Exponential moving average tracker for positive weights per channel.
-    Stabilizes class-imbalance weighting across small batches.
-    """
-    def __init__(self, num_channels, momentum=0.95, init=1.0, device='cpu'):
-        self.m = momentum
-        self.val = torch.full((num_channels,), float(init), device=device)
-    
-    def update(self, ch_idx, targets, eps=1e-6):
-        """
-        Update EMA for a specific channel.
-        
-        Args:
-            ch_idx: Channel index
-            targets: Target tensor for this channel [B,1,H,W]
-            eps: Small epsilon for numerical stability
-            
-        Returns:
-            Updated positive weight for this channel
-        """
-        with torch.no_grad():  # Prevent gradients from flowing through EMA update
-            pos = targets.mean().clamp(eps, 1 - eps)
-            pw = ((1 - pos) / pos)
-            self.val[ch_idx] = self.m * self.val[ch_idx] + (1 - self.m) * pw
-        return self.val[ch_idx].detach().clone()  # Return detached value as snapshot that won't change later
-
 
 def parse_args():
     """Parse command line arguments."""
@@ -276,128 +196,6 @@ def save_latents_distributed(
         print(f"{'='*60}\n")
     
     return latent_count
-
-
-def compute_reconstruction_loss(
-    recon, target, channel_names, layer_names,
-    layers_registry,
-    binary_weight=1.0, continuous_weight=1.0, 
-    layer_dice_config=None, posw_ema=None
-):
-    """
-    Compute reconstruction loss for any tensor using dynamic layer configuration.
-    
-    Handles:
-    - Binary layers: BCE with logits + optional Dice loss
-    - Continuous layers: MSE loss
-    - RGB layers: MSE loss (perceptual loss handled externally)
-    
-    Args:
-        recon: Reconstructed tensor [B, C, H, W] (logits for binary channels, values for continuous)
-        target: Target tensor [B, C, H, W]
-        channel_names: List of channel names (e.g., ['rgb:red', 'buildings', 'lst'])
-        layer_names: List of layer names for each channel (e.g., ['rgb', 'buildings', 'lst'])
-        layers_registry: Global layers configuration dict
-        binary_weight: Weight for binary channel losses
-        continuous_weight: Weight for continuous channel losses
-        layer_dice_config: Optional dict mapping layer names to dice config overrides
-        posw_ema: Optional PosWeightEMA tracker for stable class weighting
-        
-    Returns:
-        Dictionary with losses per channel type, total loss tensor
-    """
-    
-    losses = {}
-    binary_loss = 0.0
-    continuous_loss = 0.0
-    
-    binary_count = 0
-    continuous_count = 0
-    
-    for idx, (channel_name, layer_name) in enumerate(zip(channel_names, layer_names)):
-        recon_ch = recon[:, idx:idx+1, :, :]
-        target_ch = target[:, idx:idx+1, :, :]
-        
-        # Get layer configuration
-        layer_info = layers_registry.get(layer_name, {})
-        is_binary = is_binary_layer(layer_info)
-        
-        # Binary channels use BCE with logits + optional Dice loss
-        if is_binary:
-            # Clamp target to valid range (recon_ch is logits, no clamping)
-            target_ch = target_ch.clamp(0.0, 1.0)
-            
-            # Compute BCE with logits and class-imbalance weighting
-            if posw_ema is not None:
-                pw = posw_ema.update(idx, target_ch)
-                bce = F.binary_cross_entropy_with_logits(
-                    recon_ch, target_ch, pos_weight=pw, reduction='mean'
-                )
-            else:
-                bce = bce_with_logits_pos_weight(recon_ch, target_ch)
-            
-            # Get per-layer dice configuration
-            dice_config = get_layer_dice_config(layers_registry, layer_name)
-            # Override with training config if provided
-            if layer_dice_config and layer_name in layer_dice_config:
-                dice_config.update(layer_dice_config[layer_name])
-            
-            use_dice = dice_config.get('use_dice', False)
-            dice_weight = dice_config.get('weight', 0.5)
-            
-            # Compute Dice loss if enabled for this layer
-            if use_dice:
-                dice = dice_loss_from_logits(recon_ch, target_ch)
-                loss = bce + dice_weight * dice
-                losses[f'{channel_name}_dice'] = dice.item()
-            else:
-                loss = bce
-            
-            losses[f'{channel_name}_bce'] = bce.item()
-            binary_loss += loss * binary_weight
-            binary_count += 1
-            
-        # Continuous channels use MSE loss
-        else:
-            # Check if this is a height channel that needs masking
-            mask_layer = layer_info.get('mask_layer', None)
-            
-            if mask_layer:
-                # Find mask channel index
-                mask_idx = None
-                for i, (ch_name, l_name) in enumerate(zip(channel_names, layer_names)):
-                    if l_name == mask_layer:
-                        mask_idx = i
-                        break
-                
-                if mask_idx is not None:
-                    mask = target[:, mask_idx:mask_idx+1, :, :]
-                    # Apply loss only where mask is active
-                    masked_recon = recon_ch * mask
-                    masked_target = target_ch * mask
-                    loss = F.mse_loss(masked_recon, masked_target, reduction='mean')
-                else:
-                    # Mask layer not found, use regular MSE
-                    loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
-            else:
-                # Regular continuous channel (e.g., LST, NDVI, RGB channels)
-                loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
-            
-            losses[f'{channel_name}_mse'] = loss.item()
-            continuous_loss += loss * continuous_weight
-            continuous_count += 1
-    
-    # Normalize by channel count
-    if binary_count > 0:
-        binary_loss = binary_loss / binary_count
-    if continuous_count > 0:
-        continuous_loss = continuous_loss / continuous_count
-    
-    losses['binary_avg'] = binary_loss.item() if isinstance(binary_loss, torch.Tensor) else binary_loss
-    losses['continuous_avg'] = continuous_loss.item() if isinstance(continuous_loss, torch.Tensor) else continuous_loss
-    losses['total_recon'] = (binary_loss + continuous_loss).item() if isinstance(binary_loss + continuous_loss, torch.Tensor) else 0.0
-    
-    return losses, binary_loss + continuous_loss
 
 
 ########## Main Training Function #############
