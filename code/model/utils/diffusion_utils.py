@@ -9,6 +9,28 @@ from typing import List, Optional
 import torch
 
 
+def mask_conditioning_latents(cond_dict: dict, mask_latent: torch.Tensor, mask_groups: list) -> dict:
+    """
+    Apply inpainting mask to specified conditioning latent groups.
+    
+    Args:
+        cond_dict: Conditioning dictionary containing latent groups
+        mask_latent: Binary mask in latent space [1, H, W] or [B, 1, H, W]
+                    1 = inpaint region (zero out), 0 = keep
+        mask_groups: List of group names to mask (e.g., ['environmental', 'semantic'])
+        
+    Returns:
+        Modified conditioning dict with masked groups
+    """
+    for group_name in mask_groups:
+        if group_name in cond_dict:
+            # Zero out masked regions: multiply by (1 - mask)
+            # mask_latent: 1=inpaint, 0=keep → (1-mask): 0=inpaint, 1=keep
+            cond_dict[group_name] = cond_dict[group_name] * (1 - mask_latent)
+    
+    return cond_dict
+
+
 def load_latents(latent_path: str, prefix: str = None) -> List[str]:
     """
     Load pre-computed latents from disk to speed up LDM training.
