@@ -13,12 +13,26 @@
 #SBATCH -o log/%x.out-%j
 #SBATCH -e log/%x.err-%j
 
-# Default config if not provided
-if [ "$1" = "--config" ] && [ -n "$2" ]; then
-    CONFIG_PATH=$2
-else
-    CONFIG_PATH=${1:-two_stage_4.yml}
-fi
+# Parse arguments
+CONFIG_PATH="two_stage_4.yml"
+CHECKPOINT_PATH=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --config)
+            CONFIG_PATH="$2"
+            shift 2
+            ;;
+        --checkpoint)
+            CHECKPOINT_PATH="$2"
+            shift 2
+            ;;
+        *)
+            CONFIG_PATH="$1"
+            shift
+            ;;
+    esac
+done
 
 mkdir -p log
 
@@ -47,14 +61,25 @@ echo "=================================================="
 echo "Master Address: $MASTER_ADDR"
 echo "Master Port: $MASTER_PORT"
 echo "Starting DDP diffusion training with $WORLD_SIZE GPUs"
-echo "Passing config: $CONFIG_PATH"
+echo "Config: $CONFIG_PATH"
+if [ -n "$CHECKPOINT_PATH" ]; then
+    echo "Checkpoint: $CHECKPOINT_PATH"
+else
+    echo "Checkpoint: None (training from scratch)"
+fi
 echo "=================================================="
+
+# Build python command with optional checkpoint
+PYTHON_CMD="python3 -u train_diffusion_inpainting_ddp.py --config $CONFIG_PATH --mode satellite"
+if [ -n "$CHECKPOINT_PATH" ]; then
+    PYTHON_CMD="$PYTHON_CMD --load_checkpoint $CHECKPOINT_PATH"
+fi
 
 # Launch with srun and set CUDA_VISIBLE_DEVICES per process
 srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    python3 -u train_satellite_diffusion_inpainting_ddp.py --config $CONFIG_PATH
+    $PYTHON_CMD
 "
 
 # Capture the exit code of srun/python
