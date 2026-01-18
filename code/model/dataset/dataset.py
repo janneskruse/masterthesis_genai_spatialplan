@@ -1053,15 +1053,24 @@ class UrbanInpaintingDataset(Dataset):
             pred_group = stage_config.get('prediction_group')
             conditioning_config = stage_config.get('conditioning', {})
             
-            # Load prediction latent from pre-loaded group latents
-            if pred_group not in self.group_latents:
-                raise RuntimeError(
-                    f"Prediction latents for group '{pred_group}' not loaded. "
-                    f"This should have been loaded in _load_diffusion_latents()"
-                )
+            # Try to load prediction latent from pre-computed files
+            pred_latent = None
+            pred_image = None  # Full-resolution image for on-the-fly encoding
             
-            pred_latent_path = self.group_latents[pred_group][index]
-            pred_latent = load_single_latent(pred_latent_path, device=None)
+            if pred_group in self.group_latents:
+                # Pre-computed latents available
+                pred_latent_path = self.group_latents[pred_group][index]
+                pred_latent = load_single_latent(pred_latent_path, device=None)
+            
+            # If latent loading failed or not available, extract full-res image for encoding
+            if pred_latent is None:
+                # Extract prediction group channels from unified image
+                pred_group_config = self.vae_groups[pred_group]
+                pred_layers = pred_group_config.get('layers', [])
+                
+                pred_image = self._extract_group_channels(
+                    unified_image, channel_names, layer_names, pred_layers
+                )  # [C_pred, H, W] at full resolution
             
             # Build conditioning dictionary
             cond = {'meta': patch_data['meta'].copy()}
@@ -1111,18 +1120,37 @@ class UrbanInpaintingDataset(Dataset):
             for cond_spec in conditioning_config.get('latent_space', []):
                 group_name = cond_spec['group']
                 
-                if group_name not in self.group_latents:
-                    raise RuntimeError(
-                        f"Conditioning latents for group '{group_name}' not loaded. "
-                        f"This should have been loaded in _load_diffusion_latents()"
+                if group_name in self.group_latents:
+                    # Try to load pre-computed latent
+                    cond_latent_path = self.group_latents[group_name][index]
+                    cond_latent = load_single_latent(cond_latent_path, device=None)
+                    
+                    if cond_latent is not None:
+                        cond[group_name] = cond_latent
+                    else:
+                        # Latent loading failed - will need on-the-fly encoding
+                        # Extract full-res image for this group
+                        cond_group_config = self.vae_groups[group_name]
+                        cond_layers = cond_group_config.get('layers', [])
+                        cond_image = self._extract_group_channels(
+                            unified_image, channel_names, layer_names, cond_layers
+                        )
+                        cond[f'{group_name}_image'] = cond_image  # Mark for encoding
+                else:
+                    # No pre-computed latents - extract full-res image
+                    cond_group_config = self.vae_groups[group_name]
+                    cond_layers = cond_group_config.get('layers', [])
+                    cond_image = self._extract_group_channels(
+                        unified_image, channel_names, layer_names, cond_layers
                     )
-                
-                # Load conditioning latent
-                cond_latent_path = self.group_latents[group_name][index]
-                cond_latent = load_single_latent(cond_latent_path, device=None)
-                cond[group_name] = cond_latent
+                    cond[f'{group_name}_image'] = cond_image  # Mark for encoding
             
-            return pred_latent, cond
+            # Return either latent or full-res image (caller will encode if needed)
+            if pred_latent is not None:
+                return pred_latent, cond
+            else:
+                # No latent available - return full-res image for encoding
+                return pred_image, cond
     
     def _getitem_cached(self, index: int):
         """
@@ -1142,6 +1170,35 @@ class UrbanInpaintingDataset(Dataset):
         # Compose using shared logic
         unified_image = patch_data['image']
         return self._compose_batch_by_mode(unified_image, patch_data, index)
+    
+    def _extract_group_channels(self, unified_image: torch.Tensor, channel_names: List[str], layer_names: List[str], target_layers: List[str]) -> torch.Tensor:
+        """
+        Extract channels for specific target layers from unified image.
+        
+        Helper function for extracting VAE group channels when latents are not available.
+        
+        Args:
+            unified_image: [C_total, H, W] tensor with all layers
+            channel_names: List of all channel names in patch
+            layer_names: List of all layer names (parallel to channel_names)
+            target_layers: List of layer names to extract (e.g., ['buildings', 'streets'])
+            
+        Returns:
+            Extracted tensor [C_target, H, W]
+        """
+        
+        target_indices = []
+        for target_layer in target_layers:
+            layer_matches = get_layer_channels_from_names(channel_names, target_layer)
+            if len(layer_matches) == 0:
+                raise ValueError(
+                    f"Target layer '{target_layer}' not found in patch. "
+                    f"Available: {set(layer_names)}"
+                )
+            for idx, _ in layer_matches:
+                target_indices.append(idx)
+        
+        return unified_image[target_indices]
     
     def _getitem_xarray(self, index: int):
         """
