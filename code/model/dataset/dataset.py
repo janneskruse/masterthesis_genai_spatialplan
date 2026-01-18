@@ -90,6 +90,9 @@ class UrbanInpaintingDataset(Dataset):
         self.vae_groups = config.get('vae_groups', {})
         self.diffusion_stages = config.get('diffusion_stages', {})
         
+        # Store stage config (for diffusion mode)
+        self.stage_config = None
+        
         # Get config for current mode
         if self.mode_type == 'vae':
             # VAE mode: use the target group's config
@@ -112,6 +115,7 @@ class UrbanInpaintingDataset(Dataset):
                     f"Available stages: {list(self.diffusion_stages.keys())}"
                 )
             stage_config = self.diffusion_stages[self.mode_target]
+            self.stage_config = stage_config  # Store for later use
             pred_group = stage_config.get('prediction_group')
             
             if pred_group not in self.vae_groups:
