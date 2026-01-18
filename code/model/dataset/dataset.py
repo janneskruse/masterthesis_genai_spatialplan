@@ -1075,23 +1075,33 @@ class UrbanInpaintingDataset(Dataset):
             pixel_cond_names = []
             
             for cond_spec in conditioning_config.get('pixel_space', []):
-                if cond_spec['type'] == 'inpainting_mask':
-                    # Find mask in unified patch
-                    mask_matches = get_layer_channels_from_names(channel_names, 'inpainting_mask')
-                    if len(mask_matches) > 0:
-                        mask_idx = mask_matches[0][0]
-                        mask_full = unified_image[mask_idx:mask_idx+1, :, :]  # [1, H, W]
-                        
-                        # Downsample to latent resolution
-                        mask_latent = mask_full.unsqueeze(0)  # [1, 1, H, W]
-                        mask_latent = torch.nn.functional.interpolate(
-                            mask_latent,
-                            size=(latent_h, latent_w),
-                            mode='nearest'
-                        ).squeeze(0)  # [1, H_latent, W_latent]
-                        
-                        pixel_cond_list.append(mask_latent)
-                        pixel_cond_names.append('inpainting_mask')
+                layer_name = cond_spec.get('layer')
+                interpolation_mode = cond_spec.get('interpolation', 'nearest')  # Default to nearest
+                
+                if not layer_name:
+                    continue
+                
+                # Find layer channels in unified patch
+                layer_matches = get_layer_channels_from_names(channel_names, layer_name)
+                
+                if len(layer_matches) == 0:
+                    print(f"⚠ Warning: Pixel-space conditioning layer '{layer_name}' not found in patch")
+                    continue
+                
+                # Extract all channels for this layer
+                for idx, ch_name in layer_matches:
+                    layer_data = unified_image[idx:idx+1, :, :]  # [1, H, W]
+                    
+                    # Downsample to latent resolution
+                    layer_data_latent = layer_data.unsqueeze(0)  # [1, 1, H, W]
+                    layer_data_latent = torch.nn.functional.interpolate(
+                        layer_data_latent,
+                        size=(latent_h, latent_w),
+                        mode=interpolation_mode
+                    ).squeeze(0)  # [1, H_latent, W_latent]
+                    
+                    pixel_cond_list.append(layer_data_latent)
+                    pixel_cond_names.append(ch_name)
             
             if pixel_cond_list:
                 cond['image'] = torch.cat(pixel_cond_list, dim=0)

@@ -199,8 +199,8 @@ diffusion_stages:
     conditioning:
       # Pixel-space conditioning (not encoded through VAE)
       pixel_space:
-        - type: 'inpainting_mask'
-          channels: 1
+        - layer: 'inpainting_mask'
+          interpolation: 'nearest'
           
       # # Latent-space conditioning (encoded through respective VAEs)
       # latent_space:
@@ -242,8 +242,8 @@ diffusion_stages:
     # Conditioning inputs
     conditioning:
       pixel_space:
-        - type: 'inpainting_mask'
-          channels: 1
+        - layer: 'inpainting_mask'
+          interpolation: 'nearest'
           
       latent_space:
         - group: 'semantic'
