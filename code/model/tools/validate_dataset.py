@@ -22,6 +22,7 @@ import seaborn as sns
 
 # Local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
+from model.utils.colors import get_colormap_for_layer
 from helpers.load_configs import load_configs
 
 
@@ -111,7 +112,7 @@ def visualize_sample(sample_data, mode='default', save_path=None):
             if idx >= len(axes):
                 break
             channel_name = channel_names[i] if i < len(channel_names) else f'Channel {i}'
-            cmap = _get_colormap_for_channel(channel_name)
+            cmap = get_colormap_for_layer(channel_name)
             axes[idx].imshow(im_np[i], cmap=cmap)
             axes[idx].set_title(f'{channel_name}', fontsize=10)
             axes[idx].axis('off')
@@ -134,7 +135,7 @@ def visualize_sample(sample_data, mode='default', save_path=None):
             if idx >= len(axes):
                 break
             channel_name = cond_channel_names[i] if i < len(cond_channel_names) else f'Cond {i}'
-            cmap = _get_colormap_for_channel(channel_name)
+            cmap = get_colormap_for_layer(channel_name)
             axes[idx].imshow(cond_np[i], cmap=cmap)
             axes[idx].set_title(f'{channel_name}', fontsize=10)
             axes[idx].axis('off')
@@ -180,26 +181,6 @@ def visualize_sample(sample_data, mode='default', save_path=None):
         plt.show()
     
     plt.close()
-
-
-def _get_colormap_for_channel(channel_name: str):
-    """Get appropriate colormap based on channel name."""
-    name_lower = channel_name.lower()
-    
-    if 'mask' in name_lower:
-        colors = [(0, 0, 0), (1, 1, 1)]
-        return LinearSegmentedColormap.from_list('binary', colors, N=100)
-    elif 'temp' in name_lower or 'lst' in name_lower:
-        return sns.color_palette("rocket", as_cmap=True)
-    elif 'vegetation' in name_lower or 'ndvi' in name_lower:
-        rdylgn = cm.get_cmap('RdYlGn', 256)
-        newcolors = rdylgn(np.linspace(0.1, 1, 256))
-        newcolors[0] = [0, 0, 0, 1]
-        return ListedColormap(newcolors)
-    elif 'height' in name_lower:
-        return sns.color_palette("rocket", as_cmap=True)
-    else:
-        return 'gray'
 
 
 def validate_dataset(num_samples=5, config=None, mode='default', use_cached_patches=False, recompute_layer_stats=False):

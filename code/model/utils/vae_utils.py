@@ -14,6 +14,8 @@ from torchvision.utils import save_image, make_grid
 
 # Local imports
 from model.utils.layer_config import is_binary_layer, get_layer_dice_config
+from model.utils.colors import get_colormap_for_layer, apply_colormap_to_tensor
+
 
 def save_vae_reconstruction_samples(
     input_tensor: torch.Tensor,
@@ -104,6 +106,12 @@ def save_vae_reconstruction_samples(
         
         # Create comparison for this layer
         comparison_ch = torch.cat([input_vis, recon_vis], dim=0)
+        
+        # Apply colormap for continuous layers (makes patterns more visible)
+        if layer_type != 'binary':
+            cmap = get_colormap_for_layer(layer_name)
+            comparison_ch = apply_colormap_to_tensor(comparison_ch, cmap)
+        
         grid_ch = make_grid(comparison_ch, nrow=n_samples, normalize=False, padding=2, pad_value=1.0)
         vis_grids.append(grid_ch)
     
