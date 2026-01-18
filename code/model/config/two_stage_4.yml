@@ -262,6 +262,7 @@ diffusion_stages:
       cfg:
         drop_prob: 0.1
         drop_groups: ['semantic', 'environmental']
+        mask_groups: ['environmental']  # Apply inpainting mask to these conditioning groups
 
 # ===========================================================================
 # TRAINING PARAMETERS

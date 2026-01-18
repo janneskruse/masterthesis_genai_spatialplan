@@ -1145,6 +1145,25 @@ class UrbanInpaintingDataset(Dataset):
                     )
                     cond[f'{group_name}_image'] = cond_image  # Mark for encoding
             
+            # Apply inpainting mask to conditioning latents
+            # Get mask_groups from inpainting config
+            inpainting_cfg = self.stage_config.get('inpainting', {})
+            cfg_cfg = inpainting_cfg.get('cfg', {})
+            mask_groups = cfg_cfg.get('mask_groups', [])
+            
+            if mask_groups and 'image' in cond and 'pixel_space_names' in cond['meta']:
+                pixel_names = cond['meta']['pixel_space_names']
+                if 'inpainting_mask' in pixel_names:
+                    # Extract mask from pixel-space conditioning
+                    mask_idx = pixel_names.index('inpainting_mask')
+                    mask_latent = cond['image'][mask_idx:mask_idx+1, :, :]  # [1, H_latent, W_latent]
+                    
+                    # Import mask_conditioning_latents from diffusion_utils
+                    from model.utils.diffusion_utils import mask_conditioning_latents
+                    
+                    # Apply mask to specified conditioning groups
+                    cond = mask_conditioning_latents(cond, mask_latent, mask_groups)
+            
             # Return either latent or full-res image (caller will encode if needed)
             if pred_latent is not None:
                 return pred_latent, cond
