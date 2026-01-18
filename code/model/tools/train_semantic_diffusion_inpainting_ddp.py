@@ -25,6 +25,7 @@ from torchvision.utils import save_image, make_grid
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.diffusion_blocks.unet_cond_base import Unet
 from model.diffusion_blocks.vae import VAE
+from model.utils.vae_registry import VAERegistry
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
@@ -268,32 +269,25 @@ def train(mode: str = 'semantic'):
         model_unwrapped = model.module if hasattr(model, 'module') else model
         print(f"✓ Created U-Net with {sum(p.numel() for p in model_unwrapped.parameters())/1e6:.2f}M parameters")
     
-    # Load prediction VAE if not using latents
+    # Load prediction VAE if no existing latents
     vae = None
+    vae_registry = None
     if not use_existing_latents:
         if is_main:
             print(f"\nLoading {prediction_group.upper()} VAE...")
         
-        vae = VAE(
-            im_channels=num_prediction_channels,
-            model_config=vae_arch_config
-        ).to(device)
+        # Use VAERegistry for cleaner management
+        vae_registry = VAERegistry(vae_arch_config, device)
+        vae = vae_registry.load_vae(
+            group_name=prediction_group,
+            checkpoint_path=os.path.join(out_dir, prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')),
+            num_channels=num_prediction_channels,
+            is_main=is_main
+        )
+        
+        # Freeze VAE to prevent gradient updates during diffusion training
+        vae_registry.freeze(prediction_group)
         vae.eval()
-        
-        # Load VAE checkpoint
-        vae_ckpt_name = prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')
-        vae_path = os.path.join(out_dir, vae_ckpt_name)
-        if os.path.exists(vae_path):
-            vae.load_state_dict(torch.load(vae_path, map_location=device))
-            if is_main:
-                print(f"✓ Loaded {prediction_group.upper()} VAE from {vae_path}")
-        else:
-            if is_main:
-                print(f"⚠ {prediction_group.upper()} VAE checkpoint not found at {vae_path}")
-        
-        # Freeze VAE
-        for param in vae.parameters():
-            param.requires_grad = False
     
     ########## Training Setup #############
     num_epochs = train_config.get('epochs', 300)
