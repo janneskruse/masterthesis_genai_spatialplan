@@ -17,11 +17,10 @@ from torchvision.utils import make_grid, save_image
 
 # Local libraries
 from model.diffusion_blocks.unet_cond_base import Unet
-from model.diffusion_blocks.vae import VAE
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import compute_patch_and_latent_sizes
-from model.utils.layer_config import get_layer_info, count_layer_channels
+from model.utils.layer_config import count_layer_channels
 from model.utils.vae_registry import VAERegistry
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
@@ -192,7 +191,7 @@ def sample_semantics(
     dataset_config,
     stage_config,
     big_data_storage_path, 
-    vae_registry,
+    vae_registry: VAERegistry,
     vae_groups,
     pred_group,
     mode='semantic',
@@ -329,10 +328,7 @@ def sample_semantics(
             group_vae = vae_registry.get_vae(group_name)
             if group_vae is None:
                 # Load VAE for this group
-                group_config = vae_groups[group_name]
-                group_layers = group_config.get('layers', [])
-                num_channels = sum(count_layer_channels(layer) for layer in group_layers)
-                
+
                 group_vae_config = vae_groups[group_name].get('vae', {})
                 ckpt_name = group_vae_config.get('checkpoint_name', f'{group_name}_vae_ckpt.pth')
                 ckpt_path = os.path.join(out_dir, ckpt_name)
@@ -340,8 +336,7 @@ def sample_semantics(
                 group_vae = vae_registry.load_vae(
                     group_name=group_name,
                     checkpoint_path=ckpt_path,
-                    num_channels=num_channels,
-                    is_main=True
+                    autoencoder_config=group_vae_config,
                 )
             
             # Encode the full-res image to latent
@@ -651,14 +646,6 @@ def infer(args, config):
     vae_config = vae_groups[pred_group]
     unet_config = stage_config.get('unet_config', {})
     
-    # Get layers and compute channel count
-    semantic_layers = vae_config.get('layers', [])
-    num_semantic_channels = sum(
-        count_layer_channels(config['layers'][layer])
-        for layer in semantic_layers
-        if layer in config['layers']
-    )
-    
     ########## Create Scheduler #############
     scheduler = LinearNoiseScheduler(
         num_timesteps=diffusion_config['num_timesteps'],
@@ -682,8 +669,7 @@ def infer(args, config):
     vae = vae_registry.load_vae(
         group_name=pred_group,
         checkpoint_path=vae_path,
-        num_channels=num_semantic_channels,
-        is_main=True
+        autoencoder_config=vae_config,
     )
     
     if vae is None:
