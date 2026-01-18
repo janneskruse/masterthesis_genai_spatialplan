@@ -22,6 +22,7 @@ from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import compute_patch_and_latent_sizes
 from model.utils.layer_config import get_layer_info, count_layer_channels
+from model.utils.vae_registry import VAERegistry
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 from model.lst_predictor.predictor import LSTPredictor
@@ -75,7 +76,7 @@ def apply_lst_guidance(
     scheduler, 
     cond_input, 
     lst_predictor, 
-    vae, 
+    pred_vae, 
     lst_target,
     semantic_channels,
     include_ndvi,
@@ -128,7 +129,7 @@ def apply_lst_guidance(
     
     # Decode to semantic space
     with torch.no_grad():
-        semantic_pred = vae.decode(x0_pred)
+        semantic_pred = pred_vae.decode(x0_pred)
     
     # Build input for LST predictor
     semantic_tensor = []
@@ -191,8 +192,9 @@ def sample_semantics(
     dataset_config,
     stage_config,
     big_data_storage_path, 
-    vae,
+    vae_registry,
     vae_groups,
+    pred_group,
     mode='semantic',
     lst_predictor=None,
     num_samples=4, 
@@ -214,8 +216,9 @@ def sample_semantics(
         dataset_config: Dataset config
         stage_config: Diffusion stage configuration
         big_data_storage_path: Data storage path
-        vae: Trained semantic VAE
+        vae_registry: VAERegistry instance with loaded VAEs
         vae_groups: VAE groups config
+        pred_group: Prediction group name
         mode: Diffusion mode (e.g., 'semantic')
         lst_predictor: Optional LST predictor for guidance
         num_samples: Number of samples to generate
@@ -229,8 +232,7 @@ def sample_semantics(
     """
     model.eval()
     
-    # Get prediction group from stage config
-    pred_group = stage_config.get('prediction_group')
+    # Validate prediction group
     if pred_group not in vae_groups:
         raise ValueError(f"Prediction group '{pred_group}' not found in VAE groups")
     
@@ -288,6 +290,75 @@ def sample_semantics(
     
     # Dataset in diffusion mode returns (pred_latent, cond_dict)
     pred_latent, cond_input = dataset[sample_idx]
+    
+    # Get prediction VAE from registry
+    pred_vae = vae_registry.get_vae(pred_group)
+    if pred_vae is None:
+        raise ValueError(f"Prediction VAE for group '{pred_group}' not loaded in registry")
+    
+    # Check if pred_latent is actually a latent or full-res image that needs encoding
+    needs_encoding = False
+    if pred_latent.shape[-2:] != (latent_size, latent_size):
+        # Full resolution image - needs encoding
+        needs_encoding = True
+        pred_image = pred_latent  # Rename for clarity
+        
+        print(f"\n⚠ No pre-computed prediction latent found, encoding on-the-fly")
+        print(f"  Prediction image shape: {pred_image.shape}")
+        
+        # Encode to latent space
+        with torch.no_grad():
+            pred_image_batch = pred_image.unsqueeze(0).to(device)
+            pred_latent, _, _ = pred_vae.encode(pred_image_batch)
+            pred_latent = pred_latent.squeeze(0).cpu()  # Back to [C, H, W]
+        
+        print(f"  Encoded to latent: {pred_latent.shape}")
+    
+    # Check for latent-space conditioning groups that need encoding
+    # Dataset marks these with "{group_name}_image" suffix
+    groups_to_encode = []
+    for key in list(cond_input.keys()):
+        if key.endswith('_image') and key != 'image':  # Exclude pixel-space 'image'
+            group_name = key[:-6]  # Remove '_image' suffix
+            groups_to_encode.append((group_name, key))
+    
+    if groups_to_encode:
+        print(f"\n⚠ Found {len(groups_to_encode)} latent-space conditioning groups needing encoding")
+        
+        for group_name, image_key in groups_to_encode:
+            print(f"  Encoding {group_name}...")
+            
+            # Get VAE from registry (load if not already loaded)
+            group_vae = vae_registry.get_vae(group_name)
+            if group_vae is None:
+                # Load VAE for this group
+                group_config = vae_groups[group_name]
+                group_layers = group_config.get('layers', [])
+                num_channels = sum(count_layer_channels(layer) for layer in group_layers)
+                
+                group_vae_config = vae_groups[group_name].get('vae', {})
+                ckpt_name = group_vae_config.get('checkpoint_name', f'{group_name}_vae_ckpt.pth')
+                ckpt_path = os.path.join(out_dir, ckpt_name)
+                
+                group_vae = vae_registry.load_vae(
+                    group_name=group_name,
+                    checkpoint_path=ckpt_path,
+                    num_channels=num_channels,
+                    is_main=True
+                )
+            
+            # Encode the full-res image to latent
+            with torch.no_grad():
+                group_image = cond_input[image_key]
+                group_image_batch = group_image.unsqueeze(0).to(device)
+                group_latent, _, _ = group_vae.encode(group_image_batch)
+                group_latent = group_latent.squeeze(0).cpu()  # Back to [C, H, W]
+            
+            # Replace image with latent in conditioning dict
+            cond_input[group_name] = group_latent
+            del cond_input[image_key]  # Remove the _image key
+            
+            print(f"    Shape: {group_image.shape} → {group_latent.shape}")
     
     # Prepare conditioning inputs for batch
     for key in cond_input:
@@ -413,14 +484,15 @@ def sample_semantics(
                     noise_pred = model(x, t, cond_input=cond_input)
             
             # Apply LST guidance
-            if use_lst_guidance and lst_predictor is not None and lst_target is not None:
-                noise_pred = apply_lst_guidance(
-                    x, i, model, scheduler, cond_input,
-                    lst_predictor, vae, lst_target,
-                    semantic_channels, include_ndvi,
-                    guidance_scale=lst_guidance_scale,
-                    mask=mask_latent
-                )
+            # if use_lst_guidance and lst_predictor is not None and lst_target is not None:
+            #     pred_vae = vae_registry.get_vae(pred_group)
+            #     noise_pred = apply_lst_guidance(
+            #         x, i, model, scheduler, cond_input,
+            #         lst_predictor, pred_vae, lst_target,
+            #         semantic_channels, include_ndvi,
+            #         guidance_scale=lst_guidance_scale,
+            #         mask=mask_latent
+            #     )
             
             # Denoise
             if inpainting_mode == "hard" and mask_latent is not None:
@@ -435,9 +507,10 @@ def sample_semantics(
     # Stack samples
     all_samples = torch.cat(all_samples, dim=0)
     
-    # Decode to semantic space
+    # Decode to semantic space using prediction VAE
+    pred_vae = vae_registry.get_vae(pred_group)
     with torch.no_grad():
-        semantic_samples = vae.decode(all_samples)
+        semantic_samples = pred_vae.decode(all_samples)
     
     # Clamp semantic values
     semantic_samples = torch.clamp(semantic_samples, 0, 1)
@@ -601,22 +674,23 @@ def infer(args, config):
     print("Loading Models")
     print("="*50)
     
-    # Load VAE for prediction group
-    vae = VAE(
-        im_channels=num_semantic_channels,
-        model_config=vae_config
-    ).to(device)
-    vae.eval()
+    # Initialize VAE Registry
+    vae_registry = VAERegistry(vae_config, device)
     
+    # Load VAE for prediction group
     data_dir = f"{big_data_storage_path}/results/{train_config['task_name']}"
     vae_checkpoint = vae_config.get('checkpoint_name', f'{pred_group}_vae_ckpt.pth')
     vae_path = os.path.join(data_dir, vae_checkpoint)
     
-    if os.path.exists(vae_path):
-        vae.load_state_dict(torch.load(vae_path, map_location=device))
-        print(f"✓ Loaded {pred_group} VAE from {vae_path}")
-    else:
-        print(f"✗ {pred_group} VAE not found at {vae_path}")
+    vae = vae_registry.load_vae(
+        group_name=pred_group,
+        checkpoint_path=vae_path,
+        num_channels=num_semantic_channels,
+        is_main=True
+    )
+    
+    if vae is None:
+        print(f"✗ Failed to load {pred_group} VAE from {vae_path}")
         return
     
     # Load Diffusion Model
@@ -663,8 +737,9 @@ def infer(args, config):
         dataset_config=dataset_config,
         stage_config=stage_config,
         big_data_storage_path=big_data_storage_path,
-        vae=vae,
+        vae_registry=vae_registry,
         vae_groups=vae_groups,
+        pred_group=pred_group,
         mode=mode,
         lst_predictor=lst_predictor,
         num_samples=args.num_samples,
