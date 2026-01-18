@@ -5,6 +5,9 @@ import pickle
 from pathlib import Path
 from typing import List, Optional
 
+# Data Handling
+import numpy as np
+
 # Data Science/ML libraries
 import torch
 
@@ -27,6 +30,44 @@ def mask_conditioning_latents(cond_dict: dict, mask_latent: torch.Tensor, mask_g
             # Zero out masked regions: multiply by (1 - mask)
             # mask_latent: 1=inpaint, 0=keep → (1-mask): 0=inpaint, 1=keep
             cond_dict[group_name] = cond_dict[group_name] * (1 - mask_latent)
+    
+    return cond_dict
+
+
+def apply_classifier_free_guidance_dropout(
+    cond_dict: dict,
+    drop_prob: float,
+    drop_groups: list,
+    drop_pixel_space: bool = True
+) -> dict:
+    """
+    Apply classifier-free guidance dropout to conditioning.
+    Randomly zeros out specified conditioning groups for CFG training.
+    
+    Args:
+        cond_dict: Conditioning dictionary with 'image' (pixel-space) and latent groups
+        drop_prob: Probability of dropping conditioning (e.g., 0.1 = 10% chance)
+        drop_groups: List of latent-space group names to drop (e.g., ['semantic', 'environmental'])
+        drop_pixel_space: Whether to also drop pixel-space conditioning (default True)
+        
+    Returns:
+        Modified conditioning dict with randomly dropped groups
+        
+    Note:
+        Dropout is applied with a single random roll - either ALL specified groups
+        are dropped together, or none are dropped. This maintains correlation
+        between conditioning modalities.
+    """
+    # Single random roll for all conditioning
+    if np.random.rand() < drop_prob:
+        # Drop pixel-space conditioning
+        if drop_pixel_space and 'image' in cond_dict:
+            cond_dict['image'] = torch.zeros_like(cond_dict['image'])
+        
+        # Drop specified latent-space conditioning groups
+        for group_name in drop_groups:
+            if group_name in cond_dict:
+                cond_dict[group_name] = torch.zeros_like(cond_dict[group_name])
     
     return cond_dict
 

@@ -28,6 +28,7 @@ from model.diffusion_blocks.vae import VAE
 from model.utils.vae_registry import VAERegistry
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.utils.data_utils import collate_fn
+from model.utils.diffusion_utils import apply_classifier_free_guidance_dropout
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
@@ -321,6 +322,7 @@ def train(mode: str = 'semantic'):
     # Classifier-free guidance dropout
     cfg_config = inpainting_config.get('cfg', {})
     cond_drop_prob = cfg_config.get('drop_prob', 0.1)
+    drop_groups = cfg_config.get('drop_groups', [])  # Which latent groups to drop
     
     # Image save frequency
     img_save_steps = train_config_global.get('img_save_steps', 1000)
@@ -366,6 +368,15 @@ def train(mode: str = 'semantic'):
             
             prediction_data = prediction_data.float().to(device)
             
+            # Move ALL conditioning tensors to device (pixel-space and latent-space groups)
+            if 'image' in cond_input:
+                cond_input['image'] = cond_input['image'].float().to(device)
+            
+            # Move latent-space conditioning groups to device
+            latent_group_keys = [k for k in cond_input.keys() if k not in ['image', 'meta']]
+            for group_key in latent_group_keys:
+                cond_input[group_key] = cond_input[group_key].float().to(device)
+            
             # Encode prediction to latent space
             if use_existing_latents:
                 # Precomputed latents
@@ -384,7 +395,7 @@ def train(mode: str = 'semantic'):
                 if pixel_space_names:
                     try:
                         mask_idx = pixel_space_names.index('inpainting_mask')
-                        mask_latent = cond_input['image'][:, mask_idx:mask_idx+1, :, :].to(device)
+                        mask_latent = cond_input['image'][:, mask_idx:mask_idx+1, :, :]
                     except (ValueError, IndexError):
                         pass
             
@@ -408,10 +419,14 @@ def train(mode: str = 'semantic'):
                 # SD-like: add noise everywhere
                 noisy_im = scheduler.add_noise(im_latent, noise, t)
             
-            # Apply conditioning dropout for CFG (drop entire conditioning tensor)
-            if cond_drop_prob > 0 and 'image' in cond_input:
-                if np.random.rand() < cond_drop_prob:
-                    cond_input['image'] = torch.zeros_like(cond_input['image'])
+            # Apply classifier-free guidance dropout to ALL conditioning
+            if cond_drop_prob > 0:
+                cond_input = apply_classifier_free_guidance_dropout(
+                    cond_input,
+                    drop_prob=cond_drop_prob,
+                    drop_groups=drop_groups,
+                    drop_pixel_space=True
+                )
             
             # First batch validation
             if is_main and global_step == 0:
@@ -421,16 +436,35 @@ def train(mode: str = 'semantic'):
                 print(f"Prediction latent shape: {im_latent.shape}")
                 print(f"Mask latent shape: {mask_latent.shape}")
                 print(f"Mask stats: min={mask_latent.min().item():.4f}, max={mask_latent.max().item():.4f}, mean={mask_latent.mean().item():.4f}")
+                
+                # Pixel-space conditioning
                 if 'image' in cond_input:
-                    print(f"Pixel-space conditioning shape: {cond_input['image'].shape}")
+                    print(f"\nPixel-space conditioning:")
+                    print(f"  Shape: {cond_input['image'].shape}")
+                    print(f"  Device: {cond_input['image'].device}")
+                    print(f"  Dtype: {cond_input['image'].dtype}")
                     # Access pixel_space_names from metadata
                     pixel_space_names = cond_input['meta'][0].get('pixel_space_names', [])
                     if pixel_space_names:
-                        print(f"Pixel-space conditioning channels: {pixel_space_names}")
-                # Check for latent-space conditioning
+                        print(f"  Channels: {pixel_space_names}")
+                
+                # Latent-space conditioning groups
                 latent_cond_groups = [k for k in cond_input.keys() if k not in ['image', 'meta']]
                 if latent_cond_groups:
-                    print(f"Latent-space conditioning groups: {latent_cond_groups}")
+                    print(f"\nLatent-space conditioning groups: {latent_cond_groups}")
+                    for group_name in latent_cond_groups:
+                        group_tensor = cond_input[group_name]
+                        print(f"  {group_name}:")
+                        print(f"    Shape: {group_tensor.shape}")
+                        print(f"    Device: {group_tensor.device}")
+                        print(f"    Dtype: {group_tensor.dtype}")
+                        print(f"    Stats: min={group_tensor.min().item():.4f}, max={group_tensor.max().item():.4f}, mean={group_tensor.mean().item():.4f}")
+                
+                # CFG dropout config
+                print(f"\nCFG Dropout:")
+                print(f"  Drop probability: {cond_drop_prob}")
+                print(f"  Drop groups: {drop_groups}")
+                
                 print(f"{'='*50}\n")
             
             # Predict noise
