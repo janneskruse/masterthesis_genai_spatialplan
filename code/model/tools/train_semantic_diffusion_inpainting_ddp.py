@@ -9,6 +9,7 @@ import yaml
 import random
 import numpy as np
 from tqdm import tqdm
+import argparse
 
 # data science libraries
 import torch
@@ -25,46 +26,14 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.diffusion_blocks.unet_cond_base import Unet
 from model.diffusion_blocks.vae import VAE
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
-from model.utils.config_utils import get_prediction_channels
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
-from helpers.load_configs import load_configs
+from model.utils.layer_config import count_layer_channels, get_layer_info
+from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
 load_cuda()
-
-
-def apply_cond_dropout(cond_input, spatial_names, drop_prob, drop_groups=("osm", "env")):
-    """
-    Apply conditioning dropout for classifier-free guidance.
-    
-    Args:
-        cond_input: Conditioning dictionary with 'image' key
-        spatial_names: List of channel names
-        drop_prob: Probability of dropping conditioning
-        drop_groups: Tuple of prefix groups to drop (e.g., ('osm', 'env'))
-        
-    Returns:
-        Modified cond_input with dropped channels
-    """
-    if 'image' not in cond_input:
-        return cond_input
-    if np.random.rand() >= drop_prob:
-        return cond_input
-
-    x = cond_input['image']
-    keep = torch.ones((x.shape[1],), device=x.device, dtype=x.dtype)
-
-    for i, name in enumerate(spatial_names):
-        # Drop channels that start with specified group prefixes
-        # Keep: 'inpaint_mask', 'masked_image', 'LST_target'
-        # Drop: 'osm:*_context', 'env:*_context' based on drop_groups
-        if any(name.endswith("_context") and name.startswith(g + ":") for g in drop_groups):
-            keep[i] = 0.0
-
-    cond_input['image'] = x * keep.view(1, -1, 1, 1)
-    return cond_input
 
 
 def compute_noise_loss(noise_pred, noise, mask_latent, loss_type, mask_loss_weight=8.0, outside_weight=0.0):
@@ -91,7 +60,14 @@ def compute_noise_loss(noise_pred, noise, mask_latent, loss_type, mask_loss_weig
     return (per_pix * w).mean()
 
 
-def train():
+def train(mode: str = 'semantic'):
+    """
+    Generic diffusion training function supporting any diffusion stage defined in config.
+    
+    Args:
+        mode: Diffusion stage name (e.g., 'semantic', 'satellite')
+              Must match a key in config['diffusion_stages']
+    """
     # Record training start time
     training_start_time = time.time()
     
@@ -102,69 +78,112 @@ def train():
     
     ###### setup config variables #######
     config = load_configs()
-    data_config = config['data_config']
+    data_config = config['dataset_params']
 
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
     if is_main:
-        print("="*50)
-        print("Semantic Diffusion Inpainting DDP Training Configuration")
-        print("="*50)
+        print(f"\n{'='*60}")
+        print(f"Diffusion Training: {mode.upper()}")
+        print(f"{'='*60}")
+        print(f"✓ World size: {world_size}")
+        print(f"✓ Rank: {rank}")
+        print(f"✓ Local rank: {local_rank}")
+        print(f"✓ Diffusion Stage: {mode}")
+        print(f"\n{'='*50}")
+        print("Configuration")
+        print(f"{'='*50}")
         print(yaml.dump(config, default_flow_style=False))
     
     diffusion_config = config['diffusion_params']
-    dataset_config = config['dataset_params']
-    train_config = config['train_params']
+    train_config_global = config['train_params']
     
-    # Get semantic-specific configs
-    ldm_config = config.get('ldm_params', {})
-    semantic_ldm_config = ldm_config.get('semantic', ldm_config)
-    autoencoder_config = config['autoencoder_params']
-    semantic_autoencoder_config = autoencoder_config.get('semantic', autoencoder_config)
+    # Validate diffusion stage exists
+    diffusion_stages = config.get('diffusion_stages', {})
+    if mode not in diffusion_stages:
+        raise ValueError(
+            f"Diffusion stage '{mode}' not found in config. "
+            f"Available stages: {list(diffusion_stages.keys())}"
+        )
     
-    # Get semantic training config
-    semantic_train_config = train_config.get('semantic', {})
+    # Get diffusion stage configuration
+    stage_config = diffusion_stages[mode]
+    prediction_group = stage_config.get('prediction_group')
+    unet_config = stage_config.get('unet_config', {})
+    conditioning_config = stage_config.get('conditioning', {})
+    inpainting_config = stage_config.get('inpainting', {})
     
-    # Extract semantic channels from condition config
-    condition_config = semantic_ldm_config.get('condition_config', {})
-    semantic_channels = get_prediction_channels(condition_config)
+    if not prediction_group:
+        raise ValueError(f"Diffusion stage '{mode}' has no prediction_group defined")
     
-    if not semantic_channels:
-        # Fallback to default
-        semantic_channels = [
-            'osm:buildings',
-            'osm:streets',
-            'env:vegetation',
-            'osm:buildings_heights'
-        ]
+    # Get prediction VAE group configuration
+    vae_groups = config.get('vae_groups', {})
+    if prediction_group not in vae_groups:
+        raise ValueError(
+            f"Prediction group '{prediction_group}' not found in vae_groups. "
+            f"Available groups: {list(vae_groups.keys())}"
+        )
     
-    num_semantic_channels = len(semantic_channels)
+    prediction_vae_config = vae_groups[prediction_group]
+    layers_registry = config.get('layers', {})
     
-    # Path to semantic VAE latents
-    latent_dir_name = semantic_train_config.get('latents_dir_name', 'semantic_vae_ddp_latents')
-    latent_path = f'{big_data_storage_path}/results/{train_config["task_name"]}/{latent_dir_name}'
-    use_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
+    # Parse prediction layers and compute channels
+    prediction_layers = prediction_vae_config.get('layers', [])
+    if not prediction_layers:
+        raise ValueError(f"Prediction group '{prediction_group}' has no layers defined")
     
-    # Check if conditioning should use latents
-    condition_latents = condition_config.get('condition_latents', False)
+    num_prediction_channels = 0
+    layer_names = []
+    for layer_name in prediction_layers:
+        layer_config = get_layer_info(layers_registry, layer_name)
+        num_channels = count_layer_channels(layer_config)
+        num_prediction_channels += num_channels
+        layer_names.append(layer_name)
     
-    if use_latents and condition_latents:
-        if is_main:
-            print(f"\n⚠ WARNING: condition_latents=True detected")
-            print(f"  Current implementation: Conditioning uses INTERPOLATED pixel values (not latent encodings)")
-            print(f"  For proper latent conditioning, latents must encode ALL channels (prediction + conditioning)")
-            print(f"  This is a known limitation - conditioning quality may be suboptimal")
-            print(f"  Recommendation: Ensure VAE was trained with condition_latents=True")
+    # Get VAE architecture config
+    vae_arch_config = {
+        'z_channels': prediction_vae_config.get('z_channels', 4),
+        'down_channels': prediction_vae_config.get('down_channels', [32, 64, 128, 128]),
+        'mid_channels': prediction_vae_config.get('mid_channels', [128, 128]),
+        'down_sample': prediction_vae_config.get('down_sample', [True, True, True]),
+        'attn_down': prediction_vae_config.get('attn_down', [False, False, False]),
+        'norm_channels': prediction_vae_config.get('norm_channels', 32),
+        'num_heads': prediction_vae_config.get('num_heads', 2),
+        'num_down_layers': prediction_vae_config.get('num_down_layers', 2),
+        'num_mid_layers': prediction_vae_config.get('num_mid_layers', 2),
+        'num_up_layers': prediction_vae_config.get('num_up_layers', 2),
+    }
     
-    cache_dir = f"{big_data_storage_path}/processed/{train_config.get('task_name', 'urban_inpainting')}/patches"
+    if is_main:
+        print(f"\n{'='*60}")
+        print(f"Diffusion Stage: {mode}")
+        print(f"{'='*60}")
+        print(f"✓ Prediction group: {prediction_group}")
+        print(f"✓ Prediction layers: {layer_names}")
+        print(f"✓ Total prediction channels: {num_prediction_channels}")
+        print(f"✓ Latent channels: {vae_arch_config['z_channels']}")
+        print(f"{'='*60}\n")
+    
+    # Get training configuration
+    diffusion_training_config = train_config_global.get('diffusion_training', {})
+    train_config = diffusion_training_config.get(mode, {})
+    
+    # Path to prediction VAE latents
+    latent_dir_name = prediction_vae_config.get('latents_dir', f'{prediction_group}_latents')
+    task_name = train_config_global.get('task_name', 'urban_inpainting')
+    latent_path = f'{big_data_storage_path}/results/{task_name}/{latent_dir_name}'
+    use_existing_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
+    
+    cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     # Create output directory
-    out_dir = f"{big_data_storage_path}/results/{train_config.get('task_name', 'urban_inpainting')}"
+    out_dir = f"{big_data_storage_path}/results/{task_name}"
+    samples_dir_name = f'{mode}_diffusion_samples'
     
     if is_main:
         os.makedirs(out_dir, exist_ok=True)
-        os.makedirs(os.path.join(out_dir, 'semantic_samples'), exist_ok=True)
+        os.makedirs(os.path.join(out_dir, samples_dir_name), exist_ok=True)
     
     # Synchronize after directory creation
     if world_size > 1:
@@ -180,38 +199,23 @@ def train():
         print(f"\n✓ Created noise scheduler with {diffusion_config['num_timesteps']} timesteps")
     
     ########## Load Dataset #############
-    if condition_config is None or not condition_config:
-        raise ValueError("Condition config required for semantic inpainting")
-    
     if is_main:
         print("\n" + "="*50)
-        print("Loading Urban Dataset for Semantic Training")
+        print(f"Loading Urban Dataset for {mode.upper()} Diffusion Training")
         print("="*50)
     
     urban_dataset = UrbanInpaintingDataset(
         split='train',
-        mode='semantic',
-        use_latents=use_latents,
-        latent_path=latent_path if use_latents else None,
+        mode=f'diffusion:{mode}',
         use_cached_patches=use_cached_patches,
         cache_dir=cache_dir
     )
     
     if is_main:
         print(f"✓ Loaded {len(urban_dataset)} training patches")
-        print(f"✓ Using latents: {use_latents}")
-        
-        # Check if two-VAE setup is active
-        if use_latents and hasattr(urban_dataset, 'latent_cond_maps') and urban_dataset.latent_cond_maps is not None:
-            print(f"✓ Two-VAE mode: ACTIVE (using separate prediction + conditioning latents)")
-            print(f"  → Prediction latents: {len(urban_dataset.latent_maps)}")
-            print(f"  → Conditioning latents: {len(urban_dataset.latent_cond_maps)}")
-        elif use_latents:
-            print(f"✓ Two-VAE mode: INACTIVE (using interpolated pixel conditioning)")
-        
+        print(f"✓ Using existing latents: {use_existing_latents}")
         print(f"✓ Patch size: {urban_dataset.patch_size}x{urban_dataset.patch_size}")
-        print(f"✓ Semantic channels: {semantic_channels}")
-        print(f"✓ Conditioning types: {condition_config['condition_types']}")
+        print(f"✓ Prediction layers: {layer_names}")
     
     # Use DistributedSampler for multi-GPU
     sampler = DistributedSampler(
@@ -222,9 +226,11 @@ def train():
         drop_last=True
     ) if world_size > 1 else None
     
+    batch_size = train_config.get('batch_size', 4)
+    
     data_loader = DataLoader(
         urban_dataset,
-        batch_size=semantic_train_config.get('ldm_batch_size', 4),
+        batch_size=batch_size,
         shuffle=(sampler is None),
         num_workers=0,
         pin_memory=True,
@@ -238,11 +244,11 @@ def train():
         print("Initializing Models")
         print("="*50)
     
-    # Instantiate the U-Net model for semantic diffusion
+    # Instantiate the U-Net model for diffusion
     model = Unet(
-        im_channels=semantic_autoencoder_config['z_channels'],
-        model_config=semantic_ldm_config,
-        mode='semantic'
+        im_channels=vae_arch_config['z_channels'],
+        model_config=unet_config,
+        mode=mode
     ).to(device)
     
     # Wrap with DDP
@@ -262,66 +268,67 @@ def train():
         model_unwrapped = model.module if hasattr(model, 'module') else model
         print(f"✓ Created U-Net with {sum(p.numel() for p in model_unwrapped.parameters())/1e6:.2f}M parameters")
     
-    # Load Semantic VAE if not using latents
+    # Load prediction VAE if not using latents
     vae = None
-    if not use_latents:
+    if not use_existing_latents:
         if is_main:
-            print("\nLoading Semantic VAE...")
+            print(f"\nLoading {prediction_group.upper()} VAE...")
         
         vae = VAE(
-            im_channels=num_semantic_channels,
-            model_config=semantic_autoencoder_config
+            im_channels=num_prediction_channels,
+            model_config=vae_arch_config
         ).to(device)
         vae.eval()
         
         # Load VAE checkpoint
-        vae_ckpt_name = semantic_train_config.get('autoencoder_ckpt_name', 'semantic_vae_ddp_ckpt.pth')
+        vae_ckpt_name = prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')
         vae_path = os.path.join(out_dir, vae_ckpt_name)
         if os.path.exists(vae_path):
             vae.load_state_dict(torch.load(vae_path, map_location=device))
             if is_main:
-                print(f"✓ Loaded Semantic VAE from {vae_path}")
+                print(f"✓ Loaded {prediction_group.upper()} VAE from {vae_path}")
         else:
             if is_main:
-                print(f"⚠ Semantic VAE checkpoint not found at {vae_path}")
+                print(f"⚠ {prediction_group.upper()} VAE checkpoint not found at {vae_path}")
         
         # Freeze VAE
         for param in vae.parameters():
             param.requires_grad = False
     
     ########## Training Setup #############
-    num_epochs = semantic_train_config.get('ldm_epochs', 300)
+    num_epochs = train_config.get('epochs', 300)
     
     # Scale learning rate with world size
-    base_lr = semantic_train_config.get('ldm_lr', 0.00001)
+    base_lr = train_config.get('lr', 0.00001)
     adjusted_lr = base_lr * world_size
     if is_main and world_size > 1:
         print(f"\n✓ Scaled learning rate: {base_lr} -> {adjusted_lr} (x{world_size})")
     
     optimizer = Adam(model.parameters(), lr=adjusted_lr)
     
-    # Conditioning dropout probability for CFG
-    inpainting_cfg = semantic_train_config.get('inpainting', {})
-    cond_cfg = inpainting_cfg.get('cfg', {})
-    cond_drop_prob = cond_cfg.get('drop_prob', 0.1)
-    drop_groups = tuple(cond_cfg.get('drop_groups', ["osm", "env"]))
-    
-    mode = inpainting_cfg.get('mode', 'hard')         # "hard" | "sdlike"
-    loss_type = inpainting_cfg.get('loss', 'masked')  # "masked" | "weighted"
-    mask_loss_weight = inpainting_cfg.get('mask_loss_weight', 8.0)
+    # Inpainting configuration
+    inpainting_mode = inpainting_config.get('mode', 'hard')         # "hard" | "sdlike"
+    loss_type = inpainting_config.get('loss', 'masked')  # "masked" | "weighted"
+    mask_loss_weight = inpainting_config.get('mask_loss_weight', 8.0)
     outside_weight = 1.0
-    if mode == "hard" and loss_type == "weighted":
-        outside_weight = inpainting_cfg.get('outside_weight', 0.0)
-    elif mode == "sdlike" and loss_type == "weighted":
-        outside_weight = inpainting_cfg.get('outside_weight', 1.0)
+    if inpainting_mode == "hard" and loss_type == "weighted":
+        outside_weight = inpainting_config.get('outside_weight', 0.0)
+    elif inpainting_mode == "sdlike" and loss_type == "weighted":
+        outside_weight = inpainting_config.get('outside_weight', 1.0)
+    
+    # Classifier-free guidance dropout
+    cfg_config = inpainting_config.get('cfg', {})
+    cond_drop_prob = cfg_config.get('drop_prob', 0.1)
+    
+    # Image save frequency
+    img_save_steps = train_config_global.get('img_save_steps', 1000)
     
     if is_main:
         print(f"\n✓ Training for {num_epochs} epochs")
         print(f"✓ Learning rate: {adjusted_lr}")
-        batch_size = semantic_train_config.get('ldm_batch_size', 4)
         print(f"✓ Batch size per GPU: {batch_size}")
         print(f"✓ Effective batch size: {batch_size * world_size}")
-        print(f"✓ Inpainting mode: {mode}")
+        print(f"✓ Inpainting mode: {inpainting_mode}")
         print(f"✓ Loss type: {loss_type}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
         print(f"✓ Conditioning dropout: {cond_drop_prob}")
@@ -350,53 +357,33 @@ def train():
             
             # Unpack data
             if len(data) == 2:
-                im, cond_input = data
+                prediction_data, cond_input = data
             else:
-                im = data
+                prediction_data = data
                 cond_input = {}
             
-            # Build semantic tensor from conditioning
-            if 'image' in cond_input and 'meta' in cond_input:
-                semantic_tensor = []
-                meta = cond_input['meta']
-                # meta is a list of dicts (one per batch item), get spatial_names from first item
-                spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
-                
-                # Extract semantic channels (non-context versions for target)
-                for sem_ch in semantic_channels:
-                    found = False
-                    for idx, name in enumerate(spatial_names):
-                        if sem_ch == name:
-                            semantic_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
-                            found = True
-                            break
-                    
-                    if not found:
-                        B, _, H, W = cond_input['image'].shape
-                        semantic_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
-                
-                semantic_input = torch.cat(semantic_tensor, dim=1)
+            prediction_data = prediction_data.float().to(device)
+            
+            # Encode prediction to latent space
+            if use_existing_latents:
+                # Precomputed latents
+                im_latent = prediction_data
             else:
-                semantic_input = im
+                # Encode on-the-fly
+                with torch.no_grad():
+                    im_latent, _, _ = vae.encode(prediction_data)
             
-            semantic_input = semantic_input.float().to(device)
-            
-            # Get inpainting mask from image channels
+            # Extract inpainting mask from conditioning (pixel space)
             mask_full = None
             if 'image' in cond_input and 'meta' in cond_input:
+                meta = cond_input['meta']
+                spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
+                
                 try:
-                    mask_idx = spatial_names.index('inpaint_mask')
+                    mask_idx = spatial_names.index('inpainting_mask')
                     mask_full = cond_input['image'][:, mask_idx:mask_idx+1, :, :].to(device)
                 except (ValueError, IndexError):
-                    mask_full = None
-            
-            # Encode semantics to latent space
-            if use_latents:
-                # precomputed latents
-                im_latent = im.float().to(device)
-            else:
-                with torch.no_grad():
-                    im_latent, _, _ = vae.encode(semantic_input)
+                    pass
             
             # Downsample mask to latent resolution
             if mask_full is not None:
@@ -415,8 +402,8 @@ def train():
             # Sample noise
             noise = torch.randn_like(im_latent)
             
-            # Apply noise according to mode
-            if mode == "hard":
+            # Apply noise according to inpainting mode
+            if inpainting_mode == "hard":
                 # Hard inpainting: only add noise inside mask
                 noisy_im = im_latent.clone()
                 noisy_region = scheduler.add_noise(im_latent, noise, t)
@@ -425,14 +412,10 @@ def train():
                 # SD-like: add noise everywhere
                 noisy_im = scheduler.add_noise(im_latent, noise, t)
             
-            # Apply conditioning dropout for CFG
-            if cond_drop_prob > 0 and 'meta' in cond_input:
-                cond_input = apply_cond_dropout(
-                    cond_input, 
-                    spatial_names if 'meta' in cond_input else [],
-                    cond_drop_prob,
-                    drop_groups
-                )
+            # Apply conditioning dropout for CFG (drop entire conditioning tensor)
+            if cond_drop_prob > 0 and 'image' in cond_input:
+                if np.random.rand() < cond_drop_prob:
+                    cond_input['image'] = torch.zeros_like(cond_input['image'])
             
             # First batch validation
             if is_main and global_step == 0:
@@ -440,21 +423,13 @@ def train():
                 print("First Batch Validation")
                 print(f"{'='*50}")
                 print(f"Prediction latent shape: {im_latent.shape}")
-                print(f"Mask shape: {mask_latent.shape}")
+                print(f"Mask latent shape: {mask_latent.shape}")
                 print(f"Mask stats: min={mask_latent.min().item():.4f}, max={mask_latent.max().item():.4f}, mean={mask_latent.mean().item():.4f}")
-                if 'image' in cond_input and 'meta' in cond_input:
-                    print(f"Spatial conditioning shape: {cond_input['image'].shape}")
-                    print(f"Spatial conditioning channels: {spatial_names}")
-                    
-                    # Check if using latent conditioning
-                    uses_latent_cond = any('latent_cond' in name for name in spatial_names)
-                    if uses_latent_cond:
-                        num_latent_cond = sum(1 for name in spatial_names if 'latent_cond' in name)
-                        print(f"\n✓ TWO-VAE MODE ACTIVE")
-                        print(f"  - Conditioning uses {num_latent_cond} latent channels (no pixel interpolation)")
-                        print(f"  - Conditioning dropout skips latent_cond_* channels")
-                    else:
-                        print(f"\n✓ Single-VAE mode (pixel interpolation for conditioning)")
+                if 'image' in cond_input:
+                    print(f"Conditioning shape: {cond_input['image'].shape}")
+                    if 'meta' in cond_input:
+                        spatial_names = cond_input['meta'][0].get('spatial_names', []) if isinstance(cond_input['meta'], list) else []
+                        print(f"Conditioning channels: {spatial_names}")
                 print(f"{'='*50}\n")
             
             # Predict noise
@@ -477,7 +452,7 @@ def train():
                 progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
             
             # Save sample predictions periodically
-            if is_main and global_step % train_config.get('ldm_img_save_steps', 1000) == 0:
+            if is_main and global_step % img_save_steps == 0:
                 with torch.no_grad():
                     model.eval()
                     
@@ -504,7 +479,7 @@ def train():
                         t_sample = torch.full((num_samples,), i, device=device, dtype=torch.long)
                         noise_pred = model(x_sample, t_sample, cond_input=sample_cond)
                         
-                        if mode == "hard":
+                        if inpainting_mode == "hard":
                             # Use inpainting scheduler
                             x_sample, _ = scheduler.sample_prev_timestep_inpainting(
                                 x_sample, noise_pred, i,
@@ -514,27 +489,27 @@ def train():
                         else:
                             x_sample, _ = scheduler.sample_prev_timestep(x_sample, noise_pred, i)
                     
-                    # Decode to semantic space
+                    # Decode to pixel space
                     if vae is not None:
-                        semantic_sample = vae.decode(x_sample)
+                        sample_decoded = vae.decode(x_sample)
                     else:
-                        semantic_sample = x_sample
+                        sample_decoded = x_sample
                     
-                    # Save visualization
-                    # Normalize semantic channels for visualization
+                    # Save visualization (simple normalization per channel)
                     vis_samples = []
-                    for ch_idx in range(min(num_semantic_channels, semantic_sample.shape[1])):
-                        ch = semantic_sample[:, ch_idx:ch_idx+1, :, :]
-                        if ch_idx < len(semantic_channels) and 'height' in semantic_channels[ch_idx]:
-                            ch = torch.clamp(ch / 100.0, 0, 1)  # Normalize height
-                        else:
-                            ch = torch.clamp(ch, 0, 1)  # Binary masks
+                    for ch_idx in range(min(sample_decoded.shape[1], 4)):  # Show up to 4 channels
+                        ch = sample_decoded[:, ch_idx:ch_idx+1, :, :]
+                        # Normalize to [0, 1] range
+                        ch_min = ch.min()
+                        ch_max = ch.max()
+                        if ch_max > ch_min:
+                            ch = (ch - ch_min) / (ch_max - ch_min)
                         vis_samples.append(ch)
                     
                     if vis_samples:
                         vis_tensor = torch.cat(vis_samples, dim=1)
                         grid = make_grid(vis_tensor, nrow=num_samples, normalize=False, padding=2)
-                        save_path = os.path.join(out_dir, 'semantic_samples', f'sample_step_{global_step}.png')
+                        save_path = os.path.join(out_dir, samples_dir_name, f'sample_step_{global_step}.png')
                         save_image(grid, save_path)
                     
                     model.train()
@@ -551,7 +526,7 @@ def train():
         # Save checkpoint
         if is_main:
             model_to_save = model.module if hasattr(model, 'module') else model
-            checkpoint_name = semantic_train_config.get('ldm_ckpt_name', 'semantic_ldm_ddp_ckpt.pth')
+            checkpoint_name = train_config.get('checkpoint_name', f'{mode}_diffusion_ckpt.pth')
             checkpoint_path = os.path.join(out_dir, checkpoint_name)
             torch.save(model_to_save.state_dict(), checkpoint_path)
             
@@ -559,7 +534,7 @@ def train():
             if (epoch_idx + 1) % 10 == 0:
                 periodic_path = os.path.join(
                     out_dir,
-                    f'semantic_ldm_ddp_epoch_{epoch_idx + 1}.pth'
+                    f'{mode}_diffusion_epoch_{epoch_idx + 1}.pth'
                 )
                 torch.save(model_to_save.state_dict(), periodic_path)
     
@@ -568,7 +543,7 @@ def train():
     
     if is_main:
         print('\n' + "="*50)
-        print('✓ Semantic Diffusion Training Complete!')
+        print(f'✓ {mode.upper()} Diffusion Training Complete!')
         print(f'✓ Total training time: {training_time/3600:.2f} hours')
         print("="*50)
     
@@ -577,4 +552,14 @@ def train():
 
 
 if __name__ == '__main__':
-    train()
+    parser = argparse.ArgumentParser(description='Train Diffusion Model DDP for Urban Inpainting')
+    
+    # Add config file arguments
+    add_config_arguments(parser)
+    
+    parser.add_argument('--mode', type=str, default='semantic',
+                        help='Diffusion stage to train (must match a key in config diffusion_stages, e.g., "semantic", "satellite")')
+    
+    args = parser.parse_args()
+    
+    train(mode=args.mode)
