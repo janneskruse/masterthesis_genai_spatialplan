@@ -24,7 +24,6 @@ from torchvision.utils import save_image, make_grid
 # local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.diffusion_blocks.unet_cond_base import Unet
-from model.diffusion_blocks.vae import VAE
 from model.utils.vae_registry import VAERegistry
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.utils.data_utils import collate_fn
@@ -33,6 +32,7 @@ from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
 from model.utils.layer_config import count_layer_channels, get_layer_info
+from model.utils.checkpoint import load_checkpoint
 from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
@@ -63,13 +63,14 @@ def compute_noise_loss(noise_pred, noise, mask_latent, loss_type, mask_loss_weig
     return (per_pix * w).mean()
 
 
-def train(mode: str = 'semantic'):
+def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     """
     Generic diffusion training function supporting any diffusion stage defined in config.
     
     Args:
         mode: Diffusion stage name (e.g., 'semantic', 'satellite')
               Must match a key in config['diffusion_stages']
+        load_checkpoint_path: Path to checkpoint to resume from (None = train from scratch)
     """
     # Record training start time
     training_start_time = time.time()
@@ -309,6 +310,17 @@ def train(mode: str = 'semantic'):
     
     optimizer = Adam(model.parameters(), lr=adjusted_lr)
     
+    # Load checkpoint if specified
+    start_epoch = 0
+    if load_checkpoint_path:
+        start_epoch = load_checkpoint(
+            checkpoint_path=load_checkpoint_path,
+            model=model,
+            optimizer=optimizer,
+            device=device,
+            is_main=is_main
+        )
+    
     # Inpainting configuration
     inpainting_mode = inpainting_config.get('mode', 'hard')         # "hard" | "sdlike"
     loss_type = inpainting_config.get('loss', 'masked')  # "masked" | "weighted"
@@ -345,7 +357,7 @@ def train(mode: str = 'semantic'):
     
     global_step = 0
     
-    for epoch_idx in range(num_epochs):
+    for epoch_idx in range(start_epoch, num_epochs):
         if sampler is not None:
             sampler.set_epoch(epoch_idx)
         
@@ -563,7 +575,15 @@ def train(mode: str = 'semantic'):
             model_to_save = model.module if hasattr(model, 'module') else model
             checkpoint_name = train_config.get('checkpoint_name', f'{mode}_diffusion_ckpt.pth')
             checkpoint_path = os.path.join(out_dir, checkpoint_name)
-            torch.save(model_to_save.state_dict(), checkpoint_path)
+            
+            # Save checkpoint with training state for resuming
+            checkpoint_state = {
+                'epoch': epoch_idx + 1,
+                'model_state_dict': model_to_save.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': epoch_loss,
+            }
+            torch.save(checkpoint_state, checkpoint_path)
             
             # Periodic checkpoint
             if (epoch_idx + 1) % 10 == 0:
@@ -571,7 +591,7 @@ def train(mode: str = 'semantic'):
                     out_dir,
                     f'{mode}_diffusion_epoch_{epoch_idx + 1}.pth'
                 )
-                torch.save(model_to_save.state_dict(), periodic_path)
+                torch.save(checkpoint_state, periodic_path)
     
     # Training complete
     training_time = time.time() - training_start_time
@@ -594,7 +614,9 @@ if __name__ == '__main__':
     
     parser.add_argument('--mode', type=str, default='semantic',
                         help='Diffusion stage to train (must match a key in config diffusion_stages, e.g., "semantic", "satellite")')
+    parser.add_argument('--load_checkpoint', type=str, default=None,
+                        help='Path to checkpoint to resume training from (default: None = train from scratch)')
     
     args = parser.parse_args()
     
-    train(mode=args.mode)
+    train(mode=args.mode, load_checkpoint_path=args.load_checkpoint)
