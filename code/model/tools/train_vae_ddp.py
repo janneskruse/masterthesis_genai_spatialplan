@@ -30,6 +30,7 @@ from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.vae_utils import save_vae_reconstruction_samples, PosWeightEMA, compute_reconstruction_loss
 from model.utils.layer_config import count_layer_channels, get_layer_info
+from model.utils.checkpoint import load_checkpoint
 from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
@@ -51,6 +52,12 @@ def parse_args():
         choices=['prediction', 'conditioning'],
         default='prediction',
         help='Latent type to save: prediction (RGB/targets) or conditioning (OSM/env features)'
+    )
+    parser.add_argument(
+        '--load_checkpoint',
+        type=str,
+        default=None,
+        help='Path to checkpoint file to resume training from'
     )
     return parser.parse_args()
 
@@ -200,13 +207,14 @@ def save_latents_distributed(
 
 
 ########## Main Training Function #############
-def train_vae(mode: str = 'satellite'):
+def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
     """
     Generic VAE training function supporting any VAE group defined in config.
     
     Args:
         mode: VAE group name (e.g., 'satellite', 'semantic', 'environmental')
               Must match a key in config['vae_groups']
+        load_checkpoint_path: Optional path to checkpoint file to resume training from
     """
     # Record training start time
     training_start_time = time.time()
@@ -468,8 +476,21 @@ def train_vae(mode: str = 'satellite'):
     if use_discriminator:
         optimizer_disc = Adam(discriminator.parameters(), lr=adjusted_lr)
     
+    # Load checkpoint if provided
+    start_epoch = 0
+    if load_checkpoint_path:
+        start_epoch = load_checkpoint(
+            checkpoint_path=load_checkpoint_path,
+            model=model,
+            optimizer=optimizer_vae,
+            device=device,
+            is_main=is_main
+        )
+    
     if is_main:
         print(f"\n✓ Training for {num_epochs} epochs")
+        if start_epoch > 0:
+            print(f"✓ Resuming from epoch {start_epoch}")
         print(f"✓ Learning rate: {adjusted_lr} from base {base_lr}")
         print(f"✓ Batch size per GPU: {batch_size}")
         print(f"✓ Effective batch size: {batch_size * world_size}")
@@ -492,7 +513,7 @@ def train_vae(mode: str = 'satellite'):
     
     global_step = 0
     
-    for epoch_idx in range(num_epochs):
+    for epoch_idx in range(start_epoch, num_epochs):
         if sampler is not None:
             sampler.set_epoch(epoch_idx)
         
@@ -694,7 +715,14 @@ def train_vae(mode: str = 'satellite'):
         if is_main:
             model_to_save = model.module if hasattr(model, 'module') else model
             checkpoint_path = os.path.join(out_dir, checkpoint_name)
-            torch.save(model_to_save.state_dict(), checkpoint_path)
+            
+            checkpoint_state = {
+                'epoch': epoch_idx + 1,
+                'model_state_dict': model_to_save.state_dict(),
+                'optimizer_state_dict': optimizer_vae.state_dict(),
+                'loss': epoch_vae_loss,
+            }
+            torch.save(checkpoint_state, checkpoint_path)
             
             # Save periodic checkpoint
             if (epoch_idx + 1) % 10 == 0:
@@ -702,7 +730,7 @@ def train_vae(mode: str = 'satellite'):
                     out_dir,
                     f'{mode}_vae_ddp_epoch_{epoch_idx + 1}.pth'
                 )
-                torch.save(model_to_save.state_dict(), periodic_path)
+                torch.save(checkpoint_state, periodic_path)
                 print(f'✓ Saved checkpoint: {periodic_path}')
         
         # Synchronize all processes
@@ -759,7 +787,9 @@ if __name__ == '__main__':
     
     parser.add_argument('--mode', type=str, required=True,
                         help='VAE group to train (must match a key in config vae_groups, e.g., "satellite", "semantic", "environmental")')
+    parser.add_argument('--load_checkpoint', type=str, default=None,
+                        help='Path to checkpoint file to resume training from')
     
     args = parser.parse_args()
     
-    train_vae(mode=args.mode)
+    train_vae(mode=args.mode, load_checkpoint_path=args.load_checkpoint)
