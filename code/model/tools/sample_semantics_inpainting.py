@@ -658,8 +658,8 @@ def infer(args, config):
     print("Loading Models")
     print("="*50)
     
-    # Initialize VAE Registry
-    vae_registry = VAERegistry(vae_config, device)
+    # Initialize VAE Registry with full config (needs vae_groups and layers)
+    vae_registry = VAERegistry(config, device)
     
     # Load VAE for prediction group
     data_dir = f"{big_data_storage_path}/results/{train_config['task_name']}"

@@ -287,7 +287,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             print(f"\nLoading {prediction_group.upper()} VAE...")
         
         # Use VAERegistry for cleaner management
-        vae_registry = VAERegistry(vae_arch_config, device)
+        vae_registry = VAERegistry(config, device)
         vae = vae_registry.load_vae(
             group_name=prediction_group,
             checkpoint_path=os.path.join(out_dir, prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')),
