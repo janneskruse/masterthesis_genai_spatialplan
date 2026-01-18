@@ -326,13 +326,13 @@ train_params:
   # Diffusion training (per stage)
   diffusion_training:
     semantic:
-      epochs: 300
+      epochs: 150
       batch_size: 4
       lr: 0.00001
       checkpoint_name: 'semantic_diffusion_ckpt.pth'
       
     satellite:
-      epochs: 400
+      epochs: 200
       batch_size: 4
       lr: 0.00001
       checkpoint_name: 'satellite_diffusion_ckpt.pth'
