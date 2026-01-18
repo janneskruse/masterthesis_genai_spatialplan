@@ -76,56 +76,29 @@ def save_vae_reconstruction_samples(
             recon_vis = torch.sigmoid(recon_ch)  # Apply sigmoid to logits
             
         else:
-            # Continuous/RGB channels: use layer-specific normalization config
-            if normalize_method == 'percentile':
-                # Percentile normalization (for RGB): data is already in [0, 1]
-                input_vis = torch.clamp(input_ch, 0, 1)
-                recon_vis = torch.clamp(recon_ch, 0, 1)
-                
-            elif normalize_method == 'clip':
-                # Clip normalization: normalize using clip_range from config
-                clip_range = layer_info.get('clip_range', [-1, 1])
-                min_val, max_val = clip_range
-                # Normalize to [0, 1] for visualization
-                input_vis = (torch.clamp(input_ch, min_val, max_val) - min_val) / (max_val - min_val + 1e-8)
-                recon_vis = (torch.clamp(recon_ch, min_val, max_val) - min_val) / (max_val - min_val + 1e-8)
-                
-            elif normalize_method == 'custom':
-                # Custom normalization: use normalize_params from config
-                normalize_params = layer_info.get('normalize_params', {'min': 0, 'max': 100})
-                min_val = normalize_params.get('min', 0)
-                max_val = normalize_params.get('max', 100)
-                # Normalize to [0, 1] for visualization
-                input_vis = torch.clamp((input_ch - min_val) / (max_val - min_val + 1e-8), 0, 1)
-                recon_vis = torch.clamp((recon_ch - min_val) / (max_val - min_val + 1e-8), 0, 1)
-                
-            elif normalize_method == 'minmax':
-                # Min-max normalization: use actual data range
-                # Check if mask_layer is specified (e.g., buildings_heights masked by buildings)
-                mask_layer = layer_info.get('mask_layer', None)
-                if mask_layer:
-                    # For masked layers, normalize only non-zero regions
-                    input_nonzero = input_ch[input_ch > 0]
-                    recon_nonzero = recon_ch[recon_ch > 0]
-                    if len(input_nonzero) > 0:
-                        input_min, input_max = input_nonzero.min(), input_nonzero.max()
-                        input_vis = (input_ch - input_min) / (input_max - input_min + 1e-8)
-                        input_vis = torch.clamp(input_vis, 0, 1)
-                    else:
-                        input_vis = input_ch
-                    
-                    if len(recon_nonzero) > 0:
-                        recon_min, recon_max = recon_nonzero.min(), recon_nonzero.max()
-                        recon_vis = (recon_ch - recon_min) / (recon_max - recon_min + 1e-8)
-                        recon_vis = torch.clamp(recon_vis, 0, 1)
-                    else:
-                        recon_vis = recon_ch
+            # Continuous/RGB channels: Min-max normalization based on actual data range
+            # VAE latent space may have different scale than input, so normalize independently
+            # Check if mask_layer is specified (e.g., buildings_heights masked by buildings)
+            mask_layer = layer_info.get('mask_layer', None)
+            if mask_layer:
+                # For masked layers, normalize only non-zero regions
+                input_nonzero = input_ch[input_ch > 0]
+                recon_nonzero = recon_ch[recon_ch > 0]
+                if len(input_nonzero) > 0:
+                    input_min, input_max = input_nonzero.min(), input_nonzero.max()
+                    input_vis = (input_ch - input_min) / (input_max - input_min + 1e-8)
+                    input_vis = torch.clamp(input_vis, 0, 1)
                 else:
-                    # Regular min-max normalization
-                    input_vis = (input_ch - input_ch.min()) / (input_ch.max() - input_ch.min() + 1e-8)
-                    recon_vis = (recon_ch - recon_ch.min()) / (recon_ch.max() - recon_ch.min() + 1e-8)
+                    input_vis = input_ch
+                
+                if len(recon_nonzero) > 0:
+                    recon_min, recon_max = recon_nonzero.min(), recon_nonzero.max()
+                    recon_vis = (recon_ch - recon_min) / (recon_max - recon_min + 1e-8)
+                    recon_vis = torch.clamp(recon_vis, 0, 1)
+                else:
+                    recon_vis = recon_ch
             else:
-                # Fallback: min-max normalization
+                # Regular min-max normalization (works for all: percentile, clip, custom, minmax)
                 input_vis = (input_ch - input_ch.min()) / (input_ch.max() - input_ch.min() + 1e-8)
                 recon_vis = (recon_ch - recon_ch.min()) / (recon_ch.max() - recon_ch.min() + 1e-8)
         
@@ -150,25 +123,24 @@ def save_vae_reconstruction_samples(
             # Get RGB layer normalization config
             rgb_layer_name = [name for name in layer_names if 'rgb' in name.lower()][0]
             rgb_layer_info = layers_registry.get(rgb_layer_name, {})
-            rgb_normalize = rgb_layer_info.get('normalize', 'percentile')
+            # Normalize RGB composite based on actual data range
+            # VAE may produce different scale than input, normalize independently
+            # Per-channel normalization for RGB (to preserve color balance)
+            rgb_input_normalized = []
+            rgb_recon_normalized = []
+            for ch_idx in range(rgb_input.shape[1]):
+                input_ch = rgb_input[:, ch_idx:ch_idx+1, :, :]
+                recon_ch = rgb_recon[:, ch_idx:ch_idx+1, :, :]
+                
+                # Min-max normalize each channel independently
+                input_norm = (input_ch - input_ch.min()) / (input_ch.max() - input_ch.min() + 1e-8)
+                recon_norm = (recon_ch - recon_ch.min()) / (recon_ch.max() - recon_ch.min() + 1e-8)
+                
+                rgb_input_normalized.append(input_norm)
+                rgb_recon_normalized.append(recon_norm)
             
-            # Normalize RGB composite based on layer config
-            if rgb_normalize == 'percentile':
-                # Already in [0, 1]
-                rgb_input = torch.clamp(rgb_input, 0, 1)
-                rgb_recon = torch.clamp(rgb_recon, 0, 1)
-            elif rgb_normalize == 'clip':
-                # Use clip_range
-                clip_range = rgb_layer_info.get('clip_range', [-1, 1])
-                min_val, max_val = clip_range
-                rgb_input = (torch.clamp(rgb_input, min_val, max_val) - min_val) / (max_val - min_val + 1e-8)
-                rgb_recon = (torch.clamp(rgb_recon, min_val, max_val) - min_val) / (max_val - min_val + 1e-8)
-            else:
-                # Default: assume [-1, 1] normalization (legacy support)
-                rgb_input = torch.clamp(rgb_input, -1., 1.)
-                rgb_input = (rgb_input + 1) / 2
-                rgb_recon = torch.clamp(rgb_recon, -1., 1.)
-                rgb_recon = (rgb_recon + 1) / 2
+            rgb_input = torch.cat(rgb_input_normalized, dim=1)
+            rgb_recon = torch.cat(rgb_recon_normalized, dim=1)
             
             comparison_rgb = torch.cat([rgb_input, rgb_recon], dim=0)
             grid_rgb = make_grid(comparison_rgb, nrow=n_samples, padding=2, pad_value=1.0)
