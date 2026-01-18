@@ -711,8 +711,19 @@ def infer(args, config):
     ldm_path = os.path.join(data_dir, ldm_checkpoint)
     
     if os.path.exists(ldm_path):
-        model.load_state_dict(torch.load(ldm_path, map_location=device))
-        print(f"✓ Loaded Semantic Diffusion Model from {ldm_path}")
+        checkpoint = torch.load(ldm_path, map_location=device)
+        
+        # Handle both new format (dict with 'model_state_dict') and legacy format (direct state_dict)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model_state = checkpoint['model_state_dict']
+            epoch = checkpoint.get('epoch', 'unknown')
+            print(f"✓ Loaded Semantic Diffusion Model from {ldm_path} (epoch {epoch})")
+        else:
+            # Legacy format
+            model_state = checkpoint
+            print(f"✓ Loaded Semantic Diffusion Model from {ldm_path}")
+        
+        model.load_state_dict(model_state)
     else:
         print(f"✗ Semantic Diffusion Model not found at {ldm_path}")
         return
