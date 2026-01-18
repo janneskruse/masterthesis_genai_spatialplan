@@ -40,6 +40,50 @@ def get_config_value(config, key, default_value):
     return config[key] if key in config else default_value
 
 
+def build_unet_condition_config(stage_config, vae_groups_config):
+    """
+    Build U-Net condition_config from diffusion stage conditioning configuration.
+    
+    Args:
+        stage_config: Diffusion stage config dict with 'conditioning' key
+        vae_groups_config: VAE groups configuration dict
+        
+    Returns:
+        condition_config dict for U-Net initialization
+    """
+    conditioning = stage_config.get('conditioning', {})
+    
+    condition_config = {
+        'condition_types': ['image'],  # Always use image conditioning
+        'image_condition_config': {}
+    }
+    
+    # Compute pixel-space conditioning channels
+    pixel_space_specs = conditioning.get('pixel_space', [])
+    pixel_channels = len(pixel_space_specs)  # Each spec = 1 channel (e.g., inpainting_mask)
+    
+    # Compute latent-space conditioning channels
+    latent_space_specs = conditioning.get('latent_space', [])
+    latent_channels = 0
+    for spec in latent_space_specs:
+        group_name = spec.get('group')
+        if group_name in vae_groups_config:
+            z_channels = vae_groups_config[group_name].get('z_channels', 0)
+            latent_channels += z_channels
+    
+    total_cond_channels = pixel_channels + latent_channels
+    
+    condition_config['image_condition_config'] = {
+        'image_condition_input_channels': total_cond_channels,
+        'image_condition_output_channels': min(total_cond_channels * 2, 128),  # Project to reasonable size
+        'pixel_space_count': pixel_channels,
+        'latent_space_count': latent_channels,
+        'latent_space_specs': latent_space_specs  # Store for forward pass
+    }
+    
+    return condition_config
+
+
 def get_prediction_channels(condition_config):
     """
     Extract prediction channel names from condition config.

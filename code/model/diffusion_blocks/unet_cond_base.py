@@ -180,20 +180,25 @@ class Unet(nn.Module):
         Compute expected number of image conditioning channels based on condition_config.
         
         Returns:
-            Total channels: masked_rgb (3 if enabled) + mask (1) + osm (N) + env (M)
+            Total channels: pixel_space + latent_space (all z_channels for each group)
         """
         if not self.condition_config:
             return 0
         
+        # New config format from build_unet_condition_config
+        if 'image_condition_config' in self.condition_config:
+            img_config = self.condition_config['image_condition_config']
+            if 'image_condition_input_channels' in img_config:
+                return img_config['image_condition_input_channels']
+        
+        # Legacy fallback
         total_channels = 0
         condition_types = self.condition_config.get('condition_types', [])
         
         if 'inpainting' in condition_types:
-            # Add masked RGB if explicitly included
             if 'masked_rgb' in condition_types:
-                total_channels += 3  # RGB channels
-            # Add mask channel
-            total_channels += 1  # Binary mask
+                total_channels += 3
+            total_channels += 1
         
         if 'osm_features' in condition_types:
             osm_layers = self.condition_config.get('osm_layers', [])
@@ -229,10 +234,31 @@ class Unet(nn.Module):
             assert cond_input is not None, \
                 "Model initialized with conditioning so cond_input cannot be None"
         if self.image_cond:
-            ######## Mask Conditioning ########
+            ######## Image Conditioning (Pixel-space + Latent-space) ########
             validate_image_conditional_input(cond_input, x)
-            im_cond = cond_input['image']
-            im_cond = torch.nn.functional.interpolate(im_cond, size=x.shape[-2:])
+            
+            # Collect all conditioning tensors
+            cond_tensors = []
+            
+            # Add pixel-space conditioning (e.g., inpainting_mask)
+            if 'image' in cond_input:
+                pixel_cond = cond_input['image']
+                pixel_cond = torch.nn.functional.interpolate(pixel_cond, size=x.shape[-2:])
+                cond_tensors.append(pixel_cond)
+            
+            # Add latent-space conditioning groups (e.g., semantic, environmental)
+            if 'image_condition_config' in self.condition_config:
+                latent_specs = self.condition_config['image_condition_config'].get('latent_space_specs', [])
+                for spec in latent_specs:
+                    group_name = spec.get('group')
+                    if group_name in cond_input:
+                        latent_cond = cond_input[group_name]
+                        # Interpolate to match prediction latent size
+                        latent_cond = torch.nn.functional.interpolate(latent_cond, size=x.shape[-2:])
+                        cond_tensors.append(latent_cond)
+            
+            # Concatenate all conditioning
+            im_cond = torch.cat(cond_tensors, dim=1) if cond_tensors else torch.zeros(x.shape[0], 1, x.shape[2], x.shape[3], device=x.device)
             im_cond = self.cond_conv_in(im_cond)
             assert im_cond.shape[-2:] == x.shape[-2:]
             x = torch.cat([x, im_cond], dim=1)

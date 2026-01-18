@@ -30,6 +30,7 @@ from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
+from model.utils.config_utils import build_unet_condition_config
 from model.utils.layer_config import count_layer_channels, get_layer_info
 from helpers.load_configs import load_configs, add_config_arguments
 
@@ -245,10 +246,17 @@ def train(mode: str = 'semantic'):
         print("Initializing Models")
         print("="*50)
     
+    # Build condition_config for U-Net from stage conditioning configuration
+    condition_config = build_unet_condition_config(stage_config, vae_groups)
+    
+    # Add condition_config to unet_config
+    unet_config_with_cond = unet_config.copy()
+    unet_config_with_cond['condition_config'] = condition_config
+    
     # Instantiate the U-Net model for diffusion
     model = Unet(
         im_channels=vae_arch_config['z_channels'],
-        model_config=unet_config,
+        model_config=unet_config_with_cond,
         mode=mode
     ).to(device)
     
