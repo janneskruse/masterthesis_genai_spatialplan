@@ -1105,7 +1105,7 @@ class UrbanInpaintingDataset(Dataset):
             
             if pixel_cond_list:
                 cond['image'] = torch.cat(pixel_cond_list, dim=0)
-                cond['pixel_space_names'] = pixel_cond_names
+                cond['meta']['pixel_space_names'] = pixel_cond_names
             
             # Add latent-space conditioning (load from pre-loaded group latents)
             for cond_spec in conditioning_config.get('latent_space', []):

@@ -375,14 +375,16 @@ def train(mode: str = 'semantic'):
             
             # Extract inpainting mask from conditioning (already in latent space)
             mask_latent = None
-            if 'image' in cond_input and 'pixel_space_names' in cond_input:
-                pixel_space_names = cond_input['pixel_space_names']
+            if 'image' in cond_input and 'meta' in cond_input:
+                # Access pixel_space_names from metadata (first item, same across batch)
+                pixel_space_names = cond_input['meta'][0].get('pixel_space_names', [])
                 
-                try:
-                    mask_idx = pixel_space_names.index('inpainting_mask')
-                    mask_latent = cond_input['image'][:, mask_idx:mask_idx+1, :, :].to(device)
-                except (ValueError, IndexError):
-                    pass
+                if pixel_space_names:
+                    try:
+                        mask_idx = pixel_space_names.index('inpainting_mask')
+                        mask_latent = cond_input['image'][:, mask_idx:mask_idx+1, :, :].to(device)
+                    except (ValueError, IndexError):
+                        pass
             
             # Fallback: create full mask if not provided
             if mask_latent is None:
@@ -419,10 +421,12 @@ def train(mode: str = 'semantic'):
                 print(f"Mask stats: min={mask_latent.min().item():.4f}, max={mask_latent.max().item():.4f}, mean={mask_latent.mean().item():.4f}")
                 if 'image' in cond_input:
                     print(f"Pixel-space conditioning shape: {cond_input['image'].shape}")
-                    if 'pixel_space_names' in cond_input:
-                        print(f"Pixel-space conditioning channels: {cond_input['pixel_space_names']}")
+                    # Access pixel_space_names from metadata
+                    pixel_space_names = cond_input['meta'][0].get('pixel_space_names', [])
+                    if pixel_space_names:
+                        print(f"Pixel-space conditioning channels: {pixel_space_names}")
                 # Check for latent-space conditioning
-                latent_cond_groups = [k for k in cond_input.keys() if k not in ['image', 'meta', 'pixel_space_names']]
+                latent_cond_groups = [k for k in cond_input.keys() if k not in ['image', 'meta']]
                 if latent_cond_groups:
                     print(f"Latent-space conditioning groups: {latent_cond_groups}")
                 print(f"{'='*50}\n")

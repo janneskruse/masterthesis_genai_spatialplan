@@ -324,9 +324,12 @@ def collate_fn(batch):
             elif sample_cond[key] is None:
                 # None values: skip (e.g., VAE mode where 'image' is None)
                 cond_inputs[key] = None
-            else:
+            elif isinstance(sample_cond[key], torch.Tensor):
                 # Tensors: stack along batch dimension
                 cond_inputs[key] = torch.stack([item[1][key] for item in batch])
+            else:
+                # Other types (lists, strings, etc.): keep first item (should be consistent)
+                cond_inputs[key] = sample_cond[key]
         
         return images, cond_inputs
     else:
