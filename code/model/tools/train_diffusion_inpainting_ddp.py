@@ -291,8 +291,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         vae = vae_registry.load_vae(
             group_name=prediction_group,
             checkpoint_path=os.path.join(out_dir, prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')),
-            num_channels=num_prediction_channels,
-            is_main=is_main
+            autoencoder_config=prediction_vae_config
         )
         
         # Freeze VAE to prevent gradient updates during diffusion training
