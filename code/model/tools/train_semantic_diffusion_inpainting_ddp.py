@@ -373,27 +373,19 @@ def train(mode: str = 'semantic'):
                 with torch.no_grad():
                     im_latent, _, _ = vae.encode(prediction_data)
             
-            # Extract inpainting mask from conditioning (pixel space)
-            mask_full = None
-            if 'image' in cond_input and 'meta' in cond_input:
-                meta = cond_input['meta']
-                spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
+            # Extract inpainting mask from conditioning (already in latent space)
+            mask_latent = None
+            if 'image' in cond_input and 'pixel_space_names' in cond_input:
+                pixel_space_names = cond_input['pixel_space_names']
                 
                 try:
-                    mask_idx = spatial_names.index('inpainting_mask')
-                    mask_full = cond_input['image'][:, mask_idx:mask_idx+1, :, :].to(device)
+                    mask_idx = pixel_space_names.index('inpainting_mask')
+                    mask_latent = cond_input['image'][:, mask_idx:mask_idx+1, :, :].to(device)
                 except (ValueError, IndexError):
                     pass
             
-            # Downsample mask to latent resolution
-            if mask_full is not None:
-                latent_size = im_latent.shape[-1]
-                mask_latent = torchF.interpolate(
-                    mask_full.float(),
-                    size=(latent_size, latent_size),
-                    mode='nearest'
-                )
-            else:
+            # Fallback: create full mask if not provided
+            if mask_latent is None:
                 mask_latent = torch.ones_like(im_latent[:, :1, :, :])
             
             # Sample timestep
@@ -426,10 +418,13 @@ def train(mode: str = 'semantic'):
                 print(f"Mask latent shape: {mask_latent.shape}")
                 print(f"Mask stats: min={mask_latent.min().item():.4f}, max={mask_latent.max().item():.4f}, mean={mask_latent.mean().item():.4f}")
                 if 'image' in cond_input:
-                    print(f"Conditioning shape: {cond_input['image'].shape}")
-                    if 'meta' in cond_input:
-                        spatial_names = cond_input['meta'][0].get('spatial_names', []) if isinstance(cond_input['meta'], list) else []
-                        print(f"Conditioning channels: {spatial_names}")
+                    print(f"Pixel-space conditioning shape: {cond_input['image'].shape}")
+                    if 'pixel_space_names' in cond_input:
+                        print(f"Pixel-space conditioning channels: {cond_input['pixel_space_names']}")
+                # Check for latent-space conditioning
+                latent_cond_groups = [k for k in cond_input.keys() if k not in ['image', 'meta', 'pixel_space_names']]
+                if latent_cond_groups:
+                    print(f"Latent-space conditioning groups: {latent_cond_groups}")
                 print(f"{'='*50}\n")
             
             # Predict noise
