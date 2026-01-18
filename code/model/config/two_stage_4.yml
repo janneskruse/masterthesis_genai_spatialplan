@@ -223,7 +223,7 @@ diffusion_stages:
   
   # Stage 2: Render satellite RGB from semantic layout
   satellite:
-    prediction_group: 'rgb'
+    prediction_group: 'satellite'
     
     # U-Net architecture
     unet_config:
