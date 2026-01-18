@@ -58,7 +58,7 @@ def load_latents(latent_path: str, prefix: str = None) -> List[str]:
         print(f"❌ No latent files found in {latent_path}")
     return []
 
-def load_single_latent(latent_path: str, device: Optional[torch.device] = None) -> torch.Tensor:
+def load_single_latent(latent_path: str, device: Optional[torch.device] = None) -> Optional[torch.Tensor]:
     """
     Load a single latent tensor from disk.
     
@@ -67,28 +67,38 @@ def load_single_latent(latent_path: str, device: Optional[torch.device] = None) 
         device: Device to load tensor to (None = CPU)
         
     Returns:
-        Loaded latent tensor
+        Loaded latent tensor, or None if file doesn't exist or loading fails
     """
-    latent_path = Path(latent_path)
-    device_map = 'cpu' if device is None else device
-    
-    if latent_path.suffix == '.pt':
-        return torch.load(latent_path, map_location=device_map)
-    elif latent_path.suffix == '.pkl':
-        with open(latent_path, 'rb') as f:
-            data = pickle.load(f)
-            # Handle dict format from legacy pkl files
-            if isinstance(data, dict):
-                # Get first tensor from dict values
-                tensor = next(iter(data.values()))[0]
-            else:
-                tensor = data
-            
-            if device is not None and device != 'cpu':
-                tensor = tensor.to(device)
-            return tensor
-    else:
-        raise ValueError(f"Unsupported file format: {latent_path.suffix}. Use .pt or .pkl")
+    try:
+        latent_path = Path(latent_path)
+        
+        # Check if file exists
+        if not latent_path.exists():
+            return None
+        
+        device_map = 'cpu' if device is None else device
+        
+        if latent_path.suffix == '.pt':
+            return torch.load(latent_path, map_location=device_map)
+        elif latent_path.suffix == '.pkl':
+            with open(latent_path, 'rb') as f:
+                data = pickle.load(f)
+                # Handle dict format from legacy pkl files
+                if isinstance(data, dict):
+                    # Get first tensor from dict values
+                    tensor = next(iter(data.values()))[0]
+                else:
+                    tensor = data
+                
+                if device is not None and device != 'cpu':
+                    tensor = tensor.to(device)
+                return tensor
+        else:
+            print(f"⚠ Warning: Unsupported file format: {latent_path.suffix}")
+            return None
+    except Exception as e:
+        print(f"⚠ Warning: Failed to load latent from {latent_path}: {e}")
+        return None
 
 
 def drop_text_condition(text_embed, im, empty_text_embed, text_drop_prob):
