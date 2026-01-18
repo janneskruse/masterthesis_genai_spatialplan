@@ -308,6 +308,38 @@ class VAERegistry:
         
         return total_z
     
+    def freeze_all(self):
+        """Freeze all VAE models (disable gradient computation)."""
+        for group_name, vae in self.vaes.items():
+            for param in vae.parameters():
+                param.requires_grad = False
+            print(f"✓ Frozen {group_name} VAE")
+    
+    def unfreeze_all(self):
+        """Unfreeze all VAE models (enable gradient computation)."""
+        for group_name, vae in self.vaes.items():
+            for param in vae.parameters():
+                param.requires_grad = True
+            print(f"✓ Unfrozen {group_name} VAE")
+    
+    def freeze(self, group_name: str):
+        """Freeze specific VAE model."""
+        if group_name not in self.vaes:
+            raise ValueError(f"VAE group '{group_name}' not loaded")
+        
+        for param in self.vaes[group_name].parameters():
+            param.requires_grad = False
+        print(f"✓ Frozen {group_name} VAE")
+    
+    def unfreeze(self, group_name: str):
+        """Unfreeze specific VAE model."""
+        if group_name not in self.vaes:
+            raise ValueError(f"VAE group '{group_name}' not loaded")
+        
+        for param in self.vaes[group_name].parameters():
+            param.requires_grad = True
+        print(f"✓ Unfrozen {group_name} VAE")
+    
     def __repr__(self):
         loaded_groups = list(self.vaes.keys())
         available_groups = list(self.vae_groups.keys())
