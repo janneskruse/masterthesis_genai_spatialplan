@@ -265,16 +265,13 @@ def sample_semantics(
     
     # Load dataset to get conditioning examples
     task_name = train_config.get('task_name', 'urban_inpainting')
-    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
-    use_cached_patches = cache_dir.exists()
     
     print(f"\n✓ Loading dataset in diffusion mode: 'diffusion:{mode}'")
     
     dataset = UrbanInpaintingDataset(
         split='val',
         mode=f'diffusion:{mode}',
-        use_cached_patches=use_cached_patches,
-        cache_dir=cache_dir
+        use_cached_patches=True
     )
     
     # Set seed for reproducibility
