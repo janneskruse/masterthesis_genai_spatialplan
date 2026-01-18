@@ -90,8 +90,18 @@ class VAERegistry:
         
         if checkpoint_path is not None:
             checkpoint = torch.load(checkpoint_path, map_location=self.device)
-            vae.load_state_dict(checkpoint)
-            print(f"✓ Loaded {group_name} VAE from {checkpoint_path}")
+            
+            # Handle both new format (dict with 'model_state_dict') and legacy format (direct state_dict)
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                model_state = checkpoint['model_state_dict']
+                epoch = checkpoint.get('epoch', 'unknown')
+                print(f"✓ Loaded {group_name} VAE from {checkpoint_path} (epoch {epoch})")
+            else:
+                # Legacy format: checkpoint is the state_dict directly
+                model_state = checkpoint
+                print(f"✓ Loaded {group_name} VAE from {checkpoint_path}")
+            
+            vae.load_state_dict(model_state)
         
         vae.to(self.device)
         vae.eval()
