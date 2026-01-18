@@ -60,6 +60,7 @@ code/model/tools/sample_satellite_from_semantics.py
 code/model/tools/sample_semantics_inpainting.py
 code/model/tools/sample_urban_inpainting.py
 code/model/tools/test_mask_coverage.py
+code/model/tools/train_diffusion_inpainting_ddp.py
 code/model/tools/train_lst_predictor_ddp.py
 code/model/tools/train_satellite_diffusion_inpainting_ddp.py
 code/model/tools/train_semantic_diffusion_inpainting_ddp.py
@@ -68,6 +69,8 @@ code/model/tools/train_vae_ddp.py
 code/model/tools/train_vqvae.py
 code/model/tools/validate_dataset.py
 code/model/utils/__init__.py
+code/model/utils/checkpoint.py
+code/model/utils/colors.py
 code/model/utils/config_utils.py
 code/model/utils/data_utils.py
 code/model/utils/diffusion_utils.py
@@ -78,3 +81,4 @@ code/model/utils/load_cuda.py
 code/model/utils/read_yaml.py
 code/model/utils/text_utils.py
 code/model/utils/vae_registry.py
+code/model/utils/vae_utils.py
