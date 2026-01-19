@@ -213,9 +213,9 @@ diffusion_stages:
     # Inpainting configuration
     inpainting:
       mode: 'hard'  # or 'sdlike'
-      loss: 'masked'  # or 'weighted'
+      loss: 'weighted'  # Use weighted to learn full distribution
       mask_loss_weight: 8.0
-      outside_weight: 0.0
+      outside_weight: 1.0  # Non-zero to learn context! Critical for coherent generation
       
       cfg:
         drop_prob: 0.1
@@ -254,10 +254,10 @@ diffusion_stages:
     
     # Inpainting configuration
     inpainting:
-      mode: 'hard'
-      loss: 'masked'
-      mask_loss_weight: 8.0
-      outside_weight: 0.0
+      mode: 'sdlike'  # SD-like for smooth photorealistic blending (satellite imagery benefits from seamless transitions)
+      loss: 'weighted'  # Learn full distribution for realistic rendering
+      mask_loss_weight: 4.0  # Lower weight for sdlike (model processes whole image)
+      outside_weight: 1.0  # Learn photorealistic context! Critical for realistic satellite imagery
       
       cfg:
         drop_prob: 0.1
