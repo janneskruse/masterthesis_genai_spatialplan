@@ -625,7 +625,7 @@ def sample_semantics(
             'patch_region': patch_meta.get('region', None),
             'patch_y': patch_meta.get('y', None),
             'patch_x': patch_meta.get('x', None),
-        }, sample_path, weights_only=False)
+        }, sample_path)
     
     print(f"✓ Saved {num_samples} samples to {samples_dir}")
     
