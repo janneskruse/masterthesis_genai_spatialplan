@@ -1061,7 +1061,7 @@ class UrbanInpaintingDataset(Dataset):
             pred_latent = None
             pred_image = None  # Full-resolution image for on-the-fly encoding
             
-            if pred_group in self.group_latents:
+            if pred_group in self.group_latents and self.group_latents[pred_group] is not None:
                 # Pre-computed latents available
                 pred_latent_path = self.group_latents[pred_group][index]
                 pred_latent = load_single_latent(pred_latent_path, device=None)
@@ -1124,7 +1124,7 @@ class UrbanInpaintingDataset(Dataset):
             for cond_spec in conditioning_config.get('latent_space', []):
                 group_name = cond_spec['group']
                 
-                if group_name in self.group_latents:
+                if group_name in self.group_latents and self.group_latents[group_name] is not None:
                     # Try to load pre-computed latent
                     cond_latent_path = self.group_latents[group_name][index]
                     cond_latent = load_single_latent(cond_latent_path, device=None)
