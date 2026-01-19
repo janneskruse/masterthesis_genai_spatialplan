@@ -385,9 +385,10 @@ def render_satellite_from_semantics(
         else:
             rgb_render = torch.clamp(rgb_render, 0., 1.)
         
-        # Save immediately
+        # Save individual sample visualization immediately
         sample_path = os.path.join(samples_dir, f'sample_{sample_idx}.png')
         save_image(rgb_render[0], sample_path)
+        print(f"  ✓ Saved visualization: {sample_path}")
         
         # Also save as .pt for further processing
         sample_pt_path = os.path.join(samples_dir, f'sample_{sample_idx}.pt')
@@ -395,8 +396,7 @@ def render_satellite_from_semantics(
             'rgb_tensor': rgb_render[0].cpu(),
             'semantic_source': semantic_samples[sample_idx].get('semantic_channels', []),
         }, sample_pt_path)
-        
-        print(f"  ✓ Saved sample {sample_idx + 1} to {sample_path}")
+        print(f"  ✓ Saved tensor: {sample_pt_path}")
         
         # Keep for final grid
         all_renders.append(rgb_render)

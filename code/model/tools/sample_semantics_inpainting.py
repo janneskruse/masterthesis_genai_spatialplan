@@ -534,7 +534,7 @@ def sample_semantics(
         # Clamp semantic values
         semantic_sample = torch.clamp(semantic_sample, 0, 1)
         
-        # Save individual sample immediately
+        # Save individual sample tensor immediately
         sample_pt_path = os.path.join(samples_dir, f'sample_{sample_idx}.pt')
         patch_meta = cond_input.get('meta', {})
         
@@ -549,8 +549,20 @@ def sample_semantics(
             'patch_y': patch_meta.get('y', None),
             'patch_x': patch_meta.get('x', None),
         }, sample_pt_path)
+        print(f"  ✓ Saved tensor: {sample_pt_path}")
         
-        print(f"  ✓ Saved sample {sample_idx + 1} to {sample_pt_path}")
+        # Save individual layer visualizations immediately
+        for ch_idx, layer_name in enumerate(semantic_layers):
+            if ch_idx < semantic_sample.shape[1]:
+                ch = semantic_sample[:, ch_idx:ch_idx+1, :, :]
+
+                ch_vis = torch.clamp(ch, 0, 1)
+                
+                # Save individual layer
+                layer_path = os.path.join(samples_dir, f'sample_{sample_idx}_{layer_name}.png')
+                save_image(ch_vis[0], layer_path)
+        
+        print(f"  ✓ Saved {len(semantic_layers)} layer visualizations for sample {sample_idx + 1}")
         
         # Keep for final visualization
         all_samples.append(semantic_sample)
@@ -568,12 +580,8 @@ def sample_semantics(
         if ch_idx < semantic_samples.shape[1]:
             ch = semantic_samples[:, ch_idx:ch_idx+1, :, :]
             
-            if 'height' in layer_name:
-                # Continuous height channel: normalize by max height
-                ch_vis = torch.clamp(ch / 100.0, 0, 1)
-            else:
-                # Binary channels: already in [0, 1] after VAE decode
-                ch_vis = torch.clamp(ch, 0, 1)
+            # Prepare visualization tensor
+            ch_vis = torch.clamp(ch, 0, 1)
             
             # Overlay red mask border if mask is available
             if mask_latent is not None:
