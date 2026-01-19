@@ -95,6 +95,9 @@ def render_satellite_from_semantics(
     """
     model.eval()
     
+    # get repo directory
+    repo_dir = config.get('repo_dir', '.')
+    
     # Extract configs
     dataset_config = config['dataset_params']
     train_config = config['train_params']
@@ -167,7 +170,7 @@ def render_satellite_from_semantics(
     
     # Setup output directories BEFORE sampling loop
     task_name = train_config.get('task_name', 'urban_inpainting')
-    out_dir = f"{big_data_storage_path}/results/{task_name}/satellite_output"
+    out_dir = f"{repo_dir}/results/{task_name}/satellite_output"
     os.makedirs(out_dir, exist_ok=True)
     
     # Get run index
