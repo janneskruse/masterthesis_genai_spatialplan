@@ -19,7 +19,7 @@ from torchvision.utils import make_grid, save_image
 from model.diffusion_blocks.unet_cond_base import Unet
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.utils.config_utils import compute_patch_and_latent_sizes
+from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
 from model.utils.layer_config import count_layer_channels
 from model.utils.vae_registry import VAERegistry
 from model.utils.checkpoint import load_checkpoint
@@ -674,10 +674,17 @@ def infer(args, config):
     # Load VAE for prediction group
     data_dir = f"{big_data_storage_path}/results/{train_config['task_name']}"
     
+    # Build condition_config for U-Net (same as training)
+    condition_config = build_unet_condition_config(stage_config, vae_groups)
+    
+    # Add condition_config to unet_config
+    unet_config_with_cond = unet_config.copy()
+    unet_config_with_cond['condition_config'] = condition_config
+    
     # Load Diffusion Model
     model = Unet(
         im_channels=vae_config['z_channels'],
-        model_config=unet_config,
+        model_config=unet_config_with_cond,
         mode=mode
     ).to(device)
     model.eval()
