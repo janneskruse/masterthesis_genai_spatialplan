@@ -129,18 +129,11 @@ def save_vae_reconstruction_samples(
         # Check for channels that belong to RGB layer (e.g., layer_name == 'rgb')
         rgb_indices = [i for i, layer_name in enumerate(layer_names) if 'rgb' in layer_name.lower()]
         
-        if len(rgb_indices) > 0:
-            print(f"[DEBUG] Found {len(rgb_indices)} RGB channel(s) at indices: {rgb_indices}")
-            print(f"[DEBUG] Channel names: {[channel_names[i] for i in rgb_indices]}")
-            print(f"[DEBUG] Layer names: {[layer_names[i] for i in rgb_indices]}")
-        
         if len(rgb_indices) >= 3:
             try:
                 # Extract the first 3 RGB channels using their indices
                 rgb_input = input_tensor[:n_samples, rgb_indices[:3], :, :]
                 rgb_recon = recon_tensor[:n_samples, rgb_indices[:3], :, :]
-                
-                print(f"[DEBUG] RGB input shape: {rgb_input.shape}, RGB recon shape: {rgb_recon.shape}")
                 
                 # Normalize RGB composite based on actual data range
                 # VAE may produce different scale than input, normalize independently
@@ -166,14 +159,11 @@ def save_vae_reconstruction_samples(
                 
                 save_path = os.path.join(save_dir, f'recon_step_{step}_RGB_composite.png')
                 save_image(grid_rgb, save_path)
-                print(f"[DEBUG] ✓ Saved RGB composite to: {save_path}")
                 
             except Exception as e:
                 print(f"[ERROR] Failed to save RGB composite: {e}")
                 import traceback
                 traceback.print_exc()
-        elif len(rgb_indices) > 0:
-            print(f"[WARNING] Found {len(rgb_indices)} RGB channel(s) but need 3 for composite, skipping")
 
 
 
