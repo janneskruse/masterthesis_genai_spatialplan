@@ -676,7 +676,8 @@ def infer(args, config):
     # Load Diffusion Model
     model = Unet(
         im_channels=vae_config['z_channels'],
-        model_config=unet_config
+        model_config=unet_config,
+        mode=mode
     ).to(device)
     model.eval()
     
