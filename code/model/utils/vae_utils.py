@@ -107,8 +107,9 @@ def save_vae_reconstruction_samples(
         # Create comparison for this layer
         comparison_ch = torch.cat([input_vis, recon_vis], dim=0)
         
-        # Apply colormap for continuous layers (makes patterns more visible)
-        if layer_type != 'binary':
+        # Apply colormap for continuous layers (but NOT for RGB channels)
+        # RGB channels should be visualized as grayscale individually, composite handled separately
+        if layer_type != 'binary' and 'rgb' not in layer_name.lower():
             cmap = get_colormap_for_layer(layer_name)
             comparison_ch = apply_colormap_to_tensor(comparison_ch, cmap)
         
@@ -123,38 +124,49 @@ def save_vae_reconstruction_samples(
     # Also save RGB composite if RGB layers are present
     if save_rgb_composite:
         rgb_indices = [i for i, name in enumerate(layer_names) if 'rgb' in name.lower()]
+        print(f"[DEBUG] Found {len(rgb_indices)} RGB layers at indices: {rgb_indices}")
+        print(f"[DEBUG] Layer names: {layer_names}")
+        
         if len(rgb_indices) >= 3:
-            # Take first 3 RGB channels
-            rgb_input = input_tensor[:n_samples, rgb_indices[0]:rgb_indices[2]+1, :, :]
-            rgb_recon = recon_tensor[:n_samples, rgb_indices[0]:rgb_indices[2]+1, :, :]
-            
-            # Get RGB layer normalization config
-            rgb_layer_name = [name for name in layer_names if 'rgb' in name.lower()][0]
-            rgb_layer_info = layers_registry.get(rgb_layer_name, {})
-            # Normalize RGB composite based on actual data range
-            # VAE may produce different scale than input, normalize independently
-            # Per-channel normalization for RGB (to preserve color balance)
-            rgb_input_normalized = []
-            rgb_recon_normalized = []
-            for ch_idx in range(rgb_input.shape[1]):
-                input_ch = rgb_input[:, ch_idx:ch_idx+1, :, :]
-                recon_ch = rgb_recon[:, ch_idx:ch_idx+1, :, :]
+            try:
+                # Extract the first 3 RGB channels using their indices
+                rgb_input = input_tensor[:n_samples, rgb_indices[:3], :, :]
+                rgb_recon = recon_tensor[:n_samples, rgb_indices[:3], :, :]
                 
-                # Min-max normalize each channel independently
-                input_norm = (input_ch - input_ch.min()) / (input_ch.max() - input_ch.min() + 1e-8)
-                recon_norm = (recon_ch - recon_ch.min()) / (recon_ch.max() - recon_ch.min() + 1e-8)
+                print(f"[DEBUG] RGB input shape: {rgb_input.shape}, RGB recon shape: {rgb_recon.shape}")
                 
-                rgb_input_normalized.append(input_norm)
-                rgb_recon_normalized.append(recon_norm)
-            
-            rgb_input = torch.cat(rgb_input_normalized, dim=1)
-            rgb_recon = torch.cat(rgb_recon_normalized, dim=1)
-            
-            comparison_rgb = torch.cat([rgb_input, rgb_recon], dim=0)
-            grid_rgb = make_grid(comparison_rgb, nrow=n_samples, padding=2, pad_value=1.0)
-            
-            save_path = os.path.join(save_dir, f'recon_step_{step}_RGB_composite.png')
-            save_image(grid_rgb, save_path)
+                # Normalize RGB composite based on actual data range
+                # VAE may produce different scale than input, normalize independently
+                # Per-channel normalization for RGB (to preserve color balance)
+                rgb_input_normalized = []
+                rgb_recon_normalized = []
+                for ch_idx in range(3):  # Process exactly 3 channels (R, G, B)
+                    input_ch = rgb_input[:, ch_idx:ch_idx+1, :, :]
+                    recon_ch = rgb_recon[:, ch_idx:ch_idx+1, :, :]
+                    
+                    # Min-max normalize each channel independently
+                    input_norm = (input_ch - input_ch.min()) / (input_ch.max() - input_ch.min() + 1e-8)
+                    recon_norm = (recon_ch - recon_ch.min()) / (recon_ch.max() - recon_ch.min() + 1e-8)
+                    
+                    rgb_input_normalized.append(input_norm)
+                    rgb_recon_normalized.append(recon_norm)
+                
+                rgb_input = torch.cat(rgb_input_normalized, dim=1)
+                rgb_recon = torch.cat(rgb_recon_normalized, dim=1)
+                
+                comparison_rgb = torch.cat([rgb_input, rgb_recon], dim=0)
+                grid_rgb = make_grid(comparison_rgb, nrow=n_samples, padding=2, pad_value=1.0)
+                
+                save_path = os.path.join(save_dir, f'recon_step_{step}_RGB_composite.png')
+                save_image(grid_rgb, save_path)
+                print(f"[DEBUG] ✓ Saved RGB composite to: {save_path}")
+                
+            except Exception as e:
+                print(f"[ERROR] Failed to save RGB composite: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"[WARNING] Not enough RGB layers found ({len(rgb_indices)} < 3), skipping RGB composite")
 
 
 
