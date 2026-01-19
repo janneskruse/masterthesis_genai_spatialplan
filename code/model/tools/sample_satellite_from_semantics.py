@@ -481,7 +481,7 @@ def infer(args, config):
         
         # Find the latest semantics sample directory
         import glob
-        sample_dirs = glob.glob(os.path.join(semantic_output_dir, f'semantics_cfg*_samples'))
+        sample_dirs = glob.glob(os.path.join(semantic_output_dir, 'semantics_cfg*_idx*_samples'))
         
         if not sample_dirs:
             print(f"\n✗ No semantic sample directories found in {semantic_output_dir}")
