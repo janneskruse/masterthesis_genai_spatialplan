@@ -580,7 +580,7 @@ class UrbanInpaintingDataset(Dataset):
         print(f"\nPrediction group: '{pred_group}'")
         pred_latents = self._load_group_latents(pred_group, reconcile=True)
         
-        if pred_latents is None:
+        if pred_latents is None and self.split == 'train':
             raise RuntimeError(
                 f"Failed to load prediction latents for group '{pred_group}'. "
                 f"Run VAE training for this group first."
@@ -600,7 +600,7 @@ class UrbanInpaintingDataset(Dataset):
                 
                 cond_latents = self._load_group_latents(cond_group, reconcile=True)
                 
-                if cond_latents is None:
+                if cond_latents is None and self.split == 'train':
                     raise RuntimeError(
                         f"Failed to load conditioning latents for group '{cond_group}'. "
                         f"Run VAE training for this group first."
