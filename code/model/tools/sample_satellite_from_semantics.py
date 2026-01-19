@@ -295,28 +295,32 @@ def render_satellite_from_semantics(
         
         # Sampling loop
         print(f"  Denoising {scheduler.num_timesteps} steps...")
-        for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="  ", leave=False):
-            t = torch.full((1,), i, device=device, dtype=torch.long)
+        with torch.no_grad():
+            for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="  ", leave=False):
+                t = torch.full((1,), i, device=device, dtype=torch.long)
+                
+                # Classifier-free guidance
+                if guidance_scale > 0:
+                    noise_pred_cond = model(x, t, cond_input=cond_input)
+                    noise_pred_uncond = model(x, t, cond_input=uncond_input)
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                else:
+                    noise_pred = model(x, t, cond_input=cond_input)
             
-            # Classifier-free guidance
-            if guidance_scale > 0:
-                noise_pred_cond = model(x, t, cond_input=cond_input)
-                noise_pred_uncond = model(x, t, cond_input=uncond_input)
-                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
-            else:
-                noise_pred = model(x, t, cond_input=cond_input)
-            
-            # Denoise step
-            if inpainting_mode == "hard":
-                # Hard inpainting: preserve context outside mask
-                # Note: For satellite, we don't have original latent, so just use standard step
-                x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
-            else:
-                # SD-like: standard denoising
-                x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
+                # Denoise step
+                if inpainting_mode == "hard":
+                    # Hard inpainting: preserve context outside mask
+                    # Note: For satellite, we don't have original latent, so just use standard step
+                    x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
+                else:
+                    # SD-like: standard denoising
+                    x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
         
         all_renders.append(x)
         print(f"  ✓ Rendered sample {sample_idx + 1}")
+        
+        # Free GPU memory between samples
+        torch.cuda.empty_cache()
     
     # Stack renders
     all_renders = torch.cat(all_renders, dim=0)  # [N, C_latent, H_latent, W_latent]
