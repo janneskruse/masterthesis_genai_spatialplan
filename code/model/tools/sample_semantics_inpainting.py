@@ -510,7 +510,6 @@ def sample_semantics(
     all_samples = torch.cat(all_samples, dim=0)
     
     # Decode to semantic space using prediction VAE
-    pred_vae = vae_registry.get_vae(pred_group)
     with torch.no_grad():
         semantic_samples = pred_vae.decode(all_samples)
     

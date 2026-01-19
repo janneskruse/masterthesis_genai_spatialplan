@@ -213,6 +213,35 @@ def render_satellite_from_semantics(
             cond_input['image'] = torch.cat(pixel_cond_list, dim=1)  # [1, C_pixel, H_latent, W_latent]
             cond_input['meta'][0]['pixel_space_names'] = pixel_cond_names
         
+        # Load RGB context from dataset for hard inpainting (if available)
+        rgb_context_latent = None
+        patch_index = sample_data.get('patch_index')
+        
+        if patch_index is not None and dataset is not None and inpainting_mode == 'hard':
+            # Load matching patch from dataset to get RGB context
+            dataset_sample = dataset[patch_index]
+            
+            if isinstance(dataset_sample, tuple) and len(dataset_sample) == 2:
+                pred_data, dataset_cond = dataset_sample
+            else:
+                pred_data = None
+                dataset_cond = {}
+            
+            # Get RGB context - either pre-encoded latent or full-res image
+            if pred_data is not None:
+                # Check if it's already a latent or needs encoding
+                if pred_data.shape[-2:] == (latent_size, latent_size):
+                    # Already encoded latent
+                    rgb_context_latent = pred_data.unsqueeze(0).to(device)
+                    print(f"  ✓ Loaded RGB context latent from dataset: {rgb_context_latent.shape}")
+                else:
+                    # Full-res image - encode it
+                    print(f"  ⚠ Encoding RGB context on-the-fly from shape {pred_data.shape}")
+                    with torch.no_grad():
+                        pred_image_batch = pred_data.unsqueeze(0).to(device)
+                        rgb_context_latent, _, _ = pred_vae.encode(pred_image_batch)
+                    print(f"  ✓ Encoded RGB context to latent: {rgb_context_latent.shape}")
+        
         # 2. Latent-space conditioning: encode semantic and environmental
         for cond_spec in latent_cond_groups:
             cond_group = cond_spec['group']
@@ -284,14 +313,20 @@ def render_satellite_from_semantics(
         # Initialize latent for satellite generation
         x = torch.randn(1, pred_vae_config['z_channels'], latent_size, latent_size, device=device)
         
-        # For hard inpainting, initialize with context
+        # For hard inpainting, initialize with RGB context from dataset
         if inpainting_mode == "hard":
             # Get mask at latent resolution
             mask_latent = F.interpolate(mask.float(), size=(latent_size, latent_size), mode='nearest')
             
-            # For satellite, we could use original RGB context if available
-            # For now, keep noise in hole, zeros outside (will be denoised)
-            x = mask_latent * x + (1 - mask_latent) * torch.zeros_like(x)
+            if rgb_context_latent is not None:
+                # Use actual RGB context from dataset (like semantic sampling does)
+                # Keep context outside mask, noise inside mask
+                x = mask_latent * x + (1 - mask_latent) * rgb_context_latent
+                print(f"  ✓ Initialized with RGB context from dataset")
+            else:
+                # Fallback: use zeros if no context available
+                print(f"  ⚠ No RGB context available, using zeros outside mask")
+                x = mask_latent * x + (1 - mask_latent) * torch.zeros_like(x)
         
         # Sampling loop
         print(f"  Denoising {scheduler.num_timesteps} steps...")
