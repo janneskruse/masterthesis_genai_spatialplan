@@ -472,12 +472,27 @@ def infer(args, config):
         return
     
     ########## Load Semantic Samples #############
-    if not args.semantic_dir:
-        print("\n✗ Please provide --semantic_dir with path to Stage 1 semantic samples")
-        print("  Example: --semantic_dir /path/to/results/task_name/semantic_output/semantics_cfg7.5_idx0_samples")
-        return
+    # Use semantic_dir from args, or default to config-based path
+    if args.semantic_dir:
+        semantic_dir = args.semantic_dir
+    else:
+        # Default to semantic_output directory from config (same as semantic sampling)
+        semantic_output_dir = f"{big_data_storage_path}/results/{task_name}/semantic_output"
+        
+        # Find the latest semantics sample directory
+        import glob
+        sample_dirs = glob.glob(os.path.join(semantic_output_dir, f'semantics_cfg*_samples'))
+        
+        if not sample_dirs:
+            print(f"\n✗ No semantic sample directories found in {semantic_output_dir}")
+            print(f"  Please run semantic sampling first or specify --semantic_dir")
+            return
+        
+        # Use the most recent directory
+        semantic_dir = max(sample_dirs, key=os.path.getmtime)
+        print(f"\n✓ Using most recent semantic samples: {os.path.basename(semantic_dir)}")
     
-    semantic_samples = load_semantic_samples(args.semantic_dir)
+    semantic_samples = load_semantic_samples(semantic_dir)
     
     if not semantic_samples:
         return
@@ -544,8 +559,8 @@ def infer(args, config):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Render satellite imagery from semantic layouts (Stage 2)')
-    parser.add_argument('--semantic_dir', type=str, required=True, 
-                       help='Directory containing Stage 1 semantic samples (e.g., semantics_cfg7.5_idx0_samples/)')
+    parser.add_argument('--semantic_dir', type=str, default=None,
+                       help='Directory containing Stage 1 semantic samples (e.g., semantics_cfg7.5_idx0_samples/). If not specified, uses latest from config output directory.')
     parser.add_argument('--guidance_scale', type=float, default=7.5, 
                        help='Classifier-free guidance scale')
     parser.add_argument('--num_samples', type=int, default=None,
