@@ -281,8 +281,8 @@ train_params:
       kl_weight: 0.000001
       perceptual_weight: 1.0
       disc_weight: 0.5
-      disc_start: 10000
-      use_discriminator: True
+      # disc_start: 10000
+      use_discriminator: False
       use_perceptual: True
       penalize_out_of_range: True
       tanh_activation: True
