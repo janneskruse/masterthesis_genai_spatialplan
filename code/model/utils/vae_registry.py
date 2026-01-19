@@ -146,6 +146,20 @@ class VAERegistry:
         # Load weights
         self.register_vae(group_name, vae, checkpoint_path)
         
+    def get_vae(self, group_name: str) -> VAE:
+        """
+        Retrieve registered VAE for a group.
+        
+        Args:
+            group_name: Name of layer group
+        Returns:
+            VAE model
+        """
+        
+        if group_name not in self.vaes:
+            raise ValueError(f"VAE group '{group_name}' not loaded")
+        return self.vaes[group_name]
+        
     def _count_group_channels(self, group_name: str) -> int:
         """Count total channels for a VAE group."""
         layers = self.group_to_layers[group_name]
@@ -219,104 +233,6 @@ class VAERegistry:
                 outputs[group_name] = output
         
         return outputs
-    
-    def extract_latent_channels(
-        self,
-        latents_dict: Dict[str, torch.Tensor],
-        layer_selection: Dict[str, List[str]]
-    ) -> torch.Tensor:
-        """
-        Extract and concatenate specific latent channels for conditioning.
-        
-        Args:
-            latents_dict: Full latents from encode_groups()
-            layer_selection: Dict mapping group_name -> list of layer names to extract
-            
-        Returns:
-            Concatenated latent tensor [B, sum(z_channels), H', W']
-            
-        Example:
-            layer_selection = {
-                'landuse': ['buildings', 'streets'],
-                'environmental': ['lst']
-            }
-        """
-        selected_latents = []
-        
-        for group_name, layer_names in layer_selection.items():
-            if group_name not in latents_dict:
-                raise ValueError(f"Group '{group_name}' not found in latents_dict")
-            
-            group_latent = latents_dict[group_name]
-            group_layers = self.group_to_layers[group_name]
-            
-            # Find channel indices for requested layers
-            for layer_name in layer_names:
-                if layer_name not in group_layers:
-                    raise ValueError(f"Layer '{layer_name}' not in group '{group_name}'")
-                
-                # Get channel index
-                _, channel_idx = self.layer_to_group[layer_name]
-                
-                # Calculate latent channel index
-                # Assuming uniform z_channels per input channel
-                group_config = self.vae_groups[group_name]
-                z_channels = group_config.get('z_channels', 4)
-                im_channels = self._count_group_channels(group_name)
-                z_per_channel = z_channels // im_channels
-                
-                start_z = channel_idx * z_per_channel
-                end_z = start_z + z_per_channel
-                
-                selected_latents.append(group_latent[:, start_z:end_z])
-        
-        if not selected_latents:
-            raise ValueError("No latent channels selected")
-        
-        return torch.cat(selected_latents, dim=1)
-    
-    def get_prediction_latent_size(self, stage_config: dict) -> int:
-        """
-        Calculate expected latent size for prediction.
-        
-        Args:
-            stage_config: Diffusion stage config with 'prediction_group' key
-            
-        Returns:
-            Number of latent channels
-        """
-        group_name = stage_config.get('prediction_group')
-        if group_name not in self.vae_groups:
-            raise ValueError(f"Unknown prediction group: {group_name}")
-        
-        return self.vae_groups[group_name].get('z_channels', 4)
-    
-    def get_conditioning_latent_size(self, stage_config: dict) -> int:
-        """
-        Calculate expected latent size for conditioning.
-        
-        Args:
-            stage_config: Diffusion stage config with 'conditioning' key
-            
-        Returns:
-            Number of conditioning latent channels
-        """
-        conditioning = stage_config.get('conditioning', {})
-        latent_cond = conditioning.get('latent_space', [])
-        
-        total_z = 0
-        for cond_spec in latent_cond:
-            group_name = cond_spec['group']
-            layers = cond_spec['layers']
-            
-            group_config = self.vae_groups[group_name]
-            z_channels = group_config.get('z_channels', 4)
-            im_channels = self._count_group_channels(group_name)
-            z_per_channel = z_channels // im_channels
-            
-            total_z += len(layers) * z_per_channel
-        
-        return total_z
     
     def freeze_all(self):
         """Freeze all VAE models (disable gradient computation)."""

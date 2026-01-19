@@ -288,11 +288,13 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         
         # Use VAERegistry for cleaner management
         vae_registry = VAERegistry(config, device)
-        vae = vae_registry.load_vae(
+        vae_registry.load_vae(
             group_name=prediction_group,
             checkpoint_path=os.path.join(out_dir, prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')),
             autoencoder_config=prediction_vae_config
         )
+        
+        vae = vae_registry.get_vae(prediction_group)
         
         # Freeze VAE to prevent gradient updates during diffusion training
         vae_registry.freeze(prediction_group)

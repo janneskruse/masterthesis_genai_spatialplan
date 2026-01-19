@@ -184,6 +184,7 @@ def sample_semantics(
     model, 
     scheduler,
     repo_dir, 
+    data_dir,
     train_config, 
     diffusion_model_config,
     autoencoder_model_config, 
@@ -288,6 +289,14 @@ def sample_semantics(
     pred_latent, cond_input = dataset[sample_idx]
     
     # Get prediction VAE from registry
+    vae_config = vae_groups[pred_group]
+    vae_checkpoint = vae_config.get('checkpoint_name', f'{pred_group}_vae_ckpt.pth')
+    vae_path = os.path.join(data_dir, vae_checkpoint)
+    vae_registry.load_vae(
+        group_name=pred_group,
+        checkpoint_path=vae_path,
+        autoencoder_config=vae_config,
+    )
     pred_vae = vae_registry.get_vae(pred_group)
     if pred_vae is None:
         raise ValueError(f"Prediction VAE for group '{pred_group}' not loaded in registry")
@@ -329,7 +338,7 @@ def sample_semantics(
             if group_vae is None:
                 # Load VAE for this group
 
-                group_vae_config = vae_groups[group_name].get('vae', {})
+                group_vae_config = vae_groups[group_name]
                 ckpt_name = group_vae_config.get('checkpoint_name', f'{group_name}_vae_ckpt.pth')
                 ckpt_path = os.path.join(out_dir, ckpt_name)
                 
@@ -663,18 +672,6 @@ def infer(args, config):
     
     # Load VAE for prediction group
     data_dir = f"{big_data_storage_path}/results/{train_config['task_name']}"
-    vae_checkpoint = vae_config.get('checkpoint_name', f'{pred_group}_vae_ckpt.pth')
-    vae_path = os.path.join(data_dir, vae_checkpoint)
-    
-    vae = vae_registry.load_vae(
-        group_name=pred_group,
-        checkpoint_path=vae_path,
-        autoencoder_config=vae_config,
-    )
-    
-    if vae is None:
-        print(f"✗ Failed to load {pred_group} VAE from {vae_path}")
-        return
     
     # Load Diffusion Model
     model = Unet(
@@ -723,6 +720,7 @@ def infer(args, config):
     samples = sample_semantics(
         model=model,
         repo_dir=config.get('repo_dir', '.'),
+        data_dir=data_dir,
         scheduler=scheduler,
         train_config=train_config,
         diffusion_model_config=unet_config,
