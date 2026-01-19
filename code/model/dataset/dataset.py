@@ -491,7 +491,7 @@ class UrbanInpaintingDataset(Dataset):
         
         # Build full path to latents directory
         results_dir = Path(self.big_data_storage_path) / "results" / self.config['train_params']['task_name']
-        latent_path = results_dir / latents_dir
+        latent_path = results_dir / f"{latents_dir}{'_' + self.split if self.split == 'val' else ''}"
         
         if not latent_path.exists():
             print(f"⚠ Latents directory does not exist: {latent_path}")
