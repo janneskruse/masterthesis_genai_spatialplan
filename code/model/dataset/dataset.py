@@ -1260,7 +1260,7 @@ class UrbanInpaintingDataset(Dataset):
         if self.mode_type == 'diffusion' and self.group_latents:
             print(f"\nLoaded latents for {len(self.group_latents)} VAE groups:")
             for group_name, latent_files in self.group_latents.items():
-                print(f"  - {group_name}: {len(latent_files) if latent_files is not None else "No"} latents")
+                print(f"  - {group_name}: {len(latent_files) if latent_files is not None else 'No'} latents")
         
         print(f"Patch size: {self.patch_size}x{self.patch_size}")
         
