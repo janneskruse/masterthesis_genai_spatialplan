@@ -424,6 +424,28 @@ def sample_semantics(
     print("\nInitial GPU memory:")
     print_gpu_memory()
     
+    # Setup output directories BEFORE sampling loop
+    task_name = train_config.get('task_name', 'urban_inpainting')
+    out_dir = f"{repo_dir}/results/{task_name}/semantic_output"
+    os.makedirs(out_dir, exist_ok=True)
+    
+    # Get next run index
+    base_name = f'semantics_cfg{guidance_scale}'
+    if use_lst_guidance:
+        base_name += f'_lst{lst_guidance_scale}'
+    
+    run_idx = get_next_run_idx(out_dir, base_name)
+    if overwrite_samples and run_idx > 0:
+        run_idx = 0
+    
+    print(f"\n{'='*50}")
+    print(f"Output Run Index: {run_idx}")
+    print(f"{'='*50}")
+    
+    # Create samples directory
+    samples_dir = os.path.join(out_dir, f'{base_name}_idx{run_idx}_samples')
+    os.makedirs(samples_dir, exist_ok=True)
+    
     ################# Sampling Loop ########################
     print("\n" + "="*50)
     print("Starting Sampling")
@@ -504,35 +526,43 @@ def sample_semantics(
             else:
                 x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
         
-        all_samples.append(x)
+        # Decode to semantic space immediately
+        print(f"  Decoding sample {sample_idx + 1}...")
+        with torch.no_grad():
+            semantic_sample = pred_vae.decode(x)
+        
+        # Clamp semantic values
+        semantic_sample = torch.clamp(semantic_sample, 0, 1)
+        
+        # Save individual sample immediately
+        sample_pt_path = os.path.join(samples_dir, f'sample_{sample_idx}.pt')
+        patch_meta = cond_input.get('meta', {})
+        
+        torch.save({
+            'semantic_tensor': semantic_sample[0].cpu(),
+            'semantic_channels': semantic_layers,
+            'semantic_layers': semantic_layers,
+            'conditioning': {k: v[0].cpu() if isinstance(v, torch.Tensor) else v for k, v in cond_input.items()},
+            'mask': mask_latent[0].cpu() if mask_latent is not None else None,
+            'patch_index': patch_meta.get('patch_index', None),
+            'patch_region': patch_meta.get('region', None),
+            'patch_y': patch_meta.get('y', None),
+            'patch_x': patch_meta.get('x', None),
+        }, sample_pt_path)
+        
+        print(f"  ✓ Saved sample {sample_idx + 1} to {sample_pt_path}")
+        
+        # Keep for final visualization
+        all_samples.append(semantic_sample)
+        
+        # Free GPU memory
+        torch.cuda.empty_cache()
     
-    # Stack samples
-    all_samples = torch.cat(all_samples, dim=0)
+    # Stack all decoded samples for visualization
+    semantic_samples = torch.cat(all_samples, dim=0)  # [N, C, H, W]
     
-    # Decode to semantic space using prediction VAE
-    with torch.no_grad():
-        semantic_samples = pred_vae.decode(all_samples)
+    print("\nCreating layer visualizations...")
     
-    # Clamp semantic values
-    semantic_samples = torch.clamp(semantic_samples, 0, 1)
-    
-    # Save results
-    out_dir = f"{repo_dir}/results/{task_name}/semantic_output"
-    os.makedirs(out_dir, exist_ok=True)
-    
-    # Get next run index
-    base_name = f'semantics_cfg{guidance_scale}'
-    if use_lst_guidance:
-        base_name += f'_lst{lst_guidance_scale}'
-    
-    run_idx = get_next_run_idx(out_dir, base_name)
-    if overwrite_samples and run_idx > 0:
-        run_idx -= 1
-    
-    print(f"\n{'='*50}")
-    print(f"Output Run Index: {run_idx}")
-    print(f"{'='*50}")
-
     # Save visualization - each layer separately (like VAE training)
     for ch_idx, layer_name in enumerate(semantic_layers):
         if ch_idx < semantic_samples.shape[1]:
@@ -602,31 +632,11 @@ def sample_semantics(
         save_image(grid, output_path)
         print(f"✓ Saved inpainting mask visualization")
     
-    print(f"\n✓ Saved {len(semantic_layers)} layer visualizations to {out_dir}")    # Save individual samples as .pt files for Stage 2
-    samples_dir = os.path.join(out_dir, f'{base_name}_idx{run_idx}_samples')
-    os.makedirs(samples_dir, exist_ok=True)
+    print(f"\n✓ Saved {len(semantic_layers)} layer visualizations to {out_dir}")
     
-    for idx in range(num_samples):
-        sample_path = os.path.join(samples_dir, f'sample_{idx}.pt')
-        
-        # Extract patch metadata for Stage 2
-        # cond_input['meta'] is a dict, not a list
-        patch_meta = cond_input.get('meta', {})
-        
-        torch.save({
-            'semantic_tensor': semantic_samples[idx].cpu(),
-            'semantic_channels': semantic_layers,
-            'semantic_layers': semantic_layers,  # Keep for backward compatibility
-            'conditioning': {k: v[0].cpu() if isinstance(v, torch.Tensor) else v for k, v in cond_input.items()},
-            'mask': mask_latent[0].cpu() if mask_latent is not None else None,
-            # Patch metadata for Stage 2 to load matching patch from dataset
-            'patch_index': patch_meta.get('patch_index', None),
-            'patch_region': patch_meta.get('region', None),
-            'patch_y': patch_meta.get('y', None),
-            'patch_x': patch_meta.get('x', None),
-        }, sample_path)
-    
-    print(f"✓ Saved {num_samples} samples to {samples_dir}")
+    print(f"\n{'='*50}")
+    print(f"✓ Completed! All {num_samples} samples saved to {samples_dir}")
+    print(f"{'='*50}")
     
     return semantic_samples
 

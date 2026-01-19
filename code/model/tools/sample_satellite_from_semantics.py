@@ -165,7 +165,26 @@ def render_satellite_from_semantics(
     if num_samples is not None:
         semantic_samples = semantic_samples[:num_samples]
     
-    ################# Rendering Loop ########################
+    # Setup output directories BEFORE sampling loop
+    task_name = train_config.get('task_name', 'urban_inpainting')
+    out_dir = f"{big_data_storage_path}/results/{task_name}/satellite_output"
+    os.makedirs(out_dir, exist_ok=True)
+    
+    # Get run index
+    base_name = f'satellite_cfg{guidance_scale}'
+    run_idx = get_next_run_idx(out_dir, base_name)
+    if overwrite_samples and run_idx > 0:
+        run_idx = 0
+    
+    print(f"\n{'='*60}")
+    print(f"Output Run Index: {run_idx}")
+    print(f"{'='*60}")
+    
+    # Create samples directory
+    samples_dir = os.path.join(out_dir, f'{base_name}_idx{run_idx}_samples')
+    os.makedirs(samples_dir, exist_ok=True)
+    
+    ################# Sampling Loop ########################
     print("\n" + "="*60)
     print("Starting Satellite Rendering")
     print("="*60)
@@ -351,67 +370,51 @@ def render_satellite_from_semantics(
                     # SD-like: standard denoising
                     x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
         
-        all_renders.append(x)
-        print(f"  ✓ Rendered sample {sample_idx + 1}")
+        # Decode latent to RGB immediately
+        print(f"  Decoding sample {sample_idx + 1}...")
+        with torch.no_grad():
+            rgb_render = pred_vae.decode(x)
+        
+        # Normalize to [0, 1]
+        if pred_vae_config.get('tanh_activation', False):
+            rgb_render = torch.clamp(rgb_render, -1., 1.)
+            rgb_render = (rgb_render + 1) / 2
+        else:
+            rgb_render = torch.clamp(rgb_render, 0., 1.)
+        
+        # Save immediately
+        sample_path = os.path.join(samples_dir, f'sample_{sample_idx}.png')
+        save_image(rgb_render[0], sample_path)
+        
+        # Also save as .pt for further processing
+        sample_pt_path = os.path.join(samples_dir, f'sample_{sample_idx}.pt')
+        torch.save({
+            'rgb_tensor': rgb_render[0].cpu(),
+            'semantic_source': semantic_samples[sample_idx].get('semantic_channels', []),
+        }, sample_pt_path)
+        
+        print(f"  ✓ Saved sample {sample_idx + 1} to {sample_path}")
+        
+        # Keep for final grid
+        all_renders.append(rgb_render)
         
         # Free GPU memory between samples
         torch.cuda.empty_cache()
     
-    # Stack renders
-    all_renders = torch.cat(all_renders, dim=0)  # [N, C_latent, H_latent, W_latent]
+    # Stack all RGB renders for final grid
+    rgb_renders = torch.cat(all_renders, dim=0)  # [N, 3, H, W]
     
-    # Decode to RGB using satellite VAE
-    print("\nDecoding satellite latents to RGB...")
-    with torch.no_grad():
-        rgb_renders = pred_vae.decode(all_renders)
-    
-    # Normalize to [0, 1]
-    # Check if VAE uses tanh activation
-    if pred_vae_config.get('tanh_activation', False):
-        # VAE output is in [-1, 1]
-        rgb_renders = torch.clamp(rgb_renders, -1., 1.)
-        rgb_renders = (rgb_renders + 1) / 2
-    else:
-        # VAE output is in [0, 1]
-        rgb_renders = torch.clamp(rgb_renders, 0., 1.)
-    
-    # Save results
-    out_dir = f"{big_data_storage_path}/results/{task_name}/satellite_output"
-    os.makedirs(out_dir, exist_ok=True)
-    
-    # Get run index
-    base_name = f'satellite_cfg{guidance_scale}'
-    run_idx = get_next_run_idx(out_dir, base_name)
-    if overwrite_samples and run_idx > 0:
-        run_idx = 0
-    
-    print(f"\n{'='*60}")
-    print(f"Output Run Index: {run_idx}")
-    print(f"{'='*60}")
-    
-    # Save grid
+    # Save final grid visualization
+    print("\nCreating grid visualization...")
     grid = make_grid(rgb_renders, nrow=int(np.sqrt(len(semantic_samples))) + 1, 
                     padding=4, pad_value=1.0)
     output_path = os.path.join(out_dir, f'{base_name}_idx{run_idx}.png')
     save_image(grid, output_path)
-    print(f"\n✓ Saved grid visualization to {output_path}")
+    print(f"✓ Saved grid visualization to {output_path}")
     
-    # Save individual renders
-    samples_dir = os.path.join(out_dir, f'{base_name}_idx{run_idx}_samples')
-    os.makedirs(samples_dir, exist_ok=True)
-    
-    for idx in range(len(semantic_samples)):
-        sample_path = os.path.join(samples_dir, f'sample_{idx}.png')
-        save_image(rgb_renders[idx], sample_path)
-        
-        # Also save as .pt for further processing
-        sample_pt_path = os.path.join(samples_dir, f'sample_{idx}.pt')
-        torch.save({
-            'rgb_tensor': rgb_renders[idx].cpu(),
-            'semantic_source': semantic_samples[idx].get('semantic_channels', []),
-        }, sample_pt_path)
-    
-    print(f"✓ Saved {len(semantic_samples)} satellite renders to {samples_dir}")
+    print(f"\n{'='*60}")
+    print(f"✓ Completed! All {len(semantic_samples)} samples saved to {samples_dir}")
+    print(f"{'='*60}")
     
     return rgb_renders
 

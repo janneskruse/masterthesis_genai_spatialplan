@@ -32,13 +32,13 @@ def get_next_run_idx(output_dir: str, base_name: str) -> int:
     if not os.path.exists(output_dir):
         return 0
     
-    # Pattern to match files with idx suffix before extension
-    # Matches: {base_name}*_idx{number}.{ext}
-    pattern = re.compile(rf'{re.escape(base_name)}.*_idx(\d+)\.')
+    # Pattern to match files/directories with idx suffix
+    # Matches: {base_name}*_idx{number} (with or without extension)
+    pattern = re.compile(rf'{re.escape(base_name)}.*_idx(\d+)')
     
     max_idx = -1
     
-    # Scan all files in directory
+    # Scan all files and directories
     for filename in os.listdir(output_dir):
         match = pattern.search(filename)
         if match:
