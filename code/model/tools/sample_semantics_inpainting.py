@@ -611,7 +611,8 @@ def sample_semantics(
         sample_path = os.path.join(samples_dir, f'sample_{idx}.pt')
         
         # Extract patch metadata for Stage 2
-        patch_meta = cond_input.get('meta', [{}])[0] if 'meta' in cond_input else {}
+        # cond_input['meta'] is a dict, not a list
+        patch_meta = cond_input.get('meta', {})
         
         torch.save({
             'semantic_tensor': semantic_samples[idx].cpu(),
