@@ -142,7 +142,7 @@ def load_single_latent(latent_path: str, device: Optional[torch.device] = None) 
         device_map = 'cpu' if device is None else device
         
         if latent_path.suffix == '.pt':
-            return torch.load(latent_path, map_location=device_map)
+            return torch.load(latent_path, map_location=device_map, weights_only=False)
         elif latent_path.suffix == '.pkl':
             with open(latent_path, 'rb') as f:
                 data = pickle.load(f)

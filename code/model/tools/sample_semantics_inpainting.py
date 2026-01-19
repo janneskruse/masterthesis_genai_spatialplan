@@ -52,7 +52,7 @@ def load_lst_predictor(checkpoint_path, device):
         print(f"⚠ LST predictor checkpoint not found at {checkpoint_path}")
         return None
     
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     config = checkpoint.get('config', {})
     model = LSTPredictor(
@@ -691,7 +691,7 @@ def infer(args, config):
     ldm_path = os.path.join(data_dir, ldm_checkpoint)
     
     if os.path.exists(ldm_path):
-        checkpoint = torch.load(ldm_path, map_location=device)
+        checkpoint = torch.load(ldm_path, map_location=device, weights_only=False)
         
         # Handle both new format (dict with 'model_state_dict') and legacy format (direct state_dict)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:

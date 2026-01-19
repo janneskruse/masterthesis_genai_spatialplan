@@ -89,7 +89,7 @@ class VAERegistry:
             raise ValueError(f"Unknown VAE group: {group_name}. Available: {list(self.vae_groups.keys())}")
         
         if checkpoint_path is not None:
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
             
             # Handle both new format (dict with 'model_state_dict') and legacy format (direct state_dict)
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:

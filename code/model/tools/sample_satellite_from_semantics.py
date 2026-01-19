@@ -51,7 +51,7 @@ def load_semantic_samples(semantic_dir):
     
     samples = []
     for sample_file in sample_files:
-        sample_data = torch.load(sample_file, map_location='cpu')
+        sample_data = torch.load(sample_file, map_location='cpu', weights_only=False)
         samples.append(sample_data)
     
     print(f"✓ Loaded {len(samples)} semantic samples from {semantic_dir}")
@@ -379,7 +379,7 @@ def infer(args, config):
     vae_path = os.path.join(out_dir, satellite_train_config.get('autoencoder_ckpt_name', 'vae_urban_ddp_ckpt.pth'))
     
     if os.path.exists(vae_path):
-        checkpoint = torch.load(vae_path, map_location=device)
+        checkpoint = torch.load(vae_path, map_location=device, weights_only=False)
         
         # Handle both new format (dict with 'model_state_dict') and legacy format (direct state_dict)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
@@ -407,7 +407,7 @@ def infer(args, config):
     ldm_path = os.path.join(out_dir, satellite_train_config.get('ldm_ckpt_name', 'ddpm_urban_inpainting_ckpt.pth'))
     
     if os.path.exists(ldm_path):
-        checkpoint = torch.load(ldm_path, map_location=device)
+        checkpoint = torch.load(ldm_path, map_location=device, weights_only=False)
         
         # Handle both new format (dict with 'model_state_dict') and legacy format (direct state_dict)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:

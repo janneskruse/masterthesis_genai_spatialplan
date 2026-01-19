@@ -31,7 +31,7 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, device='cpu', is_mai
         print(f"Loading checkpoint: {checkpoint_path}")
         print(f"{'='*50}")
     
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     # Handle both dict format (with epoch info) and direct state_dict format
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
