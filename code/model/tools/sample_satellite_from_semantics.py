@@ -387,6 +387,8 @@ def infer(args, config):
     vae_groups = config['vae_groups']
     diffusion_stages = config['diffusion_stages']
     
+    repo_dir = config.get('repo_dir', '.')
+    
     big_data_storage_path = dataset_config.get('big_data_storage_path', '/work/zt75vipu-thesis/data')
     
     # Mode is 'satellite' for Stage 2
@@ -477,7 +479,7 @@ def infer(args, config):
         semantic_dir = args.semantic_dir
     else:
         # Default to semantic_output directory from config (same as semantic sampling)
-        semantic_output_dir = f"{big_data_storage_path}/results/{task_name}/semantic_output"
+        semantic_output_dir = f"{repo_dir}/results/{task_name}/semantic_output"
         
         # Find the latest semantics sample directory
         import glob
