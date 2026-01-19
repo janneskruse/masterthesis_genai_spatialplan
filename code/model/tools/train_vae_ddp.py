@@ -321,6 +321,9 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
     samples_dir_name = vae_group_config.get('samples_dir', f'{mode}_samples')
     stats_name = vae_group_config.get('stats_dir', f'{mode}_stats')
     
+    # checkpoint path
+    if load_checkpoint_path is not None:
+        load_checkpoint_path = os.path.join(out_dir, load_checkpoint_path)
     
     # Create output directories
     task_name = train_config_global.get('task_name', 'urban_inpainting')

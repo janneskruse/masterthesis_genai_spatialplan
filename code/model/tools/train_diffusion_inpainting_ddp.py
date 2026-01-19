@@ -175,11 +175,16 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # Path to prediction VAE latents
     latent_dir_name = prediction_vae_config.get('latents_dir', f'{prediction_group}_latents')
     task_name = train_config_global.get('task_name', 'urban_inpainting')
-    latent_path = f'{big_data_storage_path}/results/{task_name}/{latent_dir_name}'
+    out_dir = f"{big_data_storage_path}/results/{task_name}"
+    latent_path = f'{out_dir}/{latent_dir_name}'
     use_existing_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
     
     cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
+    
+    # checkpoint path
+    if load_checkpoint_path is not None:
+        load_checkpoint_path = os.path.join(out_dir, load_checkpoint_path)
     
     # Create output directory
     out_dir = f"{big_data_storage_path}/results/{task_name}"
