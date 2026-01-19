@@ -609,12 +609,22 @@ def sample_semantics(
     
     for idx in range(num_samples):
         sample_path = os.path.join(samples_dir, f'sample_{idx}.pt')
+        
+        # Extract patch metadata for Stage 2
+        patch_meta = cond_input.get('meta', [{}])[0] if 'meta' in cond_input else {}
+        
         torch.save({
             'semantic_tensor': semantic_samples[idx].cpu(),
-            'semantic_layers': semantic_layers,
+            'semantic_channels': semantic_layers,
+            'semantic_layers': semantic_layers,  # Keep for backward compatibility
             'conditioning': {k: v[0].cpu() if isinstance(v, torch.Tensor) else v for k, v in cond_input.items()},
-            'mask': mask_latent[0].cpu() if mask_latent is not None else None
-        }, sample_path)
+            'mask': mask_latent[0].cpu() if mask_latent is not None else None,
+            # Patch metadata for Stage 2 to load matching patch from dataset
+            'patch_index': patch_meta.get('patch_index', None),
+            'patch_region': patch_meta.get('region', None),
+            'patch_y': patch_meta.get('y', None),
+            'patch_x': patch_meta.get('x', None),
+        }, sample_path, weights_only=False)
     
     print(f"✓ Saved {num_samples} samples to {samples_dir}")
     
