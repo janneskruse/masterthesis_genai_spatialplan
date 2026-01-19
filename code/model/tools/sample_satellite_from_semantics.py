@@ -409,7 +409,7 @@ def render_satellite_from_semantics(
         torch.save({
             'rgb_tensor': rgb_renders[idx].cpu(),
             'semantic_source': semantic_samples[idx].get('semantic_channels', []),
-        }, sample_pt_path, weights_only=False)
+        }, sample_pt_path)
     
     print(f"✓ Saved {len(semantic_samples)} satellite renders to {samples_dir}")
     
