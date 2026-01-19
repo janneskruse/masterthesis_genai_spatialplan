@@ -20,6 +20,7 @@ from model.utils.colors import get_colormap_for_layer, apply_colormap_to_tensor
 def save_vae_reconstruction_samples(
     input_tensor: torch.Tensor,
     recon_tensor: torch.Tensor,
+    channel_names: List[str],
     layer_names: List[str],
     layers_registry: Dict,
     save_dir: str,
@@ -39,7 +40,8 @@ def save_vae_reconstruction_samples(
     Args:
         input_tensor: Input tensor [B, C, H, W]
         recon_tensor: Reconstructed tensor [B, C, H, W] (logits for binary, values for continuous)
-        layer_names: List of layer names corresponding to channels
+        channel_names: List of channel names (e.g., ['rgb:red', 'rgb:green', 'rgb:blue'])
+        layer_names: List of layer names for each channel (e.g., ['rgb', 'rgb', 'rgb'])
         layers_registry: Global layers configuration dict with normalization settings
         save_dir: Directory to save visualization images
         step: Training step number for filename
@@ -50,11 +52,12 @@ def save_vae_reconstruction_samples(
         >>> save_vae_reconstruction_samples(
         ...     input_tensor=input_tensor,
         ...     recon_tensor=recon,
-        ...     layer_names=['buildings', 'streets', 'lst'],
+        ...     channel_names=['rgb:red', 'rgb:green', 'rgb:blue'],
+        ...     layer_names=['rgb', 'rgb', 'rgb'],
         ...     layers_registry=config['layers'],
         ...     save_dir='./samples',
         ...     step=1000
-        ... )
+        ...     )
     """
     
     n_samples = min(n_samples, input_tensor.shape[0])
@@ -62,7 +65,7 @@ def save_vae_reconstruction_samples(
     # Visualize each layer separately based on layer registry
     vis_grids = []
     
-    for ch_idx, layer_name in enumerate(layer_names):
+    for ch_idx, (channel_name, layer_name) in enumerate(zip(channel_names, layer_names)):
         input_ch = input_tensor[:n_samples, ch_idx:ch_idx+1, :, :]
         recon_ch = recon_tensor[:n_samples, ch_idx:ch_idx+1, :, :]
         
@@ -117,15 +120,19 @@ def save_vae_reconstruction_samples(
         vis_grids.append(grid_ch)
     
     # Save each layer separately
-    for ch_idx, layer_name in enumerate(layer_names):
-        save_path = os.path.join(save_dir, f'recon_step_{step}_{layer_name.replace(":", "_")}.png')
+    for ch_idx, channel_name in enumerate(channel_names):
+        save_path = os.path.join(save_dir, f'recon_step_{step}_{channel_name.replace(":", "_")}.png')
         save_image(vis_grids[ch_idx], save_path)
     
     # Also save RGB composite if RGB layers are present
     if save_rgb_composite:
-        rgb_indices = [i for i, name in enumerate(layer_names) if 'rgb' in name.lower()]
-        print(f"[DEBUG] Found {len(rgb_indices)} RGB layers at indices: {rgb_indices}")
-        print(f"[DEBUG] Layer names: {layer_names}")
+        # Check for channels that belong to RGB layer (e.g., layer_name == 'rgb')
+        rgb_indices = [i for i, layer_name in enumerate(layer_names) if 'rgb' in layer_name.lower()]
+        
+        if len(rgb_indices) > 0:
+            print(f"[DEBUG] Found {len(rgb_indices)} RGB channel(s) at indices: {rgb_indices}")
+            print(f"[DEBUG] Channel names: {[channel_names[i] for i in rgb_indices]}")
+            print(f"[DEBUG] Layer names: {[layer_names[i] for i in rgb_indices]}")
         
         if len(rgb_indices) >= 3:
             try:
@@ -165,8 +172,8 @@ def save_vae_reconstruction_samples(
                 print(f"[ERROR] Failed to save RGB composite: {e}")
                 import traceback
                 traceback.print_exc()
-        else:
-            print(f"[WARNING] Not enough RGB layers found ({len(rgb_indices)} < 3), skipping RGB composite")
+        elif len(rgb_indices) > 0:
+            print(f"[WARNING] Found {len(rgb_indices)} RGB channel(s) but need 3 for composite, skipping")
 
 
 

@@ -690,7 +690,8 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
                     save_vae_reconstruction_samples(
                         input_tensor=input_tensor,
                         recon_tensor=recon,
-                        layer_names=layer_names,
+                        channel_names=channel_names,  # e.g., ['rgb:red', 'rgb:green', 'rgb:blue']
+                        layer_names=layer_names_batch,  # e.g., ['rgb', 'rgb', 'rgb']
                         layers_registry=layers_registry,
                         save_dir=samples_dir,
                         step=global_step,
