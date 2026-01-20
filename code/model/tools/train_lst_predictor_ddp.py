@@ -25,7 +25,7 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
-from model.utils.config_utils import get_prediction_channels
+from model.utils.layer_config import get_layer_channels_from_names
 from helpers.load_configs import load_configs
 from model.lst_predictor.predictor import LSTPredictor
 
@@ -61,27 +61,31 @@ def train_lst_predictor():
         print(yaml.dump(config, default_flow_style=False))
     
     dataset_config = config['dataset_params']
-    ldm_config = config.get('ldm_params', {})
     train_config = config['train_params']
+    layers_registry = config.get('layers', {})
+    vae_groups = config.get('vae_groups', {})
     
-    # Get semantic-specific config
-    semantic_ldm_config = ldm_config.get('semantic', ldm_config)
-    condition_config = semantic_ldm_config.get('condition_config', {})
-    semantic_train_config = train_config.get('semantic', train_config)
+    # Get semantic VAE group configuration
+    if 'semantic' not in vae_groups:
+        raise ValueError("Config must define 'semantic' VAE group for LST predictor training")
     
-    # Get semantic channels from condition config
-    semantic_channels = get_prediction_channels(condition_config)
+    semantic_vae_config = vae_groups['semantic']
+    semantic_layers = semantic_vae_config.get('layers', [])
     
-    if not semantic_channels:
-        # Fallback to default
-        semantic_channels = [
-            'osm:buildings',
-            'osm:streets',
-            'env:vegetation',
-            'osm:buildings_heights'
-        ]
+    if not semantic_layers:
+        raise ValueError("Semantic VAE group has no layers defined")
     
-    num_semantic_channels = len(semantic_channels)
+    # Count channels in semantic layers
+    num_semantic_channels = 0
+    for layer_name in semantic_layers:
+        if layer_name not in layers_registry:
+            raise ValueError(f"Layer '{layer_name}' not found in layers registry")
+        layer_config = layers_registry[layer_name]
+        channels = layer_config.get('channels', None)
+        if channels:
+            num_semantic_channels += len(channels)
+        else:
+            num_semantic_channels += 1  # Binary or single-channel layer
     
     # Optionally include NDVI as additional input
     include_ndvi = train_config.get('lst_predictor_use_ndvi', True)
@@ -110,11 +114,11 @@ def train_lst_predictor():
         print("Loading Urban Dataset for LST Predictor Training")
         print(f"{'='*50}")
     
+    # Use default mode to get access to ALL layers (RGB as prediction, rest as conditioning)
+    # This gives us semantic layers + LST + NDVI all in the conditioning dict
     urban_dataset = UrbanInpaintingDataset(
         split='train',
-        mode='semantic',
-        use_latents=False,
-        latent_path=None,
+        mode='default',  # Get all layers: RGB as image, rest as conditioning
         use_cached_patches=use_cached_patches,
         cache_dir=cache_dir
     )
@@ -122,7 +126,8 @@ def train_lst_predictor():
     if is_main:
         print(f"✓ Loaded {len(urban_dataset)} training patches")
         print(f"✓ Patch size: {urban_dataset.patch_size}x{urban_dataset.patch_size}")
-        print(f"✓ Semantic channels ({num_semantic_channels}): {semantic_channels}")
+        print(f"✓ Semantic layers: {semantic_layers}")
+        print(f"✓ Semantic channels: {num_semantic_channels}")
         print(f"✓ Include NDVI: {include_ndvi}")
     
     # Use DistributedSampler for multi-GPU
@@ -235,74 +240,112 @@ def train_lst_predictor():
         for batch_idx, data in enumerate(progress_bar):
             optimizer.zero_grad()
             
-            # Unpack data
+            # Extract data from batch (default mode returns: rgb_image, cond_dict)
+            # cond_dict contains: {'image': [B, C_cond, H, W], 'meta': [list of dicts]}
             if len(data) == 2:
-                im, cond_input = data
+                rgb_image, cond_dict = data
+                
+                # Extract conditioning image (contains all non-RGB layers)
+                if 'image' not in cond_dict or cond_dict['image'] is None:
+                    # No conditioning channels, skip
+                    continue
+                
+                cond_image = cond_dict['image']
+                
+                # Extract metadata
+                meta = cond_dict.get('meta', {})
+                # meta is a list of dicts (one per batch item)
+                if isinstance(meta, list) and len(meta) > 0:
+                    channel_names = meta[0].get('channel_names', [])
+                    layer_names = meta[0].get('layer_names', [])
+                else:
+                    channel_names = []
+                    layer_names = []
             else:
-                im = data
-                cond_input = {}
-            
-            # Build semantic tensor and extract LST target
-            if 'image' in cond_input and 'meta' in cond_input:
-                semantic_tensor = []
-                lst_target = None
-                ndvi_channel = None
-                mask = None
-                
-                meta = cond_input['meta']
-                # meta is a list of dicts (one per batch item), get spatial_names from first item
-                spatial_names = meta[0].get('spatial_names', []) if isinstance(meta, list) and len(meta) > 0 else []
-                
-                # Extract semantic channels
-                for sem_ch in semantic_channels:
-                    found = False
-                    for idx, name in enumerate(spatial_names):
-                        if sem_ch == name:
-                            semantic_tensor.append(cond_input['image'][:, idx:idx+1, :, :])
-                            found = True
-                            break
-                    
-                    if not found:
-                        B, _, H, W = cond_input['image'].shape
-                        semantic_tensor.append(torch.zeros(B, 1, H, W, device=cond_input['image'].device))
-                
-                # Extract LST target
-                for idx, name in enumerate(spatial_names):
-                    if 'landsat_surface_temp' in name or 'LST' in name or 'lst' in name:
-                        lst_target = cond_input['image'][:, idx:idx+1, :, :]
-                        break
-                
-                # Extract NDVI if needed
-                if include_ndvi:
-                    for idx, name in enumerate(spatial_names):
-                        if 'ndvi' in name.lower() and '_context' not in name:
-                            ndvi_channel = cond_input['image'][:, idx:idx+1, :, :]
-                            break
-                
-                # Extract inpainting mask from image channels
-                try:
-                    mask_idx = spatial_names.index('inpaint_mask')
-                    mask = cond_input['image'][:, mask_idx:mask_idx+1, :, :]
-                except (ValueError, IndexError):
-                    mask = None
-                
-                # Build input tensor
-                semantic_input = torch.cat(semantic_tensor, dim=1)
-                
-                if include_ndvi and ndvi_channel is not None:
-                    semantic_input = torch.cat([semantic_input, ndvi_channel], dim=1)
-                elif include_ndvi:
-                    # Create zero NDVI channel if not found
-                    B, _, H, W = semantic_input.shape
-                    semantic_input = torch.cat([semantic_input, torch.zeros(B, 1, H, W, device=semantic_input.device)], dim=1)
-                
-            else:
-                # No conditioning, skip this batch
+                # Unexpected format, skip
                 continue
+            
+            if not channel_names:
+                # No metadata, skip
+                continue
+            
+            # cond_image is [B, C_cond, H, W] containing all non-RGB layers
+            # This includes: semantic layers (buildings, streets, etc.) + LST + NDVI + mask
+            
+            # Build semantic input tensor from semantic layers only
+            semantic_tensor_list = []
+            for layer_name in semantic_layers:
+                layer_matches = get_layer_channels_from_names(channel_names, layer_name)
+                if not layer_matches:
+                    # Layer not found - create zero channel
+                    if len(semantic_tensor_list) > 0:
+                        B, _, H, W = semantic_tensor_list[0].shape
+                    else:
+                        B, _, H, W = cond_image.shape[0], 1, cond_image.shape[2], cond_image.shape[3]
+                    semantic_tensor_list.append(torch.zeros(B, 1, H, W, device=cond_image.device))
+                    if is_main and global_step == 0:
+                        print(f"⚠ Warning: Semantic layer '{layer_name}' not found - using zeros")
+                    continue
+                
+                # Add all channels for this layer
+                for idx, ch_name in layer_matches:
+                    semantic_tensor_list.append(cond_image[:, idx:idx+1, :, :])
+            
+            if not semantic_tensor_list:
+                # No semantic channels found, skip
+                if is_main and global_step == 0:
+                    print(f"⚠ Warning: No semantic layers found in batch")
+                continue
+            
+            # Extract LST target from conditioning
+            lst_target = None
+            lst_matches = get_layer_channels_from_names(channel_names, 'lst')
+            if lst_matches:
+                idx, _ = lst_matches[0]
+                lst_target = cond_image[:, idx:idx+1, :, :]
             
             if lst_target is None:
-                # No LST target found, skip
+                # Try alternative names
+                for idx, ch_name in enumerate(channel_names):
+                    if 'landsat_surface_temp' in ch_name.lower() or 'surface_temp' in ch_name.lower():
+                        lst_target = cond_image[:, idx:idx+1, :, :]
+                        break
+            
+            if lst_target is None:
+                if is_main and global_step == 0:
+                    print(f"⚠ Warning: LST target not found in batch")
+                    print(f"  Available layers: {set(layer_names)}")
+                    print(f"  Sample channels: {channel_names[:10]}")  # Show first 10
                 continue
+            
+            # Extract NDVI if needed
+            ndvi_channel = None
+            if include_ndvi:
+                ndvi_matches = get_layer_channels_from_names(channel_names, 'ndvi')
+                if ndvi_matches:
+                    idx, _ = ndvi_matches[0]
+                    ndvi_channel = cond_image[:, idx:idx+1, :, :]
+            
+            # Extract mask if available
+            mask = None
+            mask_matches = get_layer_channels_from_names(channel_names, 'inpainting_mask')
+            if mask_matches:
+                idx, _ = mask_matches[0]
+                mask = cond_image[:, idx:idx+1, :, :]
+            
+            # Build semantic input
+            semantic_input = torch.cat(semantic_tensor_list, dim=1)
+            
+            # Add NDVI if needed
+            if include_ndvi:
+                if ndvi_channel is not None:
+                    semantic_input = torch.cat([semantic_input, ndvi_channel], dim=1)
+                else:
+                    # Create zero NDVI channel
+                    B, _, H, W = semantic_input.shape
+                    semantic_input = torch.cat([semantic_input, torch.zeros(B, 1, H, W, device=semantic_input.device)], dim=1)
+                    if is_main and global_step == 0:
+                        print(f"⚠ Warning: NDVI not found - using zeros")
             
             semantic_input = semantic_input.float().to(device)
             lst_target = lst_target.float().to(device)
@@ -359,7 +402,7 @@ def train_lst_predictor():
                 'config': {
                     'in_channels': num_input_channels,
                     'hidden_dims': hidden_dims,
-                    'semantic_channels': semantic_channels,
+                    'semantic_layers': semantic_layers,
                     'include_ndvi': include_ndvi
                 }
             }, checkpoint_path)
@@ -380,7 +423,7 @@ def train_lst_predictor():
                 'config': {
                     'in_channels': num_input_channels,
                     'hidden_dims': hidden_dims,
-                    'semantic_channels': semantic_channels,
+                    'semantic_layers': semantic_layers,
                     'include_ndvi': include_ndvi
                 }
             }, periodic_path)
