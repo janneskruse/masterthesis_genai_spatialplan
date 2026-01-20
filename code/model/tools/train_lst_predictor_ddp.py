@@ -75,6 +75,11 @@ def train_lst_predictor():
     if not semantic_layers:
         raise ValueError("Semantic VAE group has no layers defined")
     
+    # Get LST normalization range from config for loss interpretation
+    lst_layer_config = layers_registry.get('lst', {})
+    lst_normalize_params = lst_layer_config.get('normalize_params', {})
+    lst_max_celsius = lst_normalize_params.get('max', 80)  # Default to 80°C if not specified
+    
     # Count channels in semantic layers
     num_semantic_channels = 0
     for layer_name in semantic_layers:
@@ -353,7 +358,8 @@ def train_lst_predictor():
             # Forward pass
             lst_pred = model(semantic_input)
             
-            # Compute loss
+            # Compute loss (LST is normalized to [0, 1] by dataset, so loss is in normalized units)
+            # To interpret: multiply loss by 80 to get approximate error in °C
             if use_mask_weighting and mask is not None:
                 mask = mask.float().to(device)
                 # Weighted loss: higher weight inside mask
@@ -384,7 +390,9 @@ def train_lst_predictor():
         # Epoch summary (main process only)
         epoch_loss = np.mean(losses)
         if is_main:
-            print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f}')
+            # Convert loss to Celsius for interpretability (loss is in normalized [0, 1] range)
+            epoch_loss_celsius = epoch_loss * lst_max_celsius
+            print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f} (~{epoch_loss_celsius:.2f}°C)')
         
         # Save best checkpoint (main process only)
         if is_main and epoch_loss < best_loss:
@@ -406,7 +414,8 @@ def train_lst_predictor():
                     'include_ndvi': include_ndvi
                 }
             }, checkpoint_path)
-            print(f"  ✓ Saved best model (loss: {best_loss:.4f})")
+            best_loss_celsius = best_loss * lst_max_celsius
+            print(f"  ✓ Saved best model (loss: {best_loss:.4f} ~{best_loss_celsius:.2f}°C)")
         
         # Save periodic checkpoint (main process only)
         if is_main and (epoch_idx + 1) % 10 == 0:
@@ -444,10 +453,10 @@ def train_lst_predictor():
         hours = int(training_time // 3600)
         minutes = int((training_time % 3600) // 60)
         seconds = int(training_time % 60)
-        
+        best_loss_celsius = best_loss * lst_max_celsius
         print(f"\n{'='*60}")
         print(f"✓ LST Predictor Training Complete at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}!")
-        print(f"✓ Best loss: {best_loss:.4f}")
+        print(f"✓ Best loss: {best_loss:.4f} (~{best_loss_celsius:.2f}°C)")
         print(f"✓ Total Training Time: {hours}h {minutes}m {seconds}s ({training_time:.2f} seconds)")
         print(f"{'='*60}")
     
