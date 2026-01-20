@@ -335,20 +335,23 @@ def sample_semantics(
         for group_name, image_key in groups_to_encode:
             print(f"  Encoding {group_name}...")
             
-            # Get VAE from registry (load if not already loaded)
-            group_vae = vae_registry.get_vae(group_name)
-            if group_vae is None:
+            # Check if VAE is already loaded, load if not
+            if group_name not in vae_registry.vaes:
                 # Load VAE for this group
-
                 group_vae_config = vae_groups[group_name]
                 ckpt_name = group_vae_config.get('checkpoint_name', f'{group_name}_vae_ckpt.pth')
-                ckpt_path = os.path.join(out_dir, ckpt_name)
                 
-                group_vae = vae_registry.load_vae(
+                # Get correct checkpoint directory
+                ckpt_path = os.path.join(data_dir, ckpt_name)
+                
+                vae_registry.load_vae(
                     group_name=group_name,
                     checkpoint_path=ckpt_path,
                     autoencoder_config=group_vae_config,
                 )
+            
+            # Now get the VAE (guaranteed to be loaded)
+            group_vae = vae_registry.get_vae(group_name)
             
             # Encode the full-res image to latent
             with torch.no_grad():
