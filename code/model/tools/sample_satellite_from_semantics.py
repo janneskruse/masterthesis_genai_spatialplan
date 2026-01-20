@@ -119,10 +119,10 @@ def render_satellite_from_semantics(
         use_latents=True
     )
     
-    # Get inpainting mode
+    # Get inpainting mode and sampling-time masking config
     inpainting_mode = inpainting_cfg.get('mode', 'sdlike')
     cfg_config = inpainting_cfg.get('cfg', {})
-    mask_groups = cfg_config.get('mask_groups', [])
+    sample_mask_groups = cfg_config.get('sample_mask_groups', [])
     
     print("\n" + "="*60)
     print("Satellite Rendering Configuration")
@@ -134,7 +134,7 @@ def render_satellite_from_semantics(
     print(f"Number of samples: {num_samples or len(semantic_samples)}")
     print(f"Guidance scale (CFG): {guidance_scale}")
     print(f"Inpainting mode: {inpainting_mode}")
-    print(f"Mask groups: {mask_groups}")
+    print(f"Sample mask groups (sampling-time): {sample_mask_groups}")
     
     # Load prediction VAE (satellite)
     big_data_storage_path = dataset_config.get('big_data_storage_path', '/work/zt75vipu-thesis/data')
@@ -326,16 +326,19 @@ def render_satellite_from_semantics(
                     env_latent = torch.zeros(1, z_channels, latent_size, latent_size, device=device)
                     cond_input[cond_group] = env_latent
         
-        # 3. Apply mask to specified conditioning groups (e.g., environmental)
-        if mask_groups and 'image' in cond_input and 'pixel_space_names' in cond_input['meta'][0]:
+        # 3. Apply sampling-time mask to specified conditioning groups (e.g., environmental)
+        # CRITICAL: This is where we apply conditional masking for sampling
+        # Training sees FULL environmental → learns spatial correlations
+        # Sampling masks environmental inside hole → model infers from boundaries
+        if sample_mask_groups and 'image' in cond_input and 'pixel_space_names' in cond_input['meta'][0]:
             pixel_names = cond_input['meta'][0]['pixel_space_names']
             if 'inpainting_mask' in pixel_names:
                 mask_idx = pixel_names.index('inpainting_mask')
                 mask_latent = cond_input['image'][:, mask_idx:mask_idx+1, :, :]
                 
-                # Mask conditioning latents (zeros out masked region)
-                cond_input = mask_conditioning_latents(cond_input, mask_latent, mask_groups)
-                print(f"  ✓ Masked conditioning groups: {mask_groups}")
+                # Mask conditioning latents (zeros out masked region) - sampling-time only!
+                cond_input = mask_conditioning_latents(cond_input, mask_latent, sample_mask_groups)
+                print(f"  ✓ Applied sampling-time mask to groups: {sample_mask_groups}")
         
         # Create unconditional input for CFG
         uncond_input = {}
