@@ -38,38 +38,75 @@ def apply_classifier_free_guidance_dropout(
     cond_dict: dict,
     drop_prob: float,
     drop_groups: list,
-    drop_pixel_space: bool = True
+    keep_mask: bool = True
 ) -> dict:
     """
     Apply classifier-free guidance dropout to conditioning.
     Randomly zeros out specified conditioning groups for CFG training.
     
+    CRITICAL: For inpainting, inpainting_mask MUST be preserved (keep_mask=True)!
+    
     Args:
         cond_dict: Conditioning dictionary with 'image' (pixel-space) and latent groups
         drop_prob: Probability of dropping conditioning (e.g., 0.1 = 10% chance)
         drop_groups: List of latent-space group names to drop (e.g., ['semantic', 'environmental'])
-        drop_pixel_space: Whether to also drop pixel-space conditioning (default True)
+        keep_mask: If True, preserve 'inpainting_mask' channel in pixel-space (default: True)
+                  All other pixel-space channels will be dropped
         
     Returns:
-        Modified conditioning dict with randomly dropped groups
+        NEW conditioning dict with randomly dropped groups (non-mutating)
         
     Note:
         Dropout is applied with a single random roll - either ALL specified groups
         are dropped together, or none are dropped. This maintains correlation
         between conditioning modalities.
+        
+        IMPORTANT: Returns a NEW dict to avoid mutating the original conditioning.
     """
     # Single random roll for all conditioning
     if np.random.rand() < drop_prob:
-        # Drop pixel-space conditioning
-        if drop_pixel_space and 'image' in cond_dict:
-            cond_dict['image'] = torch.zeros_like(cond_dict['image'])
+        # Create new dict to avoid mutation
+        new_cond_dict = {}
+        
+        # Preserve metadata (never drop)
+        if 'meta' in cond_dict:
+            new_cond_dict['meta'] = cond_dict['meta']
+        
+        # Handle pixel-space conditioning: drop all except inpainting_mask
+        if 'image' in cond_dict:
+            if keep_mask and 'meta' in cond_dict and 'pixel_space_names' in cond_dict['meta']:
+                # Selectively preserve inpainting_mask channel
+                pixel_names = cond_dict['meta']['pixel_space_names']
+                
+                if 'inpainting_mask' in pixel_names:
+                    # Zero out all channels except inpainting_mask
+                    mask_idx = pixel_names.index('inpainting_mask')
+                    dropped_image = torch.zeros_like(cond_dict['image'])
+                    dropped_image[:, mask_idx:mask_idx+1, :, :] = cond_dict['image'][:, mask_idx:mask_idx+1, :, :]
+                    new_cond_dict['image'] = dropped_image
+                else:
+                    # No mask found - drop everything
+                    new_cond_dict['image'] = torch.zeros_like(cond_dict['image'])
+            else:
+                # Drop all pixel-space conditioning
+                new_cond_dict['image'] = torch.zeros_like(cond_dict['image'])
         
         # Drop specified latent-space conditioning groups
-        for group_name in drop_groups:
-            if group_name in cond_dict:
-                cond_dict[group_name] = torch.zeros_like(cond_dict[group_name])
-    
-    return cond_dict
+        for key in cond_dict.keys():
+            if key in ['image', 'meta']:
+                continue  # Already handled
+            
+            if key in drop_groups:
+                # Zero out this group
+                new_cond_dict[key] = torch.zeros_like(cond_dict[key])
+            else:
+                # Keep this group
+                new_cond_dict[key] = cond_dict[key]
+        
+        return new_cond_dict
+    else:
+        # No dropout - return original dict unchanged
+        return cond_dict
 
 
 def load_latents(latent_path: str, prefix: str = None) -> List[str]:
