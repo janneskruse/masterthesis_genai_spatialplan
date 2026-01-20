@@ -15,6 +15,7 @@ from torchvision.utils import save_image, make_grid
 # Local imports
 from model.utils.layer_config import is_binary_layer, get_layer_dice_config
 from model.utils.colors import get_colormap_for_layer, apply_colormap_to_tensor
+from model.utils.samples import save_layerwise_comparisons, save_rgb_comparison
 
 
 def save_vae_reconstruction_samples(
@@ -60,110 +61,30 @@ def save_vae_reconstruction_samples(
         ...     )
     """
     
-    n_samples = min(n_samples, input_tensor.shape[0])
+    # Use unified comparison visualization
+    save_layerwise_comparisons(
+        input_tensor=input_tensor,
+        recon_tensor=recon_tensor,
+        channel_names=channel_names,
+        layer_names=layer_names,
+        layers_registry=layers_registry,
+        save_dir=save_dir,
+        filename_prefix=f'recon_step_{step}',
+        n_samples=n_samples,
+        use_colormaps=True
+    )
     
-    # Visualize each layer separately based on layer registry
-    vis_grids = []
-    
-    for ch_idx, (channel_name, layer_name) in enumerate(zip(channel_names, layer_names)):
-        input_ch = input_tensor[:n_samples, ch_idx:ch_idx+1, :, :]
-        recon_ch = recon_tensor[:n_samples, ch_idx:ch_idx+1, :, :]
-        
-        # Get layer properties from registry
-        layer_info = layers_registry.get(layer_name, {})
-        layer_type = layer_info.get('type', 'continuous')
-        normalize_method = layer_info.get('normalize', 'minmax')
-        
-        # Determine visualization method based on layer type
-        if layer_type == 'binary':
-            # Binary channels: input is 0/1, recon is logits
-            input_vis = torch.clamp(input_ch, 0, 1)
-            recon_vis = torch.sigmoid(recon_ch)  # Apply sigmoid to logits
-            
-        else:
-            # Continuous/RGB channels: Min-max normalization based on actual data range
-            # VAE latent space may have different scale than input, so normalize independently
-            # Check if mask_layer is specified (e.g., buildings_heights masked by buildings)
-            mask_layer = layer_info.get('mask_layer', None)
-            if mask_layer:
-                # For masked layers, normalize only non-zero regions
-                input_nonzero = input_ch[input_ch > 0]
-                recon_nonzero = recon_ch[recon_ch > 0]
-                if len(input_nonzero) > 0:
-                    input_min, input_max = input_nonzero.min(), input_nonzero.max()
-                    input_vis = (input_ch - input_min) / (input_max - input_min + 1e-8)
-                    input_vis = torch.clamp(input_vis, 0, 1)
-                else:
-                    input_vis = input_ch
-                
-                if len(recon_nonzero) > 0:
-                    recon_min, recon_max = recon_nonzero.min(), recon_nonzero.max()
-                    recon_vis = (recon_ch - recon_min) / (recon_max - recon_min + 1e-8)
-                    recon_vis = torch.clamp(recon_vis, 0, 1)
-                else:
-                    recon_vis = recon_ch
-            else:
-                # Regular min-max normalization (works for all: percentile, clip, custom, minmax)
-                input_vis = (input_ch - input_ch.min()) / (input_ch.max() - input_ch.min() + 1e-8)
-                recon_vis = (recon_ch - recon_ch.min()) / (recon_ch.max() - recon_ch.min() + 1e-8)
-        
-        # Create comparison for this layer
-        comparison_ch = torch.cat([input_vis, recon_vis], dim=0)
-        
-        # Apply colormap for continuous layers (but NOT for RGB channels)
-        # RGB channels should be visualized as grayscale individually, composite handled separately
-        if layer_type != 'binary' and 'rgb' not in layer_name.lower():
-            cmap = get_colormap_for_layer(layer_name)
-            comparison_ch = apply_colormap_to_tensor(comparison_ch, cmap)
-        
-        grid_ch = make_grid(comparison_ch, nrow=n_samples, normalize=False, padding=2, pad_value=1.0)
-        vis_grids.append(grid_ch)
-    
-    # Save each layer separately
-    for ch_idx, channel_name in enumerate(channel_names):
-        save_path = os.path.join(save_dir, f'recon_step_{step}_{channel_name.replace(":", "_")}.png')
-        save_image(vis_grids[ch_idx], save_path)
-    
-    # Also save RGB composite if RGB layers are present
+    # Save RGB composite if present
     if save_rgb_composite:
-        # Check for channels that belong to RGB layer (e.g., layer_name == 'rgb')
-        rgb_indices = [i for i, layer_name in enumerate(layer_names) if 'rgb' in layer_name.lower()]
-        
-        if len(rgb_indices) >= 3:
-            try:
-                # Extract the first 3 RGB channels using their indices
-                rgb_input = input_tensor[:n_samples, rgb_indices[:3], :, :]
-                rgb_recon = recon_tensor[:n_samples, rgb_indices[:3], :, :]
-                
-                # Normalize RGB composite based on actual data range
-                # VAE may produce different scale than input, normalize independently
-                # Per-channel normalization for RGB (to preserve color balance)
-                rgb_input_normalized = []
-                rgb_recon_normalized = []
-                for ch_idx in range(3):  # Process exactly 3 channels (R, G, B)
-                    input_ch = rgb_input[:, ch_idx:ch_idx+1, :, :]
-                    recon_ch = rgb_recon[:, ch_idx:ch_idx+1, :, :]
-                    
-                    # Min-max normalize each channel independently
-                    input_norm = (input_ch - input_ch.min()) / (input_ch.max() - input_ch.min() + 1e-8)
-                    recon_norm = (recon_ch - recon_ch.min()) / (recon_ch.max() - recon_ch.min() + 1e-8)
-                    
-                    rgb_input_normalized.append(input_norm)
-                    rgb_recon_normalized.append(recon_norm)
-                
-                rgb_input = torch.cat(rgb_input_normalized, dim=1)
-                rgb_recon = torch.cat(rgb_recon_normalized, dim=1)
-                
-                comparison_rgb = torch.cat([rgb_input, rgb_recon], dim=0)
-                grid_rgb = make_grid(comparison_rgb, nrow=n_samples, padding=2, pad_value=1.0)
-                
-                save_path = os.path.join(save_dir, f'recon_step_{step}_RGB_composite.png')
-                save_image(grid_rgb, save_path)
-                
-            except Exception as e:
-                print(f"[ERROR] Failed to save RGB composite: {e}")
-                import traceback
-                traceback.print_exc()
+        rgb_save_path = os.path.join(save_dir, f'recon_step_{step}_RGB_composite.png')
+        save_rgb_comparison(
+            input_tensor=input_tensor,
+            recon_tensor=recon_tensor,
+            layer_names=layer_names,
+            save_path=rgb_save_path,
+            n_samples=n_samples,
+            normalize_per_channel=True
+        )
 
 
 
