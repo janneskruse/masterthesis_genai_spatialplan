@@ -548,29 +548,35 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     else:
                         x_sample = torch.randn_like(x_sample)
                     
-                    # Quick sampling (fewer steps for speed)
-                    sample_steps = min(50, scheduler.num_timesteps)
-                    step_size = scheduler.num_timesteps // sample_steps
+                    # Quick sampling (DDIM-style with fewer steps for speed)
+                    # Use more steps for preview to get cleaner results (100 is good balance)
+                    sample_steps = min(100, scheduler.num_timesteps)
+                    
+                    # Create timestep schedule: evenly spaced from T to 0
+                    timesteps = np.linspace(scheduler.num_timesteps - 1, 0, sample_steps).astype(int)
                     
                     # Prepare conditioning for sampling (slice all keys to num_samples)
                     sample_cond = {}
                     for key in cond_input:
                         sample_cond[key] = cond_input[key][:num_samples]
                     
-                    for i in reversed(range(0, scheduler.num_timesteps, step_size)):
-                        t_sample = torch.full((num_samples,), i, device=device, dtype=torch.long)
-                        noise_pred = model(x_sample, t_sample, cond_input=sample_cond)
+                    for t_idx in range(len(timesteps)):
+                        t = timesteps[t_idx]
+                        t_tensor = torch.full((num_samples,), t, device=device, dtype=torch.long)
+                        
+                        # Predict noise
+                        noise_pred = model(x_sample, t_tensor, cond_input=sample_cond)
                         
                         if inpainting_mode == "hard":
-                            # FIX: Use inpainting scheduler with fixed noise_context
+                            # Use inpainting scheduler with fixed noise_context
                             x_sample, _ = scheduler.sample_prev_timestep_inpainting(
-                                x_sample, noise_pred, i,
+                                x_sample, noise_pred, t,
                                 im_latent[:num_samples],
                                 mask_latent[:num_samples],
                                 noise_context=sample_noise_context
                             )
                         else:
-                            x_sample, _ = scheduler.sample_prev_timestep(x_sample, noise_pred, i)
+                            x_sample, _ = scheduler.sample_prev_timestep(x_sample, noise_pred, t)
                     
                     # Decode to pixel space
                     if vae is not None:
