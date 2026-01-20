@@ -32,6 +32,7 @@ from model.utils.diffusion_utils import (
     apply_seam_mode,
     compute_boundary_aware_loss
 )
+from model.utils.samples import save_layerwise_samples, save_rgb_composite
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
@@ -577,22 +578,28 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     else:
                         sample_decoded = x_sample
                     
-                    # Save visualization (simple normalization per channel)
-                    vis_samples = []
-                    for ch_idx in range(min(sample_decoded.shape[1], 4)):  # Show up to 4 channels
-                        ch = sample_decoded[:, ch_idx:ch_idx+1, :, :]
-                        # Normalize to [0, 1] range
-                        ch_min = ch.min()
-                        ch_max = ch.max()
-                        if ch_max > ch_min:
-                            ch = (ch - ch_min) / (ch_max - ch_min)
-                        vis_samples.append(ch)
+                    # Save layerwise visualizations using unified utility
+                    save_layerwise_samples(
+                        tensor=sample_decoded,
+                        layer_names=prediction_layers,
+                        layers_registry=layers_registry,
+                        save_dir=os.path.join(out_dir, samples_dir_name),
+                        filename_prefix=f'sample_step_{global_step}',
+                        n_samples=num_samples,
+                        is_reconstruction=True,  # VAE decoding, may have different scale
+                        use_colormaps=True
+                    )
                     
-                    if vis_samples:
-                        vis_tensor = torch.cat(vis_samples, dim=1)
-                        grid = make_grid(vis_tensor, nrow=num_samples, normalize=False, padding=2)
-                        save_path = os.path.join(out_dir, samples_dir_name, f'sample_step_{global_step}.png')
-                        save_image(grid, save_path)
+                    # Also save RGB composite if available
+                    if 'rgb' in [l.lower() for l in prediction_layers]:
+                        rgb_save_path = os.path.join(out_dir, samples_dir_name, f'sample_step_{global_step}_RGB_composite.png')
+                        save_rgb_composite(
+                            tensor=sample_decoded,
+                            layer_names=prediction_layers,
+                            save_path=rgb_save_path,
+                            n_samples=num_samples,
+                            normalize_per_channel=True
+                        )
                     
                     model.train()
         
