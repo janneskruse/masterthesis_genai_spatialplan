@@ -213,9 +213,19 @@ diffusion_stages:
     # Inpainting configuration
     inpainting:
       mode: 'hard'  # or 'sdlike'
-      loss: 'weighted'  # Use weighted to learn full distribution
+      loss: 'weighted'  # Use weighted to learn full distribution # 'masked' for focusing only on missing regions
       mask_loss_weight: 8.0
       outside_weight: 1.0  # Non-zero to learn context! Critical for coherent generation
+      
+      # Seam improvement strategy (optional)
+      # Options: None (default), 'dilate' (boundary ring loss), 'feather' (mask blurring), 'repaint' (reinjection)
+      seam: None
+      seam_config:
+        ring_width_px: 1      # For 'dilate' mode: boundary ring width
+        ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
+        blur_radius: 3        # For 'feather' mode: mask blur radius
+        resample_steps: 10    # For 'repaint' mode: resample interval
+        jump_length: 3        # For 'repaint' mode: timesteps to jump back
       
       cfg:
         drop_prob: 0.1
@@ -254,10 +264,20 @@ diffusion_stages:
     
     # Inpainting configuration
     inpainting:
-      mode: 'sdlike'  # SD-like for smooth photorealistic blending (satellite imagery benefits from seamless transitions)
-      loss: 'weighted'  # Learn full distribution for realistic rendering
+      mode: 'hard'  # or 'sdlike'
+      loss: 'weighted'  # Learn full distribution for realistic rendering # 'masked' to focus only on missing regions
       mask_loss_weight: 4.0  # Lower weight for sdlike (model processes whole image)
       outside_weight: 1.0  # Learn photorealistic context! Critical for realistic satellite imagery
+      
+      # Seam improvement strategy (optional)
+      # 'feather' recommended for sdlike mode to blend generated content smoothly
+      seam: 'feather'
+      seam_config:
+        ring_width_px: 1      # For 'dilate' mode: boundary ring width
+        ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
+        blur_radius: 2        # For 'feather' mode: mask blur radius (smaller for satellite to preserve detail)
+        resample_steps: 10    # For 'repaint' mode: resample interval
+        jump_length: 3        # For 'repaint' mode: timesteps to jump back
       
       cfg:
         drop_prob: 0.1

@@ -3,13 +3,14 @@
 # Standard libraries
 import pickle
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 # Data Handling
 import numpy as np
 
 # Data Science/ML libraries
 import torch
+import torch.nn.functional as F
 
 
 def mask_conditioning_latents(cond_dict: dict, mask_latent: torch.Tensor, mask_groups: list) -> dict:
@@ -227,3 +228,287 @@ def drop_class_condition(class_condition, class_drop_prob, im):
         return class_condition * class_drop_mask
     else:
         return class_condition
+
+
+# ==============================================================================
+# SEAM IMPROVEMENT STRATEGIES FOR INPAINTING
+# ==============================================================================
+
+def create_boundary_ring(mask_latent: torch.Tensor, ring_width_px: int = 1) -> torch.Tensor:
+    """
+    Create a boundary ring around the mask for seam-aware loss weighting.
+    
+    This dilates the mask and subtracts the original to get a ring region
+    around the hole boundary. Useful for emphasizing seam coherence during training.
+    
+    Args:
+        mask_latent: Binary mask [B, 1, H, W] (1=inpaint, 0=keep)
+        ring_width_px: Width of the ring in pixels (default: 1)
+        
+    Returns:
+        Binary ring mask [B, 1, H, W] (1=ring region, 0=elsewhere)
+        
+    Example:
+        ```
+        mask:    [0 0 0 0]     ring:    [0 1 1 0]
+                 [0 1 1 0]  →          [1 0 0 1]
+                 [0 1 1 0]             [1 0 0 1]
+                 [0 0 0 0]             [0 1 1 0]
+        ```
+    """
+    kernel_size = 2 * ring_width_px + 1
+    dilated = F.max_pool2d(
+        mask_latent,
+        kernel_size=kernel_size,
+        stride=1,
+        padding=ring_width_px
+    )
+    ring = torch.clamp(dilated - mask_latent, 0, 1)
+    return ring
+
+
+def feather_mask(mask: torch.Tensor, blur_radius: int = 3) -> torch.Tensor:
+    """
+    Blur mask edges for smooth transitions (mask feathering).
+    
+    Uses average pooling as a Gaussian blur approximation to create
+    soft mask boundaries. Useful for seamless compositing in SD-like mode.
+    
+    Args:
+        mask: Binary or soft mask [B, 1, H, W]
+        blur_radius: Radius of blur kernel in pixels (default: 3)
+        
+    Returns:
+        Feathered mask [B, 1, H, W] with soft boundaries
+        
+    Note:
+        For sampling-time compositing:
+        output = feathered_mask * generated + (1 - feathered_mask) * original
+    """
+    kernel_size = 2 * blur_radius + 1
+    # Use avg_pool2d for efficient blurring
+    mask_feathered = F.avg_pool2d(
+        mask,
+        kernel_size=kernel_size,
+        stride=1,
+        padding=blur_radius,
+        count_include_pad=False
+    )
+    return mask_feathered
+
+
+def compute_boundary_aware_loss(
+    noise_pred: torch.Tensor,
+    noise: torch.Tensor,
+    mask_latent: torch.Tensor,
+    loss_type: str,
+    mask_loss_weight: float = 8.0,
+    outside_weight: float = 0.0,
+    use_boundary_ring: bool = False,
+    ring_width_px: int = 1,
+    ring_weight: float = 2.0
+) -> torch.Tensor:
+    """
+    Enhanced loss computation with optional boundary ring emphasis.
+    
+    Adds extra weight to the boundary ring region to improve seam coherence
+    without allowing edits outside the mask.
+    
+    Args:
+        noise_pred: Predicted noise [B, C, H, W]
+        noise: Target noise [B, C, H, W]
+        mask_latent: Binary mask [B, 1, H, W] (1=inpaint, 0=keep)
+        loss_type: "masked" (loss only inside mask) or "weighted" (weighted full-image)
+        mask_loss_weight: Weight for masked region
+        outside_weight: Weight for outside region (usually 0.0 for hard mode)
+        use_boundary_ring: If True, add extra weight to boundary ring
+        ring_width_px: Width of boundary ring in pixels
+        ring_weight: Weight multiplier for boundary ring region
+        
+    Returns:
+        Loss scalar
+    """
+    if loss_type == "masked":
+        return F.mse_loss(noise_pred * mask_latent, noise * mask_latent)
+    
+    # Weighted full-image MSE
+    per_pix = F.mse_loss(noise_pred, noise, reduction='none')
+    
+    if use_boundary_ring:
+        # Create boundary ring for seam emphasis
+        ring = create_boundary_ring(mask_latent, ring_width_px)
+        
+        # Weight map: outside + ring + inside
+        # Ensure no overlap: outside * (1 - mask - ring) + ring * ring + mask * mask
+        w = (outside_weight * (1.0 - mask_latent - ring) +
+             ring_weight * ring +
+             mask_loss_weight * mask_latent)
+    else:
+        # Standard weighting
+        w = outside_weight * (1.0 - mask_latent) + mask_loss_weight * mask_latent
+    
+    return (per_pix * w).mean()
+
+
+def apply_seam_mode(
+    mode: Optional[str],
+    **kwargs
+) -> Tuple[Optional[torch.Tensor], dict]:
+    """
+    Apply seam improvement strategy for inpainting.
+    
+    This is the main dispatcher function that applies the specified seam mode.
+    Different modes are used at different stages:
+    - 'dilate': Training-time boundary ring loss (returns modified loss params)
+    - 'feather': Sampling-time mask feathering (returns feathered mask)
+    - 'repaint': Sampling-time reinjection (returns reinjection config)
+    - None: No seam improvement (default)
+    
+    Args:
+        mode: 'dilate', 'feather', 'repaint', or None
+        **kwargs: Mode-specific parameters
+        
+    For 'dilate' mode (training):
+        - mask_latent: Binary mask [B, 1, H, W]
+        - ring_width_px: Ring width in pixels (default: 1)
+        Returns: (ring_mask, {})
+        
+    For 'feather' mode (sampling):
+        - mask: Mask to feather [B, 1, H, W]
+        - blur_radius: Blur radius in pixels (default: 3)
+        Returns: (feathered_mask, {})
+        
+    For 'repaint' mode (sampling):
+        Returns: (None, repaint_config_dict)
+        
+    Returns:
+        Tuple of (result_tensor, config_dict)
+        - result_tensor: Modified mask or None
+        - config_dict: Additional configuration for the mode
+    """
+    if mode is None or mode.lower() == 'none':
+        return None, {}
+    
+    mode = mode.lower()
+    
+    if mode == 'dilate':
+        # Training-time: create boundary ring for loss weighting
+        mask_latent = kwargs.get('mask_latent')
+        ring_width_px = kwargs.get('ring_width_px', 1)
+        
+        if mask_latent is None:
+            raise ValueError("'dilate' mode requires 'mask_latent' argument")
+        
+        ring_mask = create_boundary_ring(mask_latent, ring_width_px)
+        return ring_mask, {'ring_width_px': ring_width_px}
+    
+    elif mode == 'feather':
+        # Sampling-time: feather mask edges for smooth compositing
+        mask = kwargs.get('mask')
+        blur_radius = kwargs.get('blur_radius', 3)
+        
+        if mask is None:
+            raise ValueError("'feather' mode requires 'mask' argument")
+        
+        feathered_mask = feather_mask(mask, blur_radius)
+        return feathered_mask, {'blur_radius': blur_radius}
+    
+    elif mode == 'repaint':
+        # Sampling-time: RePaint-style reinjection config
+        resample_steps = kwargs.get('resample_steps', 10)
+        jump_length = kwargs.get('jump_length', 3)
+        
+        return None, {
+            'resample_steps': resample_steps,
+            'jump_length': jump_length
+        }
+    
+    else:
+        raise ValueError(
+            f"Unknown seam mode: '{mode}'. "
+            f"Valid modes: 'dilate', 'feather', 'repaint', None"
+        )
+
+
+def sample_with_repaint(
+    model,
+    scheduler,
+    x0_latent: torch.Tensor,
+    mask_latent: torch.Tensor,
+    cond_input: dict,
+    num_steps: int = 50,
+    resample_steps: int = 10,
+    jump_length: int = 3,
+    device: torch.device = None
+) -> torch.Tensor:
+    """
+    Sample with RePaint-style known-region reinjection.
+    
+    RePaint paper: https://arxiv.org/abs/2201.09865
+    
+    Key idea: At each denoising step, reinject the known region (outside mask)
+    with properly noised original content. Optionally jump back in time for
+    better harmonization between known and generated regions.
+    
+    Args:
+        model: Diffusion U-Net model
+        scheduler: Noise scheduler
+        x0_latent: Original latent (clean) [B, C, H, W]
+        mask_latent: Binary mask [B, 1, H, W] (1=inpaint, 0=keep)
+        cond_input: Conditioning dictionary
+        num_steps: Number of denoising steps
+        resample_steps: Resample interval (jump back every N steps)
+        jump_length: Number of timesteps to jump back
+        device: Device for computation
+        
+    Returns:
+        Inpainted latent [B, C, H, W]
+        
+    Note:
+        This enforces hard constraints on the known region while allowing
+        the model to generate coherent content that respects boundaries.
+    """
+    if device is None:
+        device = x0_latent.device
+    
+    # Start from pure noise
+    x_t = torch.randn_like(x0_latent)
+    
+    # Compute timestep schedule
+    timestep_schedule = list(reversed(range(0, scheduler.num_timesteps, scheduler.num_timesteps // num_steps)))
+    
+    model.eval()
+    with torch.no_grad():
+        for step_idx, t in enumerate(timestep_schedule):
+            # Create timestep tensor
+            t_tensor = torch.full((x_t.shape[0],), t, device=device, dtype=torch.long)
+            
+            # Standard denoising step
+            noise_pred = model(x_t, t_tensor, cond_input=cond_input)
+            x_t_minus_1 = scheduler.sample_prev_timestep(x_t, noise_pred, torch.tensor([t], device=device))
+            
+            # Reinject known region (always)
+            if t > 0:
+                # Properly noise the known region to timestep t-1
+                known_noise = torch.randn_like(x0_latent)
+                t_prev = max(0, t - scheduler.num_timesteps // num_steps)
+                t_prev_tensor = torch.full((x0_latent.shape[0],), t_prev, device=device, dtype=torch.long)
+                known_noisy = scheduler.add_noise(x0_latent, known_noise, t_prev_tensor)
+            else:
+                # Last step: use clean original
+                known_noisy = x0_latent
+            
+            # Composite: generated inside mask, known outside mask
+            x_t_minus_1 = mask_latent * x_t_minus_1 + (1 - mask_latent) * known_noisy
+            
+            # Optional: resample/jump-back for better harmonization
+            if resample_steps > 0 and step_idx % resample_steps == 0 and t > jump_length:
+                # Jump back in time and resample
+                jump_t = t - jump_length
+                jump_noise = torch.randn_like(x_t_minus_1)
+                jump_t_tensor = torch.full((x_t_minus_1.shape[0],), jump_t, device=device, dtype=torch.long)
+                x_t = scheduler.add_noise(x_t_minus_1, jump_noise, jump_t_tensor)
+            else:
+                x_t = x_t_minus_1
+    
+    return x_t

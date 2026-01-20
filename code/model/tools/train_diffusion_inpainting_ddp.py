@@ -27,7 +27,11 @@ from model.diffusion_blocks.unet_cond_base import Unet
 from model.utils.vae_registry import VAERegistry
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.utils.data_utils import collate_fn
-from model.utils.diffusion_utils import apply_classifier_free_guidance_dropout
+from model.utils.diffusion_utils import (
+    apply_classifier_free_guidance_dropout,
+    apply_seam_mode,
+    compute_boundary_aware_loss
+)
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
@@ -37,121 +41,6 @@ from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
 load_cuda()
-
-
-def compute_noise_loss(noise_pred, noise, mask_latent, loss_type, mask_loss_weight=8.0, outside_weight=0.0):
-    """
-    Compute noise prediction loss for inpainting.
-    
-    Args:
-        noise_pred: Predicted noise
-        noise: Target noise
-        mask_latent: Binary mask in latent space (1=regenerate, 0=keep)
-        loss_type: "masked" or "weighted"
-        mask_loss_weight: Weight for masked region
-        outside_weight: Weight for outside region (usually 0.0 for hard mode)
-        
-    Returns:
-        Loss scalar
-    """
-    if loss_type == "masked":
-        return torchF.mse_loss(noise_pred * mask_latent, noise * mask_latent)
-
-    # weighted full-image MSE
-    per_pix = torchF.mse_loss(noise_pred, noise, reduction='none')
-    w = outside_weight * (1.0 - mask_latent) + mask_loss_weight * mask_latent
-    return (per_pix * w).mean()
-
-
-# ==============================================================================
-# STEP 2 TODO: SEAM IMPROVEMENT STRATEGIES
-# ==============================================================================
-#
-# Goal: Improve boundary continuity at the hole seam without allowing edits outside
-#
-# Strategy 2.1: Boundary-band (ring) loss (training-time)
-# ---------------------------------------------------------
-# Add a dilated ring around the mask to emphasize seam coherence:
-#
-# def create_boundary_ring(mask_latent, ring_width_px=1):
-#     """Create a boundary ring for seam-aware loss weighting."""
-#     # Dilate mask to create ring
-#     import torch.nn.functional as F
-#     kernel_size = 2 * ring_width_px + 1
-#     dilated = F.max_pool2d(mask_latent, kernel_size=kernel_size, stride=1, 
-#                           padding=ring_width_px)
-#     ring = torch.clamp(dilated - mask_latent, 0, 1)
-#     return ring
-#
-# def compute_noise_loss_with_boundary(noise_pred, noise, mask_latent, 
-#                                     loss_type, mask_loss_weight, outside_weight,
-#                                     use_boundary_ring=False, ring_weight=2.0):
-#     """Enhanced loss with optional boundary ring emphasis."""
-#     if loss_type == "masked":
-#         return torchF.mse_loss(noise_pred * mask_latent, noise * mask_latent)
-#     
-#     per_pix = torchF.mse_loss(noise_pred, noise, reduction='none')
-#     
-#     if use_boundary_ring:
-#         ring = create_boundary_ring(mask_latent, ring_width_px=1)
-#         w = (outside_weight * (1.0 - mask_latent - ring) + 
-#              ring_weight * ring + 
-#              mask_loss_weight * mask_latent)
-#     else:
-#         w = outside_weight * (1.0 - mask_latent) + mask_loss_weight * mask_latent
-#     
-#     return (per_pix * w).mean()
-#
-# Strategy 2.2: Mask feathering (sampling-time; SD-like mode)
-# ------------------------------------------------------------
-# For SD-like inpainting, blend decoded output with original using blurred mask:
-#
-# def feather_mask(mask, blur_radius=3):
-#     """Blur mask edges for smooth transitions."""
-#     import torch.nn.functional as F
-#     kernel_size = 2 * blur_radius + 1
-#     # Gaussian blur approximation with avg_pool2d
-#     mask_blur = F.avg_pool2d(mask, kernel_size=kernel_size, stride=1, 
-#                             padding=blur_radius, count_include_pad=False)
-#     return mask_blur
-#
-# # In sampling loop (after decoding):
-# # mask_feathered = feather_mask(mask_latent, blur_radius=2)
-# # output_blended = mask_feathered * generated + (1 - mask_feathered) * original
-#
-# Strategy 2.3: RePaint-style resampling (sampling-time; hard constraint)
-# ------------------------------------------------------------------------
-# Reinject known pixels every sampling step + optional jump-back schedule:
-#
-# def sample_with_repaint(model, scheduler, x0_latent, mask_latent, cond_input,
-#                        num_steps=50, resample_steps=10, jump_length=3):
-#     """Sample with RePaint-style known-region reinjection."""
-#     x_t = torch.randn_like(x0_latent)
-#     
-#     for t in reversed(range(0, scheduler.num_timesteps, scheduler.num_timesteps // num_steps)):
-#         # Standard denoising step
-#         noise_pred = model(x_t, t, cond_input=cond_input)
-#         x_t_minus_1 = scheduler.sample_prev_timestep(x_t, noise_pred, t)
-#         
-#         # Reinject known region (always)
-#         known_noisy = scheduler.add_noise(x0_latent, torch.randn_like(x0_latent), t-1)
-#         x_t_minus_1 = mask_latent * x_t_minus_1 + (1 - mask_latent) * known_noisy
-#         
-#         # Optional: resample/jump-back for better harmonization
-#         if t % resample_steps == 0 and t > jump_length:
-#             # Jump back and resample
-#             x_t = scheduler.add_noise(x_t_minus_1, torch.randn_like(x_t_minus_1), jump_length)
-#         else:
-#             x_t = x_t_minus_1
-#     
-#     return x_t
-#
-# References to check:
-# - RePaint: https://arxiv.org/abs/2201.09865
-# - MAT (Mask-Aware Transformer): https://arxiv.org/abs/2203.15270  
-# - CVPR 2025 MTADiffusion or similar seam-aware methods
-#
-# ==============================================================================
 
 
 def train(mode: str = 'semantic', load_checkpoint_path: str = None):
@@ -451,6 +340,13 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # - Latent-space: drop specified groups from drop_groups
     keep_mask = True  # Always True for inpainting
     
+    # Seam improvement configuration
+    seam_mode = inpainting_config.get('seam', None)
+    seam_config = inpainting_config.get('seam_config', {})
+    use_boundary_ring = (seam_mode == 'dilate')
+    ring_width_px = seam_config.get('ring_width_px', 1)
+    ring_weight = seam_config.get('ring_weight', 2.0)
+    
     # Image save frequency
     img_save_steps = train_config_global.get('img_save_steps', 1000)
     
@@ -466,6 +362,10 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f"✓ Loss type: {loss_type}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
         print(f"✓ Outside weight: {outside_weight}")
+        print(f"✓ Seam mode: {seam_mode if seam_mode else 'None'}")
+        if use_boundary_ring:
+            print(f"  - Ring width: {ring_width_px}px")
+            print(f"  - Ring weight: {ring_weight}")
         print(f"✓ CFG dropout prob: {cond_drop_prob}")
         print(f"✓ CFG drop groups: {drop_groups}")
         print(f"✓ CFG keep mask: {keep_mask} (inpainting_mask always preserved)")
@@ -607,10 +507,13 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             # Predict noise (use dropped conditioning for CFG training)
             noise_pred = model(noisy_im, t, cond_input=cond_input_dropped)
             
-            # Compute loss
-            loss = compute_noise_loss(
-                noise_pred, noise, mask_latent, 
-                loss_type, mask_loss_weight, outside_weight
+            # Compute loss with optional boundary-aware weighting
+            loss = compute_boundary_aware_loss(
+                noise_pred, noise, mask_latent,
+                loss_type, mask_loss_weight, outside_weight,
+                use_boundary_ring=use_boundary_ring,
+                ring_width_px=ring_width_px,
+                ring_weight=ring_weight
             )
             
             loss.backward()
