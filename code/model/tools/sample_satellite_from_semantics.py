@@ -24,7 +24,11 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.vae_registry import VAERegistry
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
 from model.utils.checkpoint import load_checkpoint
-from model.utils.diffusion_utils import mask_conditioning_latents
+from model.utils.diffusion_utils import (
+    mask_conditioning_latents,
+    apply_seam_mode,
+    sample_with_repaint
+)
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 
@@ -124,6 +128,10 @@ def render_satellite_from_semantics(
     cfg_config = inpainting_cfg.get('cfg', {})
     sample_mask_groups = cfg_config.get('sample_mask_groups', [])
     
+    # Seam improvement configuration
+    seam_mode = inpainting_cfg.get('seam', None)
+    seam_config = inpainting_cfg.get('seam_config', {})
+    
     print("\n" + "="*60)
     print("Satellite Rendering Configuration")
     print("="*60)
@@ -135,6 +143,7 @@ def render_satellite_from_semantics(
     print(f"Guidance scale (CFG): {guidance_scale}")
     print(f"Inpainting mode: {inpainting_mode}")
     print(f"Sample mask groups (sampling-time): {sample_mask_groups}")
+    print(f"Seam mode: {seam_mode if seam_mode else 'None'}")
     
     # Load prediction VAE (satellite)
     big_data_storage_path = dataset_config.get('big_data_storage_path', '/work/zt75vipu-thesis/data')
@@ -355,11 +364,11 @@ def render_satellite_from_semantics(
         # Initialize latent for satellite generation
         x = torch.randn(1, pred_vae_config['z_channels'], latent_size, latent_size, device=device)
         
+        # Get mask at latent resolution for hard mode
+        mask_latent = F.interpolate(mask.float(), size=(latent_size, latent_size), mode='nearest')
+        
         # For hard inpainting, initialize with RGB context from dataset
         if inpainting_mode == "hard":
-            # Get mask at latent resolution
-            mask_latent = F.interpolate(mask.float(), size=(latent_size, latent_size), mode='nearest')
-            
             if rgb_context_latent is not None:
                 # Use actual RGB context from dataset (like semantic sampling does)
                 # Keep context outside mask, noise inside mask
@@ -370,28 +379,74 @@ def render_satellite_from_semantics(
                 print(f"  ⚠ No RGB context available, using zeros outside mask")
                 x = mask_latent * x + (1 - mask_latent) * torch.zeros_like(x)
         
-        # Sampling loop
-        print(f"  Denoising {scheduler.num_timesteps} steps...")
-        with torch.no_grad():
-            for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="  ", leave=False):
-                t = torch.full((1,), i, device=device, dtype=torch.long)
-                
-                # Classifier-free guidance
-                if guidance_scale > 0:
-                    noise_pred_cond = model(x, t, cond_input=cond_input)
-                    noise_pred_uncond = model(x, t, cond_input=uncond_input)
-                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
-                else:
-                    noise_pred = model(x, t, cond_input=cond_input)
+        # Check if using RePaint seam mode
+        if seam_mode == 'repaint':
+            print(f"  Using RePaint sampling strategy...")
+            resample_steps = seam_config.get('resample_steps', 10)
+            jump_length = seam_config.get('jump_length', 3)
             
-                # Denoise step
-                if inpainting_mode == "hard":
-                    # Hard inpainting: preserve context outside mask
-                    # Note: For satellite, we don't have original latent, so just use standard step
-                    x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
-                else:
-                    # SD-like: standard denoising
-                    x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
+            # Use RGB context latent as x0 (or zeros if unavailable)
+            x0_latent = rgb_context_latent if rgb_context_latent is not None else torch.zeros_like(x)
+            
+            # RePaint with guidance
+            if guidance_scale > 0:
+                # Build guided noise prediction function
+                def guided_model(x_t, t_tensor, cond):
+                    noise_pred_cond = model(x_t, t_tensor, cond_input=cond)
+                    noise_pred_uncond = model(x_t, t_tensor, cond_input=uncond_input)
+                    return noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                
+                # Wrap for RePaint (it expects standard model signature)
+                class GuidedModel:
+                    def __call__(self, x_t, t_tensor, cond_input):
+                        return guided_model(x_t, t_tensor, cond_input)
+                
+                x = sample_with_repaint(
+                    GuidedModel(),
+                    scheduler,
+                    x0_latent,
+                    mask_latent,
+                    cond_input,
+                    num_steps=50,
+                    resample_steps=resample_steps,
+                    jump_length=jump_length,
+                    device=device
+                )
+            else:
+                x = sample_with_repaint(
+                    model,
+                    scheduler,
+                    x0_latent,
+                    mask_latent,
+                    cond_input,
+                    num_steps=50,
+                    resample_steps=resample_steps,
+                    jump_length=jump_length,
+                    device=device
+                )
+        else:
+            # Standard sampling loop
+            print(f"  Denoising {scheduler.num_timesteps} steps...")
+            with torch.no_grad():
+                for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="  ", leave=False):
+                    t = torch.full((1,), i, device=device, dtype=torch.long)
+                    
+                    # Classifier-free guidance
+                    if guidance_scale > 0:
+                        noise_pred_cond = model(x, t, cond_input=cond_input)
+                        noise_pred_uncond = model(x, t, cond_input=uncond_input)
+                        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                    else:
+                        noise_pred = model(x, t, cond_input=cond_input)
+                
+                    # Denoise step
+                    if inpainting_mode == "hard":
+                        # Hard inpainting: preserve context outside mask
+                        # Note: For satellite, we don't have original latent, so just use standard step
+                        x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
+                    else:
+                        # SD-like: standard denoising
+                        x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
         
         # Decode latent to RGB immediately
         print(f"  Decoding sample {sample_idx + 1}...")
@@ -405,9 +460,22 @@ def render_satellite_from_semantics(
         else:
             rgb_render = torch.clamp(rgb_render, 0., 1.)
         
-        # Composite with original RGB context (for sdlike mode or hard mode)
-        # This preserves the photorealistic context outside the inpainting mask
-        if rgb_context_image is not None:
+        # Apply seam mode: feathering for smooth compositing
+        if seam_mode == 'feather' and rgb_context_image is not None:
+            blur_radius = seam_config.get('blur_radius', 3)
+            
+            # Upsample mask to image resolution
+            mask_pixel = F.interpolate(mask, size=rgb_render.shape[-2:], mode='nearest')
+            
+            # Apply feathering
+            feathered_mask, _ = apply_seam_mode('feather', mask=mask_pixel, blur_radius=blur_radius)
+            
+            # Smooth composite with feathered mask
+            rgb_render = feathered_mask * rgb_render + (1 - feathered_mask) * rgb_context_image
+            print(f"  ✓ Applied feathered compositing (blur_radius={blur_radius})")
+        
+        # Standard composite with original RGB context (if no feathering applied)
+        elif rgb_context_image is not None:
             # Upsample mask to image resolution
             mask_pixel = F.interpolate(mask, size=rgb_render.shape[-2:], mode='nearest')
             
