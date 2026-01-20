@@ -536,8 +536,14 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     
                     # Start from pure noise in masked region
                     x_sample = im_latent[:num_samples].clone()
+                    
+                    # Fixed noise_context for hard mode
+                    sample_noise_context = None
+                    
                     if inpainting_mode == "hard":  # FIX: Use inpainting_mode variable, not stage name
                         x_sample = mask_latent[:num_samples] * torch.randn_like(x_sample) + (1 - mask_latent[:num_samples]) * x_sample
+                        # FIX: Create fixed noise_context for temporal consistency
+                        sample_noise_context = torch.randn_like(x_sample)
                     else:
                         x_sample = torch.randn_like(x_sample)
                     
@@ -555,11 +561,12 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         noise_pred = model(x_sample, t_sample, cond_input=sample_cond)
                         
                         if inpainting_mode == "hard":
-                            # Use inpainting scheduler
+                            # FIX: Use inpainting scheduler with fixed noise_context
                             x_sample, _ = scheduler.sample_prev_timestep_inpainting(
                                 x_sample, noise_pred, i,
                                 im_latent[:num_samples],
-                                mask_latent[:num_samples]
+                                mask_latent[:num_samples],
+                                noise_context=sample_noise_context
                             )
                         else:
                             x_sample, _ = scheduler.sample_prev_timestep(x_sample, noise_pred, i)
