@@ -35,6 +35,60 @@ def mask_conditioning_latents(cond_dict: dict, mask_latent: torch.Tensor, mask_g
     return cond_dict
 
 
+def make_uncond_input_keep_mask(cond_input: dict) -> dict:
+    """
+    Create unconditional conditioning for CFG that KEEPS ONLY the inpainting mask.
+    
+    CRITICAL FOR INPAINTING CFG:
+    - Unconditional branch must see ONLY the inpainting mask from pixel-space
+    - All other pixel-space channels (LST, NDVI, etc.) are zeroed
+    - All latent-space conditioning groups are zeroed
+    - Otherwise CFG compares "masked denoising" vs "unmasked denoising" → invalid guidance
+    
+    This matches the training behavior of apply_classifier_free_guidance_dropout(keep_mask=True).
+    
+    Args:
+        cond_input: Conditioning dictionary with 'image' (pixel-space), latent groups, and 'meta'
+        
+    Returns:
+        Unconditional dict: keeps meta and ONLY inpainting_mask channel, zeros everything else
+    """
+    uncond = {}
+    for k, v in cond_input.items():
+        if k == 'meta':
+            # Keep metadata as-is
+            uncond[k] = v
+        elif k == 'image':
+            # CRITICAL: Keep ONLY the inpainting_mask channel, zero all other pixel-space
+            if 'meta' in cond_input:
+                # Handle both dict and list-of-dicts meta structures
+                meta = cond_input['meta']
+                if isinstance(meta, list):
+                    meta = meta[0]
+                
+                pixel_names = meta.get('pixel_space_names', [])
+                
+                if 'inpainting_mask' in pixel_names:
+                    # Zero out all channels except inpainting_mask
+                    mask_idx = pixel_names.index('inpainting_mask')
+                    uncond_image = torch.zeros_like(v)
+                    uncond_image[:, mask_idx:mask_idx+1, :, :] = v[:, mask_idx:mask_idx+1, :, :]
+                    uncond[k] = uncond_image
+                else:
+                    # No inpainting_mask found - zero everything
+                    uncond[k] = torch.zeros_like(v)
+            else:
+                # No metadata - zero everything
+                uncond[k] = torch.zeros_like(v)
+        else:
+            # Zero latent-space conditioning groups
+            if isinstance(v, torch.Tensor):
+                uncond[k] = torch.zeros_like(v)
+            else:
+                uncond[k] = v
+    return uncond
+
+
 def apply_classifier_free_guidance_dropout(
     cond_dict: dict,
     drop_prob: float,

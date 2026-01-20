@@ -27,7 +27,8 @@ from model.utils.checkpoint import load_checkpoint
 from model.utils.diffusion_utils import (
     mask_conditioning_latents,
     apply_seam_mode,
-    sample_with_repaint
+    sample_with_repaint,
+    make_uncond_input_keep_mask
 )
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
@@ -349,35 +350,36 @@ def render_satellite_from_semantics(
                 cond_input = mask_conditioning_latents(cond_input, mask_latent, sample_mask_groups)
                 print(f"  ✓ Applied sampling-time mask to groups: {sample_mask_groups}")
         
-        # Create unconditional input for CFG
-        uncond_input = {}
-        for key in cond_input:
-            if key == 'meta':
-                uncond_input[key] = cond_input[key]
-            elif key == 'image':
-                # Zero out pixel-space conditioning
-                uncond_input[key] = torch.zeros_like(cond_input[key])
-            else:
-                # Zero out latent-space conditioning groups
-                uncond_input[key] = torch.zeros_like(cond_input[key])
+        # CRITICAL FIX: Create unconditional input that KEEPS the inpainting mask
+        # For inpainting CFG, unconditional branch must see the mask, only latent groups are zeroed
+        uncond_input = make_uncond_input_keep_mask(cond_input)
         
         # Initialize latent for satellite generation
         x = torch.randn(1, pred_vae_config['z_channels'], latent_size, latent_size, device=device)
         
-        # Get mask at latent resolution for hard mode
+        # Get mask at latent resolution
         mask_latent = F.interpolate(mask.float(), size=(latent_size, latent_size), mode='nearest')
+        
+        # FIX: Create fixed noise_context once per sample for temporal consistency
+        noise_context = None
+        noise_context_sd = None
         
         # For hard inpainting, initialize with RGB context from dataset
         if inpainting_mode == "hard":
-            if rgb_context_latent is not None:
-                # Use actual RGB context from dataset (like semantic sampling does)
-                # Keep context outside mask, noise inside mask
-                x = mask_latent * x + (1 - mask_latent) * rgb_context_latent
-                print(f"  ✓ Initialized with RGB context from dataset")
-            else:
-                # Fallback: use zeros if no context available
-                print(f"  ⚠ No RGB context available, using zeros outside mask")
-                x = mask_latent * x + (1 - mask_latent) * torch.zeros_like(x)
+            if rgb_context_latent is None:
+                print(f"  ⚠ No RGB context available; using zeros outside mask (hard mode)")
+                rgb_context_latent = torch.zeros_like(x)
+            
+            # Initialize: keep context outside mask, noise inside mask
+            x = mask_latent * x + (1 - mask_latent) * rgb_context_latent
+            print(f"  ✓ Hard mode: Initialized with RGB context from dataset")
+            
+            # FIX: Sample noise_context ONCE per sample for temporal consistency
+            noise_context = torch.randn_like(rgb_context_latent)
+        
+        # For SD-like mode, prepare fixed noise for per-step outside reinsertion
+        if inpainting_mode == "sdlike" and rgb_context_latent is not None:
+            noise_context_sd = torch.randn_like(rgb_context_latent)
         
         # Check if using RePaint seam mode
         if seam_mode == 'repaint':
@@ -438,15 +440,23 @@ def render_satellite_from_semantics(
                         noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
                     else:
                         noise_pred = model(x, t, cond_input=cond_input)
-                
-                    # Denoise step
+                    
+                    # FIX: Denoise step with proper inpainting behavior
                     if inpainting_mode == "hard":
-                        # Hard inpainting: preserve context outside mask
-                        # Note: For satellite, we don't have original latent, so just use standard step
-                        x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
+                        # Hard mode: use inpainting scheduler with fixed noise_context
+                        x, x0 = scheduler.sample_prev_timestep_inpainting(
+                            x, noise_pred, i, rgb_context_latent, mask_latent, noise_context=noise_context
+                        )
                     else:
                         # SD-like: standard denoising
                         x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
+                        
+                        # RECOMMENDED: Enforce outside distribution each step for SD-like mode
+                        # Prevents outside drift from affecting inside, improves seam quality
+                        if rgb_context_latent is not None and noise_context_sd is not None and i > 0:
+                            t_batch = torch.full((1,), i-1, device=device, dtype=torch.long)
+                            x_context_noisy = scheduler.add_noise(rgb_context_latent, noise_context_sd, t_batch)
+                            x = mask_latent * x + (1 - mask_latent) * x_context_noisy
         
         # Decode latent to RGB immediately
         print(f"  Decoding sample {sample_idx + 1}...")

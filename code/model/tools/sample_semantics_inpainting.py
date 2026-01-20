@@ -23,6 +23,7 @@ from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_
 from model.utils.layer_config import count_layer_channels
 from model.utils.vae_registry import VAERegistry
 from model.utils.checkpoint import load_checkpoint
+from model.utils.diffusion_utils import make_uncond_input_keep_mask
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 from model.lst_predictor.predictor import LSTPredictor
@@ -371,13 +372,17 @@ def sample_semantics(
             # Meta is a dict - keep as is (will be wrapped in list by collate_fn)
             pass
     
+    # Normalize meta structure to match training (list of dicts)
+    if 'meta' in cond_input and isinstance(cond_input['meta'], dict):
+        cond_input['meta'] = [cond_input['meta']]
+    
     # Extract mask and LST target from conditioning channels
     mask_latent = None
     lst_target = None
     
     if 'image' in cond_input and 'meta' in cond_input:
-        # Access pixel_space_names from metadata
-        pixel_space_names = cond_input['meta'].get('pixel_space_names', [])
+        # Access pixel_space_names from metadata (first item in list)
+        pixel_space_names = cond_input['meta'][0].get('pixel_space_names', [])
         print(f"\n✓ Pixel-space conditioning channels ({len(pixel_space_names)}):")
         for idx, name in enumerate(pixel_space_names):
             ch = cond_input['image'][0, idx:idx+1, :, :]
@@ -403,16 +408,9 @@ def sample_semantics(
         print("⚠ LST guidance requested but no LST target found in data")
         use_lst_guidance = False
     
-    # Create unconditional input for CFG
-    # Zero out image conditioning (but keep meta for structural info)
-    uncond_input = {}
-    for key in cond_input:
-        if key == 'image':
-            # Zero out image conditioning for CFG
-            uncond_input[key] = torch.zeros_like(cond_input[key])
-        else:
-            # Keep meta and other keys as is
-            uncond_input[key] = cond_input[key]
+    # CRITICAL FIX: Create unconditional input that KEEPS the inpainting mask
+    # For inpainting CFG, unconditional branch must see the mask, only latent groups are zeroed
+    uncond_input = make_uncond_input_keep_mask(cond_input)
     
     # Get inpainting mode from stage config
     inpainting_cfg = stage_config.get('inpainting', {})
@@ -462,6 +460,7 @@ def sample_semantics(
         
         # For hard inpainting, use ground truth latent from dataset
         x_context = None
+        noise_context = None  # FIX: Fixed noise for temporal consistency
         
         if inpainting_mode == "hard":
             with torch.no_grad():
@@ -470,6 +469,9 @@ def sample_semantics(
                 x_context = pred_latent.unsqueeze(0).to(device)  # [1, C, H, W]
                 
                 print(f"✓ Using prediction latent as context: {x_context.shape}")
+                
+                # FIX: Sample noise_context ONCE per sample for temporal consistency
+                noise_context = torch.randn_like(x_context)
                 
                 # Initialize: keep context outside mask, noise inside mask
                 if mask_latent is not None:
@@ -490,16 +492,14 @@ def sample_semantics(
             if i % 500 == 0:
                 print_gpu_memory()
             
-            # Classifier-free guidance with memory optimization
+            # Classifier-free guidance
             if guidance_scale > 0:
                 with torch.no_grad():
                     # Conditional prediction
                     noise_pred_cond = model(x, t, cond_input=cond_input)
-                    torch.cuda.empty_cache()
                     
                     # Unconditional prediction
                     noise_pred_uncond = model(x, t, cond_input=uncond_input)
-                    torch.cuda.empty_cache()
                 
                 # CFG
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
@@ -518,10 +518,10 @@ def sample_semantics(
             #         mask=mask_latent
             #     )
             
-            # Denoise
+            # FIX: Denoise with fixed noise_context for hard mode temporal consistency
             if inpainting_mode == "hard" and mask_latent is not None:
                 x, x0 = scheduler.sample_prev_timestep_inpainting(
-                    x, noise_pred, i, x_context, mask_latent
+                    x, noise_pred, i, x_context, mask_latent, noise_context=noise_context
                 )
             else:
                 x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
