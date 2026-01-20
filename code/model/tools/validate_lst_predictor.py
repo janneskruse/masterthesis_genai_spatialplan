@@ -494,8 +494,6 @@ if __name__ == '__main__':
                        help='Number of validation samples to process')
     parser.add_argument('--overwrite_samples', action='store_true',
                        help='Overwrite existing validation samples (use run_idx=0)')
-    parser.add_argument('--config', type=str, default='two_stage_4.yml',
-                       help='Config file name')
     
     args = parser.parse_args()
     
