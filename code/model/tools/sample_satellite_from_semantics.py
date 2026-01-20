@@ -235,11 +235,14 @@ def render_satellite_from_semantics(
             cond_input['image'] = torch.cat(pixel_cond_list, dim=1)  # [1, C_pixel, H_latent, W_latent]
             cond_input['meta'][0]['pixel_space_names'] = pixel_cond_names
         
-        # Load RGB context from dataset for hard inpainting (if available)
+        # Load RGB context from dataset (for both hard and sdlike modes)
+        # For hard mode: used during generation to preserve context in latent space
+        # For sdlike mode: composited after decoding to preserve original context
         rgb_context_latent = None
+        rgb_context_image = None
         patch_index = sample_data.get('patch_index')
         
-        if patch_index is not None and dataset is not None and inpainting_mode == 'hard':
+        if patch_index is not None and dataset is not None:
             # Load matching patch from dataset to get RGB context
             dataset_sample = dataset[patch_index]
             
@@ -253,16 +256,30 @@ def render_satellite_from_semantics(
             if pred_data is not None:
                 # Check if it's already a latent or needs encoding
                 if pred_data.shape[-2:] == (latent_size, latent_size):
-                    # Already encoded latent
+                    # Already encoded latent - decode it for pixel-space compositing
                     rgb_context_latent = pred_data.unsqueeze(0).to(device)
                     print(f"  ✓ Loaded RGB context latent from dataset: {rgb_context_latent.shape}")
-                else:
-                    # Full-res image - encode it
-                    print(f"  ⚠ Encoding RGB context on-the-fly from shape {pred_data.shape}")
+                    
+                    # Decode to pixel space for final compositing
                     with torch.no_grad():
-                        pred_image_batch = pred_data.unsqueeze(0).to(device)
-                        rgb_context_latent, _, _ = pred_vae.encode(pred_image_batch)
-                    print(f"  ✓ Encoded RGB context to latent: {rgb_context_latent.shape}")
+                        rgb_context_image = pred_vae.decode(rgb_context_latent)
+                        # Normalize
+                        if pred_vae_config.get('tanh_activation', False):
+                            rgb_context_image = torch.clamp(rgb_context_image, -1., 1.)
+                            rgb_context_image = (rgb_context_image + 1) / 2
+                        else:
+                            rgb_context_image = torch.clamp(rgb_context_image, 0., 1.)
+                    print(f"  ✓ Decoded RGB context to image: {rgb_context_image.shape}")
+                else:
+                    # Full-res image - use directly
+                    rgb_context_image = pred_data.unsqueeze(0).to(device)
+                    print(f"  ✓ Loaded RGB context image from dataset: {rgb_context_image.shape}")
+                    
+                    # Also encode to latent if needed for hard mode
+                    if inpainting_mode == 'hard':
+                        with torch.no_grad():
+                            rgb_context_latent, _, _ = pred_vae.encode(rgb_context_image)
+                        print(f"  ✓ Encoded RGB context to latent: {rgb_context_latent.shape}")
         
         # 2. Latent-space conditioning: encode semantic and environmental
         for cond_spec in latent_cond_groups:
@@ -384,6 +401,16 @@ def render_satellite_from_semantics(
             rgb_render = (rgb_render + 1) / 2
         else:
             rgb_render = torch.clamp(rgb_render, 0., 1.)
+        
+        # Composite with original RGB context (for sdlike mode or hard mode)
+        # This preserves the photorealistic context outside the inpainting mask
+        if rgb_context_image is not None:
+            # Upsample mask to image resolution
+            mask_pixel = F.interpolate(mask, size=rgb_render.shape[-2:], mode='nearest')
+            
+            # Paste: keep original context outside mask, use generated inside mask
+            rgb_render = mask_pixel * rgb_render + (1 - mask_pixel) * rgb_context_image
+            print(f"  ✓ Composited with original RGB context")
         
         # Save individual sample visualization immediately
         sample_path = os.path.join(samples_dir, f'sample_{sample_idx}.png')
@@ -551,37 +578,29 @@ def infer(args, config):
     np.random.seed(seed)
     print(f"\n✓ Set random seed: {seed}")
     
-    ########## Load Dataset for Environmental Conditioning #############
+    ########## Load Dataset for RGB Context and Environmental Conditioning #############
     print("\n" + "="*60)
-    print("Loading Dataset for Environmental Conditioning")
+    print("Loading Dataset for RGB Context and Environmental Conditioning")
     print("="*60)
     
-    # Check if we need dataset (has environmental conditioning)
-    stage_config = diffusion_stages[mode]
-    conditioning_config = stage_config.get('conditioning', {})
-    latent_cond_groups = conditioning_config.get('latent_space', [])
-    needs_environmental = any(spec['group'] == 'environmental' for spec in latent_cond_groups)
+    # Load dataset for:
+    # 1. RGB satellite context (to preserve original imagery outside inpainting mask)
+    # 2. Environmental conditioning (LST, NDVI)
+    
+
     
     dataset = None
-    if needs_environmental:
-        # Check for cached patches
-        cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
-        use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
-        
-        try:
-            dataset = UrbanInpaintingDataset(
-                split='train',
-                mode=f'diffusion:{mode}',
-                use_cached_patches=use_cached_patches,
-                cache_dir=cache_dir
-            )
-            print(f"✓ Loaded dataset with {len(dataset)} patches for environmental conditioning")
-        except Exception as e:
-            print(f"⚠ Failed to load dataset: {e}")
-            print(f"  Will use zero environmental conditioning")
-            dataset = None
-    else:
-        print("✓ No environmental conditioning needed, skipping dataset load")
+    try:
+        dataset = UrbanInpaintingDataset(
+            split='train',
+            mode=f'diffusion:{mode}',
+            use_cached_patches=True
+        )
+        print(f"✓ Loaded dataset with {len(dataset)} patches")
+    except Exception as e:
+        print(f"⚠ Failed to load dataset: {e}")
+        print(f"  Will use zero environmental conditioning and no RGB context")
+        dataset = None
     
     ########## Render Satellite Images #############
     renders = render_satellite_from_semantics(
