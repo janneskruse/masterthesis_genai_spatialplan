@@ -539,7 +539,13 @@ def sample_semantics(
         
         # Save individual sample tensor immediately
         sample_pt_path = os.path.join(samples_dir, f'sample_{sample_idx}.pt')
-        patch_meta = cond_input.get('meta', {})
+        patch_meta = cond_input.get('meta', [{}])
+        
+        # Extract first element if meta is a list (normalized for training)
+        if isinstance(patch_meta, list) and len(patch_meta) > 0:
+            patch_meta = patch_meta[0]
+        elif isinstance(patch_meta, list):
+            patch_meta = {}
         
         torch.save({
             'semantic_tensor': semantic_sample[0].cpu(),
