@@ -202,13 +202,13 @@ diffusion_stages:
         - layer: 'inpainting_mask'
           interpolation: 'nearest'
           
-      # # Latent-space conditioning (encoded through respective VAEs)
-      # latent_space:
-      #   - group: 'environmental'
-      #     layers: ['lst']  # Control temperature
+      # Latent-space conditioning (encoded through respective VAEs)
+      latent_space:
+        - group: 'environmental'
+          layers: ['lst', 'ndvi']  # Control temperature to guide urban density
           
-      #   - group: 'semantics'
-      #     layers: ['street_blocks']  # Constrain to valid blocks
+        # - group: 'semantic'
+        #   layers: ['street_blocks']  # Optional: constrain to valid blocks
     
     # Inpainting configuration
     inpainting:
@@ -230,6 +230,7 @@ diffusion_stages:
       cfg:
         drop_prob: 0.1
         drop_groups: None
+        sample_mask_groups: ['environmental']  # No special handling during sampling
   
   # Stage 2: Render satellite RGB from semantic layout
   satellite:
