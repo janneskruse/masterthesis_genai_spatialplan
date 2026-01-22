@@ -17,7 +17,12 @@ from torch.utils.data.dataset import Dataset
 # Local imports
 from model.utils.diffusion_utils import load_latents
 from model.utils.diffusion_utils import load_single_latent
-from model.utils.data_utils import apply_layer_transform
+from model.utils.data_utils import (
+    apply_layer_transform,
+    masked_quantile,
+    generate_tmax_training_target,
+    normalize_layer
+)
 from model.utils.config_utils import compute_patch_and_latent_sizes, get_default_configs
 from model.utils.layer_config import (
     get_layer_info,
@@ -1149,8 +1154,104 @@ class UrbanInpaintingDataset(Dataset):
                     )
                     cond[f'{group_name}_image'] = cond_image  # Mark for encoding
             
-            # NOTE: Conditioning masking is now applied at SAMPLING time only
-            # (see sample_mask_groups in config and apply_sample_masking in sampling scripts)
+            # Temperature control: Add tmax conditioning if enabled for this stage
+            temp_control_enabled = stage_config.get('temperature_control', False)
+            if temp_control_enabled:
+                # Get global temperature control config
+                temp_control_config = self.config.get('temperature_control', {})
+                
+                if not temp_control_config.get('enabled', False):
+                    raise ValueError(
+                        f"Temperature control enabled for stage '{self.mode_target}' but "
+                        f"global temperature_control.enabled is False. Set temperature_control.enabled: true in config."
+                    )
+                
+                # Get temperature layer name
+                temp_layer_name = temp_control_config.get('temperature_layer', 'lst')
+                
+                # Find temperature layer in unified patch
+                temp_layer_matches = get_layer_channels_from_names(channel_names, temp_layer_name)
+                
+                if len(temp_layer_matches) == 0:
+                    raise ValueError(
+                        f"Temperature control requires layer '{temp_layer_name}', "
+                        f"but it was not found in patch. Available layers: {set(layer_names)}"
+                    )
+                
+                # Extract temperature data (should be single channel)
+                temp_idx, temp_ch_name = temp_layer_matches[0]
+                temp_data = unified_image[temp_idx:temp_idx+1, :, :]  # [1, H, W]
+                
+                # Get mask based on region config
+                region_mode = temp_control_config.get('region', 'mask')
+                
+                if region_mode == 'full':
+                    # Compute statistic over full image
+                    mask_data = torch.ones_like(temp_data)
+                elif region_mode == 'mask':
+                    # Get inpainting mask for masked quantile computation
+                    # The mask is in pixel_space conditioning
+                    mask_data = None
+                    if 'image' in cond and 'pixel_space_names' in cond['meta']:
+                        pixel_space_names = cond['meta']['pixel_space_names']
+                        for mask_idx, mask_name in enumerate(pixel_space_names):
+                            if 'mask' in mask_name.lower():
+                                # Found mask - upsample to full resolution for accurate quantile
+                                mask_latent = cond['image'][mask_idx:mask_idx+1, :, :]  # [1, H_latent, W_latent]
+                                mask_data = torch.nn.functional.interpolate(
+                                    mask_latent.unsqueeze(0),
+                                    size=temp_data.shape[-2:],
+                                    mode='nearest'
+                                ).squeeze(0)  # [1, H, W]
+                                break
+                    
+                    if mask_data is None:
+                        # Fallback: use full image
+                        print(f"⚠ Warning: Inpainting mask not found for temperature control (region='mask'), using full image")
+                        mask_data = torch.ones_like(temp_data)
+                else:
+                    raise ValueError(f"Unknown region mode: '{region_mode}'. Supported: 'mask', 'full'")
+                
+                # Compute masked quantile (p95 by default)
+                statistic = temp_control_config.get('statistic', 'p95')
+                if statistic == 'p95':
+                    q = 0.95
+                elif statistic == 'p99':
+                    q = 0.99
+                elif statistic == 'max':
+                    q = 1.0
+                elif statistic == 'mean':
+                    # For mean, compute directly
+                    temp_data_unsqueezed = temp_data.unsqueeze(0)  # [1, 1, H, W]
+                    mask_data_unsqueezed = mask_data.unsqueeze(0)  # [1, 1, H, W]
+                    masked_sum = (temp_data_unsqueezed * mask_data_unsqueezed).sum()
+                    masked_count = mask_data_unsqueezed.sum()
+                    t_current = (masked_sum / (masked_count + 1e-8)).reshape(1)  # [1]
+                else:
+                    raise ValueError(f"Unknown statistic: {statistic}. Supported: 'p95', 'p99', 'max', 'mean'")
+                
+                if statistic != 'mean':
+                    t_current = masked_quantile(
+                        temp_data.unsqueeze(0),  # [1, 1, H, W]
+                        mask_data.unsqueeze(0),  # [1, 1, H, W]
+                        q=q
+                    )  # [1]
+                
+                # Generate training target based on strategy
+                training_config = temp_control_config.get('training', {})
+                strategy = training_config.get('strategy', 'relative')
+                
+                tmax_target = generate_tmax_training_target(
+                    t_current=t_current,
+                    strategy=strategy,
+                    config=training_config,
+                    device=temp_data.device
+                )  # [1]
+                
+                # Add to conditioning
+                cond['tmax'] = tmax_target
+            
+            # NOTE: Conditioning masking is applied at SAMPLING time only, not in the dataset
             
             # Return either latent or full-res image (caller will encode if needed)
             if pred_latent is not None:
