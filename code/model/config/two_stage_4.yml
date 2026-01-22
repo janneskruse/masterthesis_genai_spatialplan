@@ -103,6 +103,65 @@ dataset_params:
   stride_overlap: 2  # 50% overlap
 
 # ===========================================================================
+# TEMPERATURE THRESHOLD CONTROL (Optional)
+# Three-layer control stack for constraining generated layouts by max temperature
+# ===========================================================================
+
+temperature_control:
+
+  temperature_layer: "lst"
+  
+  # statistic to compute (p95 recommended for robustness)
+  statistic: "p95"  # Options: "p95", "p99", "max", "mean"
+  
+  # compute statistic ("mask" = inside inpainting region only)
+  region: "mask"  # Options: "mask", "full"
+  
+  # Layer 1: Conditional training (core, required when enabled)
+  # Injects scalar T_max into U-Net via time embedding
+  enabled: false  # Set to true to enable temperature control
+  
+  training:
+    # Training target strategy
+    # "relative": current_temp + random_delta (learns continuous control)
+    # "sampled": random value from normalized range (more exploration)
+    # "fixed": always use fixed_value (single-target training)
+    strategy: "relative"
+    
+    # For "relative" strategy: delta range in normalized space
+    # Example: [-0.15, 0.15] ≈ ±10°C for LST range [0, 80]°C
+    relative_delta_range: [-0.15, 0.15]
+    
+    # For "fixed" strategy: constant target (normalized)
+    fixed_value: null
+    
+    # Dropout probability for classifier-free guidance
+    drop_prob: 0.1
+    
+    # Value for unconditional branch (CFG)
+    unconditional_value: 0.0
+  
+  conditioning:
+    # How to inject scalar into U-Net
+    inject_mode: "time_embed"  # Augment time embedding with MLP
+    mlp_hidden: 128  # Hidden dimension for tmax MLP
+  
+  # Layer 2: Soft guidance (optional)
+  # Use trained LST predictor to guide sampling toward threshold
+  guidance:
+    enabled: false  # Set to true to enable predictor-based guidance
+    scale: 0.5  # Guidance strength (0.0 = no guidance, 1.0+ = strong)
+    predictor_checkpoint: "lst_predictor_ckpt.pth"  # Path relative to results dir
+    eval_every_n_steps: 1  # Apply guidance every N denoising steps
+  
+  # Layer 3: Hard check (optional)
+  # Reject samples that violate threshold, retry with stronger guidance
+  hard_check:
+    enabled: false  # Set to true to enable acceptance/retry logic
+    max_tries: 4  # Maximum retry attempts
+    accept_margin: 0.02  # Accept if predicted_p95 <= threshold + margin (normalized)
+
+# ===========================================================================
 # VAE GROUP CONFIGURATIONS
 # Each VAE specializes in encoding a semantic layer group
 # ===========================================================================
@@ -179,6 +238,7 @@ diffusion_params:
 diffusion_stages:
   # Stage 1: Generate semantic urban layout
   semantic:
+    temperature_control: false  # Enable temperature threshold control for this stage
     prediction_group: 'semantic'
     
     # U-Net architecture
@@ -234,6 +294,7 @@ diffusion_stages:
   
   # Stage 2: Render satellite RGB from semantic layout
   satellite:
+    temperature_control: false  # Temperature control not applicable for satellite rendering
     prediction_group: 'satellite'
     
     # U-Net architecture

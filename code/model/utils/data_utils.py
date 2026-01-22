@@ -298,6 +298,155 @@ def normalize_layer(data, layer_config, layer_statistics=None):
     
     return data
 
+
+# ===========================================================================
+# TEMPERATURE CONTROL UTILITIES
+# ===========================================================================
+
+def masked_quantile(x: torch.Tensor, mask: torch.Tensor, q: float = 0.95) -> torch.Tensor:
+    """
+    Compute quantile within masked region.
+    
+    Args:
+        x: Temperature tensor [B, 1, H, W] or [B, C, H, W]
+        mask: Binary mask [B, 1, H, W] with 1 = inpaint region, 0 = context
+        q: Quantile to compute (default 0.95 for p95)
+        
+    Returns:
+        Quantile value per sample [B]
+        
+    Example:
+        >>> temp = torch.randn(4, 1, 128, 128)
+        >>> mask = torch.randint(0, 2, (4, 1, 128, 128)).float()
+        >>> p95 = masked_quantile(temp, mask, q=0.95)
+        >>> p95.shape
+        torch.Size([4])
+    """
+    B = x.shape[0]
+    
+    # If multi-channel, take first channel only (should be single-channel temperature)
+    if x.ndim == 4 and x.shape[1] > 1:
+        x = x[:, :1]
+    
+    out = []
+    for b in range(B):
+        xb = x[b].reshape(-1)  # Flatten spatial dimensions
+        mb = mask[b].reshape(-1) > 0.5  # Boolean mask
+        
+        # Extract values inside mask
+        vals = xb[mb]
+        
+        # Fallback to full image if mask is empty
+        if vals.numel() == 0:
+            vals = xb
+        
+        # Compute quantile
+        out.append(torch.quantile(vals, q))
+    
+    return torch.stack(out, dim=0)
+
+
+def normalize_scalar_like_layer(
+    t_value: float, 
+    layer_cfg: dict, 
+    layer_stats: dict | None
+) -> float:
+    """
+    Normalize a scalar threshold value using the same pipeline as layer data.
+    
+    This ensures consistency between user-provided thresholds (e.g., 35°C)
+    and the normalized values used during training.
+    
+    Args:
+        t_value: Scalar value in original units (e.g., degrees Celsius)
+        layer_cfg: Layer configuration dict from layers registry
+        layer_stats: Global statistics dict (min, max, mean, std, q01, q99, etc.)
+        
+    Returns:
+        Normalized scalar value
+        
+    Example:
+        >>> # LST layer with custom normalization [0, 80]°C
+        >>> layer_cfg = {'normalize': 'custom', 'normalize_params': {'min': 0, 'max': 80}}
+        >>> t_norm = normalize_scalar_like_layer(35.0, layer_cfg, None)
+        >>> print(t_norm)  # 35/80 = 0.4375
+    """
+    # Wrap scalar as [1, 1, 1, 1] tensor
+    t_tensor = torch.tensor([[[[t_value]]]], dtype=torch.float32)
+    
+    # Apply existing normalization function
+    t_norm = normalize_layer(t_tensor, layer_cfg, layer_stats)
+    
+    # Extract scalar
+    return float(t_norm.item())
+
+
+def generate_tmax_training_target(
+    t_current: torch.Tensor,
+    strategy: str,
+    config: dict,
+    device: torch.device
+) -> torch.Tensor:
+    """
+    Generate temperature control training targets.
+    
+    Strategies:
+    - 'relative': t_current + random_delta (learns continuous control around data)
+    - 'sampled': random value from [0, 1] (explores full range)
+    - 'fixed': constant target value (single-target training)
+    
+    Args:
+        t_current: Current temperature statistic [B] (normalized)
+        strategy: 'relative', 'sampled', or 'fixed'
+        config: Training config dict with strategy-specific parameters
+        device: Device to create tensors on
+        
+    Returns:
+        Target temperature values [B] (normalized)
+        
+    Example:
+        >>> t_current = torch.tensor([0.4, 0.6, 0.5, 0.7])
+        >>> config = {'relative_delta_range': [-0.1, 0.1]}
+        >>> targets = generate_tmax_training_target(t_current, 'relative', config, 'cpu')
+        >>> # targets ≈ [0.35, 0.55, 0.48, 0.72] (current + random delta)
+    """
+    B = t_current.shape[0]
+    
+    if strategy == 'relative':
+        # Add random delta to current value
+        delta_range = config.get('relative_delta_range', [-0.15, 0.15])
+        delta_min, delta_max = delta_range
+        
+        # Random delta per sample
+        delta = torch.rand(B, device=device) * (delta_max - delta_min) + delta_min
+        target = t_current + delta
+        
+        # Clamp to valid normalized range [0, 1]
+        target = torch.clamp(target, 0.0, 1.0)
+        
+    elif strategy == 'sampled':
+        # Sample random values from normalized range
+        target = torch.rand(B, device=device)
+        
+    elif strategy == 'fixed':
+        # Use fixed target value
+        fixed_value = config.get('fixed_value', 0.5)
+        if fixed_value is None:
+            raise ValueError(
+                "Strategy 'fixed' requires 'fixed_value' in config. "
+                "Example: fixed_value: 0.5 (normalized)"
+            )
+        target = torch.full((B,), fixed_value, device=device, dtype=torch.float32)
+        
+    else:
+        raise ValueError(
+            f"Unknown training strategy: '{strategy}'. "
+            f"Supported: 'relative', 'sampled', 'fixed'"
+        )
+    
+    return target
+
+
 def collate_fn(batch):
     """
     Custom collate function for batching dataset outputs.
