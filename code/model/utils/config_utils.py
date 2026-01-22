@@ -40,13 +40,14 @@ def get_config_value(config, key, default_value):
     return config[key] if key in config else default_value
 
 
-def build_unet_condition_config(stage_config, vae_groups_config):
+def build_unet_condition_config(stage_config, vae_groups_config, global_config=None):
     """
     Build U-Net condition_config from diffusion stage conditioning configuration.
     
     Args:
         stage_config: Diffusion stage config dict with 'conditioning' key
         vae_groups_config: VAE groups configuration dict
+        global_config: Full global config dict (for temperature_control)
         
     Returns:
         condition_config dict for U-Net initialization
@@ -80,6 +81,23 @@ def build_unet_condition_config(stage_config, vae_groups_config):
         'latent_space_count': latent_channels,
         'latent_space_specs': latent_space_specs  # Store for forward pass
     }
+    
+    # Add temperature control config if enabled for this stage
+    temp_control_enabled = stage_config.get('temperature_control', False)
+    if temp_control_enabled and global_config is not None:
+        temp_control_config = global_config.get('temperature_control', {})
+        
+        if temp_control_config.get('enabled', False):
+            # Extract relevant config for U-Net
+            conditioning_cfg = temp_control_config.get('conditioning', {})
+            training_cfg = temp_control_config.get('training', {})
+            
+            condition_config['temperature_condition_config'] = {
+                'enabled': True,
+                'mlp_hidden': conditioning_cfg.get('mlp_hidden', 128),
+                'drop_prob': training_cfg.get('drop_prob', 0.1),
+                'unconditional_value': training_cfg.get('unconditional_value', 0.0)
+            }
     
     return condition_config
 
