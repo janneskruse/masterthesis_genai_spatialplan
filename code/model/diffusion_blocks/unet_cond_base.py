@@ -74,6 +74,18 @@ class Unet(nn.Module):
             self.class_emb = nn.Embedding(self.num_classes,
                                           self.t_emb_dim)
         
+        # Temperature control conditioning (scalar injection via time embedding)
+        temp_cfg = self.condition_config.get('temperature_condition_config', None) if self.condition_config else None
+        self.use_tmax = bool(temp_cfg and temp_cfg.get('enabled', False))
+        if self.use_tmax:
+            hidden = int(temp_cfg.get('mlp_hidden', 128))
+            self.tmax_mlp = nn.Sequential(
+                nn.Linear(1, hidden),
+                nn.SiLU(),
+                nn.Linear(hidden, self.t_emb_dim),
+            )
+            print(f"✓ Temperature control enabled with MLP hidden={hidden}")
+        
         if self.image_cond:
             # Compute expected input channels from condition_config
             expected_channels = self._compute_expected_conditioning_channels()
@@ -280,6 +292,14 @@ class Unet(nn.Module):
             class_embed = einsum(cond_input['class'].float(), self.class_emb.weight, 'b n, n d -> b d')
             t_emb += class_embed
         ####################################
+        
+        ######## Temperature Control Conditioning ########
+        if self.use_tmax and cond_input is not None and 'tmax' in cond_input:
+            tmax = cond_input['tmax'].float()  # [B] or [B, 1]
+            if tmax.ndim == 1:
+                tmax = tmax[:, None]  # [B] -> [B, 1]
+            t_emb = t_emb + self.tmax_mlp(tmax)
+        ##################################################
             
         context_hidden_states = None
         if self.text_cond:

@@ -235,7 +235,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print("="*50)
     
     # Build condition_config for U-Net from stage conditioning configuration
-    condition_config = build_unet_condition_config(stage_config, vae_groups)
+    condition_config = build_unet_condition_config(stage_config, vae_groups, global_config=config)
     
     # Add condition_config to unet_config
     unet_config_with_cond = unet_config.copy()
@@ -340,6 +340,16 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # - Pixel-space: drop all except inpainting_mask (mask must always be visible!)
     # - Latent-space: drop specified groups from drop_groups
     keep_mask = True  # Always True for inpainting
+    
+    # Get temperature control unconditional value (if enabled)
+    tmax_uncond_value = 0.0
+    if stage_config.get('temperature_control', False):
+        temp_control_config = config.get('temperature_control', {})
+        if temp_control_config.get('enabled', False):
+            training_cfg = temp_control_config.get('training', {})
+            tmax_uncond_value = training_cfg.get('unconditional_value', 0.0)
+            if is_main:
+                print(f"✓ Temperature control: unconditional value = {tmax_uncond_value}")
     
     # Seam improvement configuration
     seam_mode = inpainting_config.get('seam', None)
@@ -461,7 +471,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     cond_input,
                     drop_prob=cond_drop_prob,
                     drop_groups=drop_groups,
-                    keep_mask=keep_mask  # Always True - preserves inpainting_mask
+                    keep_mask=keep_mask,  # Always True - preserves inpainting_mask
+                    tmax_uncond_value=tmax_uncond_value  # Use configured unconditional value
                 )
             else:
                 cond_input_dropped = cond_input

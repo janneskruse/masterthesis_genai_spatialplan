@@ -24,6 +24,7 @@ from model.utils.layer_config import count_layer_channels
 from model.utils.vae_registry import VAERegistry
 from model.utils.checkpoint import load_checkpoint
 from model.utils.diffusion_utils import make_uncond_input_keep_mask
+from model.utils.data_utils import normalize_scalar_like_layer
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 from model.lst_predictor.predictor import LSTPredictor
@@ -411,9 +412,60 @@ def sample_semantics(
         print("⚠ LST guidance requested but no LST target found in data")
         use_lst_guidance = False
     
+    # Temperature control: Convert user threshold to normalized value and inject
+    tmax_normalized = None
+    if args.temp_control and args.tmax_value is not None:
+        # Get temperature control config
+        temp_control_config = config.get('temperature_control', {})
+        temp_layer_name = temp_control_config.get('temperature_layer', 'lst')
+        
+        # Get layer config and stats for normalization
+        layers_registry = config.get('layers', {})
+        if temp_layer_name not in layers_registry:
+            raise ValueError(f"Temperature layer '{temp_layer_name}' not found in layers registry")
+        
+        layer_cfg = layers_registry[temp_layer_name]
+        layer_stats = dataset.layer_stats.get(temp_layer_name)
+        
+        # Convert threshold to normalized space
+        if args.tmax_unit == 'celsius':
+            tmax_normalized = normalize_scalar_like_layer(
+                args.tmax_value,
+                layer_cfg,
+                layer_stats
+            )
+            print(f"\n{'='*60}")
+            print("Temperature Control")
+            print(f"{'='*60}")
+            print(f"✓ Temperature threshold: {args.tmax_value}°C → {tmax_normalized:.4f} (normalized)")
+            print(f"✓ Layer: {temp_layer_name}")
+            print(f"✓ Statistic: {temp_control_config.get('statistic', 'p95')}")
+            print(f"✓ Region: {temp_control_config.get('region', 'mask')}")
+            print(f"{'='*60}\n")
+        else:
+            tmax_normalized = args.tmax_value
+            print(f"\n✓ Temperature threshold (normalized): {tmax_normalized:.4f}\n")
+        
+        # Inject into conditioning
+        batch_size = cond_input['image'].shape[0] if 'image' in cond_input else 1
+        cond_input['tmax'] = torch.full((batch_size,), tmax_normalized, device=device, dtype=torch.float32)
+        
+        # Get unconditional value from config
+        training_cfg = temp_control_config.get('training', {})
+        tmax_uncond_value = training_cfg.get('unconditional_value', 0.0)
+        print(f"✓ Unconditional value for CFG: {tmax_uncond_value}\n")
+    
     # CRITICAL FIX: Create unconditional input that KEEPS the inpainting mask
     # For inpainting CFG, unconditional branch must see the mask, only latent groups are zeroed
     uncond_input = make_uncond_input_keep_mask(cond_input)
+    
+    # Override tmax in unconditional input if temperature control is enabled
+    if args.temp_control and tmax_normalized is not None:
+        temp_control_config = config.get('temperature_control', {})
+        training_cfg = temp_control_config.get('training', {})
+        tmax_uncond_value = training_cfg.get('unconditional_value', 0.0)
+        batch_size = uncond_input['image'].shape[0] if 'image' in uncond_input else 1
+        uncond_input['tmax'] = torch.full((batch_size,), tmax_uncond_value, device=device, dtype=torch.float32)
     
     # Get inpainting mode from stage config
     inpainting_cfg = stage_config.get('inpainting', {})
@@ -712,7 +764,7 @@ def infer(args, config):
     data_dir = f"{big_data_storage_path}/results/{train_config['task_name']}"
     
     # Build condition_config for U-Net (same as training)
-    condition_config = build_unet_condition_config(stage_config, vae_groups)
+    condition_config = build_unet_condition_config(stage_config, vae_groups, global_config=config)
     
     # Add condition_config to unet_config
     unet_config_with_cond = unet_config.copy()
@@ -794,6 +846,12 @@ if __name__ == '__main__':
     parser.add_argument('--use_lst_guidance', action='store_true', help='Use LST predictor guidance')
     parser.add_argument('--overwrite_samples', action='store_true', help='Overwrite existing samples')
     parser.add_argument('--config', type=str, default=None, help='Path to config file')
+    
+    # Temperature control arguments
+    parser.add_argument('--temp_control', action='store_true', help='Enable temperature threshold control')
+    parser.add_argument('--tmax_value', type=float, default=None, help='Maximum temperature threshold (e.g., 35.0 for 35°C)')
+    parser.add_argument('--tmax_unit', type=str, default='celsius', choices=['celsius', 'normalized'], 
+                       help='Unit for tmax_value: celsius (default) or normalized [0,1]')
     
     args = parser.parse_args()
     

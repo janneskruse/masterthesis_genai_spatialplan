@@ -93,7 +93,8 @@ def apply_classifier_free_guidance_dropout(
     cond_dict: dict,
     drop_prob: float,
     drop_groups: list,
-    keep_mask: bool = True
+    keep_mask: bool = True,
+    tmax_uncond_value: float = 0.0
 ) -> dict:
     """
     Apply classifier-free guidance dropout to conditioning.
@@ -107,6 +108,8 @@ def apply_classifier_free_guidance_dropout(
         drop_groups: List of latent-space group names to drop (e.g., ['semantic', 'environmental'])
         keep_mask: If True, preserve 'inpainting_mask' channel in pixel-space (default: True)
                   All other pixel-space channels will be dropped
+        tmax_uncond_value: Unconditional value for temperature control (default: 0.0)
+                          Should match temperature_control.training.unconditional_value in config
         
     Returns:
         NEW conditioning dict with randomly dropped groups (non-mutating)
@@ -151,7 +154,11 @@ def apply_classifier_free_guidance_dropout(
             if key in ['image', 'meta']:
                 continue  # Already handled
             
-            if key in drop_groups:
+            if key == 'tmax':
+                # Special handling for temperature control scalar
+                # Use configured unconditional value (not always 0.0)
+                new_cond_dict[key] = torch.full_like(cond_dict[key], tmax_uncond_value)
+            elif key in drop_groups:
                 # Zero out this group
                 new_cond_dict[key] = torch.zeros_like(cond_dict[key])
             else:
