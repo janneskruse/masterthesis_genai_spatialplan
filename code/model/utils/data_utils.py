@@ -475,7 +475,14 @@ def collate_fn(batch):
                 cond_inputs[key] = None
             elif isinstance(sample_cond[key], torch.Tensor):
                 # Tensors: stack along batch dimension
-                cond_inputs[key] = torch.stack([item[1][key] for item in batch])
+                stacked = torch.stack([item[1][key] for item in batch])
+                
+                # Special handling for scalar conditioning (e.g., tmax)
+                # Ensure shape is [B] or [B, 1] for consistency
+                if key == 'tmax' and stacked.dim() == 2 and stacked.shape[1] == 1:
+                    stacked = stacked.squeeze(1)  # [B, 1] -> [B]
+                
+                cond_inputs[key] = stacked
             else:
                 # Other types (lists, strings, etc.): keep first item (should be consistent)
                 cond_inputs[key] = sample_cond[key]
