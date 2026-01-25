@@ -477,9 +477,10 @@ def collate_fn(batch):
                 # Tensors: stack along batch dimension
                 stacked = torch.stack([item[1][key] for item in batch])
                 
-                # Special handling for scalar conditioning (e.g., tmax)
-                # Ensure shape is [B] or [B, 1] for consistency
-                if key == 'tmax' and stacked.dim() == 2 and stacked.shape[1] == 1:
+                # Generic handling for scalar conditioning (e.g., tmax, veg_mean, height_p95)
+                # If tensor is [B, 1], squeeze to [B] for scalar controls
+                # Image-like tensors are 4D after stacking, so this only affects scalars
+                if stacked.dim() == 2 and stacked.shape[1] == 1:
                     stacked = stacked.squeeze(1)  # [B, 1] -> [B]
                 
                 cond_inputs[key] = stacked
