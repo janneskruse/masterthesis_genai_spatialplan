@@ -120,15 +120,6 @@ def build_unet_condition_config(stage_config, vae_groups_config, global_config=N
                 'enabled': True,
                 'scalars': scalar_config  # Dict: key -> config
             }
-            
-            # Backwards compatibility: also set temperature_condition_config if tmax exists
-            if 'tmax' in scalar_config:
-                condition_config['temperature_condition_config'] = {
-                    'enabled': True,
-                    'mlp_hidden': scalar_config['tmax']['mlp_hidden'],
-                    'drop_prob': scalar_config['tmax']['drop_prob'],
-                    'unconditional_value': scalar_config['tmax']['unconditional_value']
-                }
     
     return condition_config
 

@@ -91,20 +91,6 @@ class Unet(nn.Module):
                 )
             print(f"✓ Scalar controls enabled: {list(self.scalar_mlps.keys())}")
         
-        # Backwards compatibility: check for legacy temperature_condition_config
-        if not self.use_scalar_controls:
-            temp_cfg = self.condition_config.get('temperature_condition_config', None) if self.condition_config else None
-            if temp_cfg and temp_cfg.get('enabled', False):
-                # Legacy path: create single tmax MLP
-                hidden = int(temp_cfg.get('mlp_hidden', 128))
-                self.scalar_mlps['tmax'] = nn.Sequential(
-                    nn.Linear(1, hidden),
-                    nn.SiLU(),
-                    nn.Linear(hidden, self.t_emb_dim),
-                )
-                self.use_scalar_controls = True
-                print(f"✓ Temperature control enabled (legacy) with MLP hidden={hidden}")
-        
         if self.image_cond:
             # Compute expected input channels from condition_config
             expected_channels = self._compute_expected_conditioning_channels()

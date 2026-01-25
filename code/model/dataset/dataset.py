@@ -20,7 +20,6 @@ from model.utils.diffusion_utils import load_single_latent
 from model.utils.data_utils import (
     apply_layer_transform,
     masked_quantile,
-    generate_tmax_training_target,
     normalize_layer
 )
 from model.utils.scalar_controls import (
