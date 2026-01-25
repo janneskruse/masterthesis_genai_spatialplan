@@ -25,6 +25,7 @@ from model.utils.vae_registry import VAERegistry
 from model.utils.checkpoint import load_checkpoint
 from model.utils.diffusion_utils import make_uncond_input_keep_mask
 from model.utils.data_utils import normalize_scalar_like_layer
+from model.utils.scalar_controls import parse_scalar_controls_config
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 from model.lst_predictor.predictor import LSTPredictor
@@ -412,60 +413,92 @@ def sample_semantics(
         print("⚠ LST guidance requested but no LST target found in data")
         use_lst_guidance = False
     
-    # Temperature control: Convert user threshold to normalized value and inject
-    tmax_normalized = None
-    if args.temp_control and args.tmax_value is not None:
-        # Get temperature control config
-        temp_control_config = config.get('temperature_control', {})
-        temp_layer_name = temp_control_config.get('temperature_layer', 'lst')
+    # Generic Scalar Controls: Parse CLI args and inject into conditioning
+    scalar_values_normalized = {}  # Dict: key -> normalized value
+    scalar_uncond_values = {}  # Dict: key -> unconditional value
+    
+    if args.control:
+        # Parse all enabled scalar controls from config
+        control_specs = parse_scalar_controls_config(config)
         
-        # Get layer config and stats for normalization
-        layers_registry = config.get('layers', {})
-        if temp_layer_name not in layers_registry:
-            raise ValueError(f"Temperature layer '{temp_layer_name}' not found in layers registry")
-        
-        layer_cfg = layers_registry[temp_layer_name]
-        layer_stats = dataset.layer_stats.get(temp_layer_name)
-        
-        # Convert threshold to normalized space
-        if args.tmax_unit == 'celsius':
-            tmax_normalized = normalize_scalar_like_layer(
-                args.tmax_value,
-                layer_cfg,
-                layer_stats
-            )
-            print(f"\n{'='*60}")
-            print("Temperature Control")
-            print(f"{'='*60}")
-            print(f"✓ Temperature threshold: {args.tmax_value}°C → {tmax_normalized:.4f} (normalized)")
-            print(f"✓ Layer: {temp_layer_name}")
-            print(f"✓ Statistic: {temp_control_config.get('statistic', 'p95')}")
-            print(f"✓ Region: {temp_control_config.get('region', 'mask')}")
-            print(f"{'='*60}\n")
+        if len(control_specs) == 0:
+            print("⚠ Warning: --control specified but no scalar controls configured. Ignoring.")
         else:
-            tmax_normalized = args.tmax_value
-            print(f"\n✓ Temperature threshold (normalized): {tmax_normalized:.4f}\n")
-        
-        # Inject into conditioning
-        batch_size = cond_input['image'].shape[0] if 'image' in cond_input else 1
-        cond_input['tmax'] = torch.full((batch_size,), tmax_normalized, device=device, dtype=torch.float32)
-        
-        # Get unconditional value from config
-        training_cfg = temp_control_config.get('training', {})
-        tmax_uncond_value = training_cfg.get('unconditional_value', 0.0)
-        print(f"✓ Unconditional value for CFG: {tmax_uncond_value}\n")
+            # Build lookup: key -> control spec
+            key_to_spec = {}
+            for spec in control_specs:
+                for key in spec['keys']:
+                    key_to_spec[key] = spec
+            
+            # Parse CLI controls: "key=value" format
+            user_controls = {}
+            for ctrl_str in args.control:
+                if '=' not in ctrl_str:
+                    raise ValueError(f"Invalid control format: '{ctrl_str}'. Expected 'key=value'.")
+                key, value_str = ctrl_str.split('=', 1)
+                try:
+                    user_controls[key] = float(value_str)
+                except ValueError:
+                    raise ValueError(f"Invalid control value for '{key}': '{value_str}' (not a number)")
+            
+            # Process each user control
+            layers_registry = config.get('layers', {})
+            print(f"\n{'='*60}")
+            print("Scalar Controls")
+            print(f"{'='*60}")
+            
+            for key, user_value in user_controls.items():
+                if key not in key_to_spec:
+                    available = list(key_to_spec.keys())
+                    raise ValueError(
+                        f"Unknown scalar control key: '{key}'. "
+                        f"Available: {available}. "
+                        f"Enable controls in config's scalar_controls section."
+                    )
+                
+                spec = key_to_spec[key]
+                layer_name = spec['layer']
+                control_name = spec['name']
+                training_cfg = spec.get('training', {})
+                
+                # Get layer config for normalization
+                if layer_name not in layers_registry:
+                    raise ValueError(f"Layer '{layer_name}' for control '{key}' not found in layers registry")
+                
+                layer_cfg = layers_registry[layer_name]
+                layer_stats = dataset.layer_stats.get(layer_name)
+                
+                # Normalize user value (assumes user provides in original units, e.g., Celsius)
+                normalized_value = normalize_scalar_like_layer(user_value, layer_cfg, layer_stats)
+                scalar_values_normalized[key] = normalized_value
+                
+                # Get unconditional value
+                uncond_value = training_cfg.get('unconditional_value', 0.0)
+                scalar_uncond_values[key] = uncond_value
+                
+                # Print status
+                statistic = spec.get('statistic', 'mean')
+                region = spec.get('region', 'mask')
+                print(f"✓ {key} ({control_name}): {user_value} → {normalized_value:.4f} (normalized)")
+                print(f"  Layer: {layer_name}, Statistic: {statistic}, Region: {region}")
+                print(f"  Unconditional value (CFG): {uncond_value}")
+            
+            print(f"{'='*60}\n")
+            
+            # Inject into conditioning
+            batch_size = cond_input['image'].shape[0] if 'image' in cond_input else 1
+            for key, norm_value in scalar_values_normalized.items():
+                cond_input[key] = torch.full((batch_size,), norm_value, device=device, dtype=torch.float32)
     
     # CRITICAL FIX: Create unconditional input that KEEPS the inpainting mask
     # For inpainting CFG, unconditional branch must see the mask, only latent groups are zeroed
     uncond_input = make_uncond_input_keep_mask(cond_input)
     
-    # Override tmax in unconditional input if temperature control is enabled
-    if args.temp_control and tmax_normalized is not None:
-        temp_control_config = config.get('temperature_control', {})
-        training_cfg = temp_control_config.get('training', {})
-        tmax_uncond_value = training_cfg.get('unconditional_value', 0.0)
+    # Inject scalar unconditional values into uncond_input
+    if scalar_uncond_values:
         batch_size = uncond_input['image'].shape[0] if 'image' in uncond_input else 1
-        uncond_input['tmax'] = torch.full((batch_size,), tmax_uncond_value, device=device, dtype=torch.float32)
+        for key, uncond_value in scalar_uncond_values.items():
+            uncond_input[key] = torch.full((batch_size,), uncond_value, device=device, dtype=torch.float32)
     
     # Get inpainting mode from stage config
     inpainting_cfg = stage_config.get('inpainting', {})
@@ -847,11 +880,14 @@ if __name__ == '__main__':
     parser.add_argument('--overwrite_samples', action='store_true', help='Overwrite existing samples')
     parser.add_argument('--config', type=str, default=None, help='Path to config file')
     
-    # Temperature control arguments
-    parser.add_argument('--temp_control', action='store_true', help='Enable temperature threshold control')
-    parser.add_argument('--tmax_value', type=float, default=None, help='Maximum temperature threshold (e.g., 35.0 for 35°C)')
-    parser.add_argument('--tmax_unit', type=str, default='celsius', choices=['celsius', 'normalized'], 
-                       help='Unit for tmax_value: celsius (default) or normalized [0,1]')
+    # Generic scalar control arguments (temperature, vegetation, heights, etc.)
+    # Use --control key=value syntax, repeatable for multiple controls
+    # Examples:
+    #   --control tmax=35.0 (temperature in Celsius)
+    #   --control veg_mean=0.3 (normalized vegetation coverage)
+    #   --control height_p95=25.0 (building height in meters)
+    parser.add_argument('--control', action='append', metavar='KEY=VALUE',
+                       help='Scalar control constraint (e.g., tmax=35.0, veg_mean=0.3). Repeatable.')
     
     args = parser.parse_args()
     
