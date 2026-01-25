@@ -39,7 +39,6 @@ def make_uncond_input_keep_mask(cond_input: dict) -> dict:
     """
     Create unconditional conditioning for CFG that KEEPS ONLY the inpainting mask.
     
-    CRITICAL FOR INPAINTING CFG:
     - Unconditional branch must see ONLY the inpainting mask from pixel-space
     - All other pixel-space channels (LST, NDVI, etc.) are zeroed
     - All latent-space conditioning groups are zeroed
@@ -59,7 +58,7 @@ def make_uncond_input_keep_mask(cond_input: dict) -> dict:
             # Keep metadata as-is
             uncond[k] = v
         elif k == 'image':
-            # CRITICAL: Keep ONLY the inpainting_mask channel, zero all other pixel-space
+            # Keep ONLY the inpainting_mask channel, zero all other pixel-space
             if 'meta' in cond_input:
                 # Handle both dict and list-of-dicts meta structures
                 meta = cond_input['meta']
@@ -99,8 +98,6 @@ def apply_classifier_free_guidance_dropout(
     """
     Apply classifier-free guidance dropout to conditioning.
     Randomly zeros out specified conditioning groups for CFG training.
-    
-    CRITICAL: For inpainting, inpainting_mask MUST be preserved (keep_mask=True)!
     
     Args:
         cond_dict: Conditioning dictionary with 'image' (pixel-space) and latent groups

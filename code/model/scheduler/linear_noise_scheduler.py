@@ -81,8 +81,8 @@ class LinearNoiseScheduler:
         Sample previous timestep for inpainting.
         Clamps known regions to context after each denoising step using FIXED noise.
         
-        CRITICAL: noise_context must be sampled ONCE per sample and reused for all timesteps
-        to prevent temporal inconsistency and seam artifacts.
+        noise_context must be sampled ONCE per sample and reused for all timesteps
+        to prevent temporal inconsiWstency and seam artifacts.
         
         :param xt: current timestep sample [B, C, H, W]
         :param noise_pred: model noise prediction

@@ -1,5 +1,4 @@
-# Training script for semantic diffusion inpainting with DDP
-# Stage 1: Generate semantic layouts (buildings/roads/vegetation/height) with temperature control
+# Training script for latent diffusion inpainting with DDP
 
 ###### import libraries ######
 # system libraries
@@ -314,9 +313,6 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     loss_type = inpainting_config.get('loss', 'masked')  # "masked" | "weighted"
     mask_loss_weight = inpainting_config.get('mask_loss_weight', 8.0)
     
-    # CRITICAL FIX: Hard mode MUST NOT train on outside region (it's not noised!)
-    # In hard inpainting: x_t = mask * noise + (1-mask) * x0
-    # → Outside region stays at x0, so diffusion loss outside is meaningless
     if inpainting_mode == "hard":
         outside_weight = 0.0
         loss_type = "masked"  # Force masked loss for hard mode
@@ -337,9 +333,6 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     cond_drop_prob = cfg_config.get('drop_prob', 0.1)
     drop_groups = cfg_config.get('drop_groups', [])  # Which latent groups to drop
     
-    # CRITICAL FIX: During CFG dropout, drop all conditioning EXCEPT inpainting_mask
-    # - Pixel-space: drop all except inpainting_mask (mask must always be visible!)
-    # - Latent-space: drop specified groups from drop_groups
     keep_mask = True  # Always True for inpainting
     
     # Build scalar unconditional values dict for all enabled scalar controls
@@ -479,7 +472,6 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 noisy_im = scheduler.add_noise(im_latent, noise, t)
             
             # Apply classifier-free guidance dropout
-            # CRITICAL: Drops all pixel-space EXCEPT inpainting_mask, drops specified latent groups
             if cond_drop_prob > 0:
                 cond_input_dropped = apply_classifier_free_guidance_dropout(
                     cond_input,

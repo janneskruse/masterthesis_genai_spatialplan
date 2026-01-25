@@ -337,9 +337,6 @@ def render_satellite_from_semantics(
                     cond_input[cond_group] = env_latent
         
         # 3. Apply sampling-time mask to specified conditioning groups (e.g., environmental)
-        # CRITICAL: This is where we apply conditional masking for sampling
-        # Training sees FULL environmental → learns spatial correlations
-        # Sampling masks environmental inside hole → model infers from boundaries
         if sample_mask_groups and 'image' in cond_input and 'pixel_space_names' in cond_input['meta'][0]:
             pixel_names = cond_input['meta'][0]['pixel_space_names']
             if 'inpainting_mask' in pixel_names:
@@ -350,7 +347,6 @@ def render_satellite_from_semantics(
                 cond_input = mask_conditioning_latents(cond_input, mask_latent, sample_mask_groups)
                 print(f"  ✓ Applied sampling-time mask to groups: {sample_mask_groups}")
         
-        # CRITICAL FIX: Create unconditional input that KEEPS the inpainting mask
         # For inpainting CFG, unconditional branch must see the mask, only latent groups are zeroed
         uncond_input = make_uncond_input_keep_mask(cond_input)
         

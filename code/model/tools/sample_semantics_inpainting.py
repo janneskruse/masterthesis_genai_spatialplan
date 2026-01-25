@@ -490,7 +490,6 @@ def sample_semantics(
             for key, norm_value in scalar_values_normalized.items():
                 cond_input[key] = torch.full((batch_size,), norm_value, device=device, dtype=torch.float32)
     
-    # CRITICAL FIX: Create unconditional input that KEEPS the inpainting mask
     # For inpainting CFG, unconditional branch must see the mask, only latent groups are zeroed
     uncond_input = make_uncond_input_keep_mask(cond_input)
     
