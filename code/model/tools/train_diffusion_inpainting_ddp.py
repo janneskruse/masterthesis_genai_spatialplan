@@ -32,6 +32,7 @@ from model.utils.diffusion_utils import (
     apply_seam_mode,
     compute_boundary_aware_loss
 )
+from model.utils.scalar_controls import parse_scalar_controls_config
 from model.utils.samples import save_layerwise_samples, save_rgb_composite
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
@@ -341,15 +342,28 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # - Latent-space: drop specified groups from drop_groups
     keep_mask = True  # Always True for inpainting
     
-    # Get temperature control unconditional value (if enabled)
-    tmax_uncond_value = 0.0
-    if stage_config.get('temperature_control', False):
-        temp_control_config = config.get('temperature_control', {})
-        if temp_control_config.get('enabled', False):
-            training_cfg = temp_control_config.get('training', {})
-            tmax_uncond_value = training_cfg.get('unconditional_value', 0.0)
-            if is_main:
-                print(f"✓ Temperature control: unconditional value = {tmax_uncond_value}")
+    # Build scalar unconditional values dict for all enabled scalar controls
+    scalar_uncond = {}
+    scalar_controls_enabled = (
+        stage_config.get('temperature_control', False) or
+        stage_config.get('scalar_controls', False)
+    )
+    
+    if scalar_controls_enabled:
+        # Parse all enabled scalar controls (includes legacy temperature_control)
+        control_specs = parse_scalar_controls_config(config)
+        
+        for spec in control_specs:
+            scalar_keys = spec['keys']
+            training_cfg = spec.get('training', {})
+            uncond_value = training_cfg.get('unconditional_value', 0.0)
+            
+            # Add unconditional value for each scalar key
+            for key in scalar_keys:
+                scalar_uncond[key] = uncond_value
+        
+        if is_main and len(scalar_uncond) > 0:
+            print(f"✓ Scalar controls unconditional values: {scalar_uncond}")
     
     # Seam improvement configuration
     seam_mode = inpainting_config.get('seam', None)
@@ -472,7 +486,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     drop_prob=cond_drop_prob,
                     drop_groups=drop_groups,
                     keep_mask=keep_mask,  # Always True - preserves inpainting_mask
-                    tmax_uncond_value=tmax_uncond_value  # Use configured unconditional value
+                    scalar_uncond=scalar_uncond  # Dict of unconditional values for all scalars
                 )
             else:
                 cond_input_dropped = cond_input

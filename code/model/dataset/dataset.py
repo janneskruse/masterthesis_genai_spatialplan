@@ -20,8 +20,12 @@ from model.utils.diffusion_utils import load_single_latent
 from model.utils.data_utils import (
     apply_layer_transform,
     masked_quantile,
-    generate_tmax_training_target,
     normalize_layer
+)
+from model.utils.scalar_controls import (
+    compute_scalar_from_layer,
+    generate_training_target_scalar,
+    parse_scalar_controls_config
 )
 from model.utils.config_utils import compute_patch_and_latent_sizes, get_default_configs
 from model.utils.layer_config import (
@@ -1154,102 +1158,77 @@ class UrbanInpaintingDataset(Dataset):
                     )
                     cond[f'{group_name}_image'] = cond_image  # Mark for encoding
             
-            # Temperature control: Add tmax conditioning if enabled for this stage
-            temp_control_enabled = stage_config.get('temperature_control', False)
-            if temp_control_enabled:
-                # Get global temperature control config
-                temp_control_config = self.config.get('temperature_control', {})
+            # Generic Scalar Controls: Add scalar conditioning if enabled for this stage
+            # Supports temperature, vegetation coverage, building heights, etc.
+            scalar_controls_enabled = (
+                stage_config.get('temperature_control', False) or  # Backwards compat
+                stage_config.get('scalar_controls', False)
+            )
+            
+            if scalar_controls_enabled:
+                # Parse all enabled scalar controls (includes legacy temperature_control)
+                control_specs = parse_scalar_controls_config(self.config)
                 
-                if not temp_control_config.get('enabled', False):
+                if len(control_specs) == 0:
                     raise ValueError(
-                        f"Temperature control enabled for stage '{self.mode_target}' but "
-                        f"global temperature_control.enabled is False. Set temperature_control.enabled: true in config."
+                        f"Scalar controls enabled for stage '{self.mode_target}' but no controls are configured. "
+                        f"Enable at least one control in scalar_controls.controls or temperature_control."
                     )
                 
-                # Get temperature layer name
-                temp_layer_name = temp_control_config.get('temperature_layer', 'lst')
-                
-                # Find temperature layer in unified patch
-                temp_layer_matches = get_layer_channels_from_names(channel_names, temp_layer_name)
-                
-                if len(temp_layer_matches) == 0:
-                    raise ValueError(
-                        f"Temperature control requires layer '{temp_layer_name}', "
-                        f"but it was not found in patch. Available layers: {set(layer_names)}"
-                    )
-                
-                # Extract temperature data (should be single channel)
-                temp_idx, temp_ch_name = temp_layer_matches[0]
-                temp_data = unified_image[temp_idx:temp_idx+1, :, :]  # [1, H, W]
-                
-                # Get mask based on region config
-                region_mode = temp_control_config.get('region', 'mask')
-                
-                if region_mode == 'full':
-                    # Compute statistic over full image
-                    mask_data = torch.ones_like(temp_data)
-                elif region_mode == 'mask':
-                    # Get inpainting mask for masked quantile computation
-                    # The mask is in pixel_space conditioning
-                    mask_data = None
-                    if 'image' in cond and 'pixel_space_names' in cond['meta']:
-                        pixel_space_names = cond['meta']['pixel_space_names']
-                        for mask_idx, mask_name in enumerate(pixel_space_names):
-                            if 'mask' in mask_name.lower():
-                                # Found mask - upsample to full resolution for accurate quantile
-                                mask_latent = cond['image'][mask_idx:mask_idx+1, :, :]  # [1, H_latent, W_latent]
-                                mask_data = torch.nn.functional.interpolate(
-                                    mask_latent.unsqueeze(0),
-                                    size=temp_data.shape[-2:],
-                                    mode='nearest'
-                                ).squeeze(0)  # [1, H, W]
-                                break
+                # Process each control
+                for control_spec in control_specs:
+                    control_name = control_spec['name']
+                    scalar_keys = control_spec['keys']
                     
-                    if mask_data is None:
-                        # Fallback: use full image
-                        print(f"⚠ Warning: Inpainting mask not found for temperature control (region='mask'), using full image")
-                        mask_data = torch.ones_like(temp_data)
-                else:
-                    raise ValueError(f"Unknown region mode: '{region_mode}'. Supported: 'mask', 'full'")
-                
-                # Compute masked quantile (p95 by default)
-                statistic = temp_control_config.get('statistic', 'p95')
-                if statistic == 'p95':
-                    q = 0.95
-                elif statistic == 'p99':
-                    q = 0.99
-                elif statistic == 'max':
-                    q = 1.0
-                elif statistic == 'mean':
-                    # For mean, compute directly
-                    temp_data_unsqueezed = temp_data.unsqueeze(0)  # [1, 1, H, W]
-                    mask_data_unsqueezed = mask_data.unsqueeze(0)  # [1, 1, H, W]
-                    masked_sum = (temp_data_unsqueezed * mask_data_unsqueezed).sum()
-                    masked_count = mask_data_unsqueezed.sum()
-                    t_current = (masked_sum / (masked_count + 1e-8)).reshape(1)  # [1]
-                else:
-                    raise ValueError(f"Unknown statistic: {statistic}. Supported: 'p95', 'p99', 'max', 'mean'")
-                
-                if statistic != 'mean':
-                    t_current = masked_quantile(
-                        temp_data.unsqueeze(0),  # [1, 1, H, W]
-                        mask_data.unsqueeze(0),  # [1, 1, H, W]
-                        q=q
-                    )  # [1]
-                
-                # Generate training target based on strategy
-                training_config = temp_control_config.get('training', {})
-                strategy = training_config.get('strategy', 'relative')
-                
-                tmax_target = generate_tmax_training_target(
-                    t_current=t_current,
-                    strategy=strategy,
-                    config=training_config,
-                    device=temp_data.device
-                )  # [1]
-                
-                # Add to conditioning
-                cond['tmax'] = tmax_target
+                    # Compute current scalar value from layer
+                    try:
+                        x_current = compute_scalar_from_layer(
+                            unified_image=unified_image,
+                            channel_names=channel_names,
+                            control_spec=control_spec,
+                            cond=cond
+                        )  # scalar tensor []
+                    except Exception as e:
+                        raise ValueError(
+                            f"Failed to compute scalar for control '{control_name}': {str(e)}"
+                        ) from e
+                    
+                    # Generate training targets based on number of keys
+                    training_config = control_spec['training']
+                    
+                    if len(scalar_keys) == 1:
+                        # Single scalar: generate one target
+                        target = generate_training_target_scalar(
+                            x_current=x_current,
+                            training_config=training_config,
+                            device=unified_image.device
+                        )  # scalar []
+                        
+                        # Add to conditioning
+                        cond[scalar_keys[0]] = target.reshape(1)  # [1] for collate
+                        
+                    elif len(scalar_keys) == 2:
+                        # Range control (min/max pair): generate symmetric band
+                        center = x_current
+                        delta_range = training_config.get('relative_delta_range', [-0.15, 0.15])
+                        
+                        # Sample delta for range width
+                        delta_width = torch.FloatTensor(1).uniform_(
+                            abs(delta_range[0]), abs(delta_range[1])
+                        ).to(unified_image.device)
+                        
+                        # Create min/max around center
+                        target_min = torch.clamp(center - delta_width, 0.0, 1.0)
+                        target_max = torch.clamp(center + delta_width, 0.0, 1.0)
+                        
+                        # Add to conditioning
+                        cond[scalar_keys[0]] = target_min.reshape(1)  # [1]
+                        cond[scalar_keys[1]] = target_max.reshape(1)  # [1]
+                    else:
+                        raise ValueError(
+                            f"Control '{control_name}' has {len(scalar_keys)} keys. "
+                            f"Supported: 1 (scalar) or 2 (range min/max)."
+                        )
             
             # NOTE: Conditioning masking is applied at SAMPLING time only, not in the dataset
             

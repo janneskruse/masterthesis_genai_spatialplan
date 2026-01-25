@@ -381,72 +381,6 @@ def normalize_scalar_like_layer(
     return float(t_norm.item())
 
 
-def generate_tmax_training_target(
-    t_current: torch.Tensor,
-    strategy: str,
-    config: dict,
-    device: torch.device
-) -> torch.Tensor:
-    """
-    Generate temperature control training targets.
-    
-    Strategies:
-    - 'relative': t_current + random_delta (learns continuous control around data)
-    - 'sampled': random value from [0, 1] (explores full range)
-    - 'fixed': constant target value (single-target training)
-    
-    Args:
-        t_current: Current temperature statistic [B] (normalized)
-        strategy: 'relative', 'sampled', or 'fixed'
-        config: Training config dict with strategy-specific parameters
-        device: Device to create tensors on
-        
-    Returns:
-        Target temperature values [B] (normalized)
-        
-    Example:
-        >>> t_current = torch.tensor([0.4, 0.6, 0.5, 0.7])
-        >>> config = {'relative_delta_range': [-0.1, 0.1]}
-        >>> targets = generate_tmax_training_target(t_current, 'relative', config, 'cpu')
-        >>> # targets ≈ [0.35, 0.55, 0.48, 0.72] (current + random delta)
-    """
-    B = t_current.shape[0]
-    
-    if strategy == 'relative':
-        # Add random delta to current value
-        delta_range = config.get('relative_delta_range', [-0.15, 0.15])
-        delta_min, delta_max = delta_range
-        
-        # Random delta per sample
-        delta = torch.rand(B, device=device) * (delta_max - delta_min) + delta_min
-        target = t_current + delta
-        
-        # Clamp to valid normalized range [0, 1]
-        target = torch.clamp(target, 0.0, 1.0)
-        
-    elif strategy == 'sampled':
-        # Sample random values from normalized range
-        target = torch.rand(B, device=device)
-        
-    elif strategy == 'fixed':
-        # Use fixed target value
-        fixed_value = config.get('fixed_value', 0.5)
-        if fixed_value is None:
-            raise ValueError(
-                "Strategy 'fixed' requires 'fixed_value' in config. "
-                "Example: fixed_value: 0.5 (normalized)"
-            )
-        target = torch.full((B,), fixed_value, device=device, dtype=torch.float32)
-        
-    else:
-        raise ValueError(
-            f"Unknown training strategy: '{strategy}'. "
-            f"Supported: 'relative', 'sampled', 'fixed'"
-        )
-    
-    return target
-
-
 def collate_fn(batch):
     """
     Custom collate function for batching dataset outputs.
@@ -477,9 +411,10 @@ def collate_fn(batch):
                 # Tensors: stack along batch dimension
                 stacked = torch.stack([item[1][key] for item in batch])
                 
-                # Special handling for scalar conditioning (e.g., tmax)
-                # Ensure shape is [B] or [B, 1] for consistency
-                if key == 'tmax' and stacked.dim() == 2 and stacked.shape[1] == 1:
+                # Generic handling for scalar conditioning (e.g., tmax, veg_mean, height_p95)
+                # If tensor is [B, 1], squeeze to [B] for scalar controls
+                # Image-like tensors are 4D after stacking, so this only affects scalars
+                if stacked.dim() == 2 and stacked.shape[1] == 1:
                     stacked = stacked.squeeze(1)  # [B, 1] -> [B]
                 
                 cond_inputs[key] = stacked

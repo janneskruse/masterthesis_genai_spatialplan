@@ -94,7 +94,7 @@ def apply_classifier_free_guidance_dropout(
     drop_prob: float,
     drop_groups: list,
     keep_mask: bool = True,
-    tmax_uncond_value: float = 0.0
+    scalar_uncond: dict = None
 ) -> dict:
     """
     Apply classifier-free guidance dropout to conditioning.
@@ -108,8 +108,9 @@ def apply_classifier_free_guidance_dropout(
         drop_groups: List of latent-space group names to drop (e.g., ['semantic', 'environmental'])
         keep_mask: If True, preserve 'inpainting_mask' channel in pixel-space (default: True)
                   All other pixel-space channels will be dropped
-        tmax_uncond_value: Unconditional value for temperature control (default: 0.0)
-                          Should match temperature_control.training.unconditional_value in config
+        scalar_uncond: Dict mapping scalar control keys to unconditional values
+                      Example: {'tmax': 0.0, 'veg_mean': 0.5, 'height_p95': 0.0}
+                      If None, defaults to 0.0 for all scalars
         
     Returns:
         NEW conditioning dict with randomly dropped groups (non-mutating)
@@ -121,6 +122,10 @@ def apply_classifier_free_guidance_dropout(
         
         IMPORTANT: Returns a NEW dict to avoid mutating the original conditioning.
     """
+    # Default scalar unconditional values to empty dict
+    if scalar_uncond is None:
+        scalar_uncond = {}
+    
     # Single random roll for all conditioning
     if np.random.rand() < drop_prob:
         # Create new dict to avoid mutation
@@ -149,20 +154,20 @@ def apply_classifier_free_guidance_dropout(
                 # Drop all pixel-space conditioning
                 new_cond_dict['image'] = torch.zeros_like(cond_dict['image'])
         
-        # Drop specified latent-space conditioning groups
+        # Drop specified latent-space conditioning groups and handle scalar controls
         for key in cond_dict.keys():
             if key in ['image', 'meta']:
                 continue  # Already handled
             
-            if key == 'tmax':
-                # Special handling for temperature control scalar
-                # Use configured unconditional value (not always 0.0)
-                new_cond_dict[key] = torch.full_like(cond_dict[key], tmax_uncond_value)
+            # Check if this is a scalar control (in scalar_uncond dict or looks like one)
+            if key in scalar_uncond:
+                # Use configured unconditional value for this scalar
+                new_cond_dict[key] = torch.full_like(cond_dict[key], scalar_uncond[key])
             elif key in drop_groups:
-                # Zero out this group
+                # Zero out this latent group
                 new_cond_dict[key] = torch.zeros_like(cond_dict[key])
             else:
-                # Keep this group
+                # Keep this key (not in drop_groups, not a known scalar)
                 new_cond_dict[key] = cond_dict[key]
         
         return new_cond_dict

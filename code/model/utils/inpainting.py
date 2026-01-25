@@ -3,10 +3,15 @@ Inpainting mask generation utilities.
 
 Functions for creating various types of inpainting masks (random, center, street blocks).
 """
+###### import libraries ######
+# Standard libraries
+from typing import Optional, Dict, Any, Tuple
 
+# Data Handling
 import numpy as np
-from typing import Optional, Dict, Any
 
+# Data Science/ML
+import torch
 
 def create_inpainting_mask(
     H: int,
@@ -104,3 +109,42 @@ def create_inpainting_mask(
         stats_list.append(mask_info)
     
     return mask
+
+
+def extract_inpainting_mask_fullres(
+    cond: Dict[str, torch.Tensor],
+    fullres_shape: Tuple[int, int]
+) -> Optional[torch.Tensor]:
+    """
+    Extract inpainting mask from conditioning and upsample to full resolution.
+    
+    Args:
+        cond: Conditioning dict with 'image' and 'meta'
+        fullres_shape: Target (H, W) for upsampling
+        
+    Returns:
+        Mask tensor [1, H, W] or None if no mask found
+    """
+    if 'image' not in cond or 'meta' not in cond:
+        return None
+    
+    # Get pixel_space_names from meta
+    meta = cond['meta']
+    pixel_space_names = meta.get('pixel_space_names', [])
+    
+    # Find inpainting mask
+    try:
+        mask_idx = pixel_space_names.index('inpainting_mask')
+        mask = cond['image'][mask_idx:mask_idx+1, :, :]  # [1, H_latent, W_latent]
+        
+        # Upsample to full resolution
+        if mask.shape[-2:] != fullres_shape:
+            mask = torch.nn.functional.interpolate(
+                mask.unsqueeze(0),  # [1, 1, H_latent, W_latent]
+                size=fullres_shape,
+                mode='nearest'
+            ).squeeze(0)  # [1, H, W]
+        
+        return mask
+    except (ValueError, IndexError):
+        return None

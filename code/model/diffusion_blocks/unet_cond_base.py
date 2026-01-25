@@ -74,17 +74,22 @@ class Unet(nn.Module):
             self.class_emb = nn.Embedding(self.num_classes,
                                           self.t_emb_dim)
         
-        # Temperature control conditioning (scalar injection via time embedding)
-        temp_cfg = self.condition_config.get('temperature_condition_config', None) if self.condition_config else None
-        self.use_tmax = bool(temp_cfg and temp_cfg.get('enabled', False))
-        if self.use_tmax:
-            hidden = int(temp_cfg.get('mlp_hidden', 128))
-            self.tmax_mlp = nn.Sequential(
-                nn.Linear(1, hidden),
-                nn.SiLU(),
-                nn.Linear(hidden, self.t_emb_dim),
-            )
-            print(f"✓ Temperature control enabled with MLP hidden={hidden}")
+        # Generic scalar control conditioning (temperature, vegetation, heights, etc.)
+        # Each scalar key gets its own MLP to inject into time embedding
+        scalar_cfg = self.condition_config.get('scalar_condition_config', None) if self.condition_config else None
+        self.use_scalar_controls = bool(scalar_cfg and scalar_cfg.get('enabled', False))
+        self.scalar_mlps = nn.ModuleDict()
+        
+        if self.use_scalar_controls:
+            scalar_specs = scalar_cfg.get('scalars', {})
+            for key, spec in scalar_specs.items():
+                hidden = int(spec.get('mlp_hidden', 128))
+                self.scalar_mlps[key] = nn.Sequential(
+                    nn.Linear(1, hidden),
+                    nn.SiLU(),
+                    nn.Linear(hidden, self.t_emb_dim),
+                )
+            print(f"✓ Scalar controls enabled: {list(self.scalar_mlps.keys())}")
         
         if self.image_cond:
             # Compute expected input channels from condition_config
@@ -293,13 +298,16 @@ class Unet(nn.Module):
             t_emb += class_embed
         ####################################
         
-        ######## Temperature Control Conditioning ########
-        if self.use_tmax and cond_input is not None and 'tmax' in cond_input:
-            tmax = cond_input['tmax'].float()  # [B] or [B, 1]
-            if tmax.ndim == 1:
-                tmax = tmax[:, None]  # [B] -> [B, 1]
-            t_emb = t_emb + self.tmax_mlp(tmax)
-        ##################################################
+        ######## Generic Scalar Control Conditioning ########
+        # Inject all configured scalar controls into time embedding
+        if self.use_scalar_controls and cond_input is not None:
+            for key, mlp in self.scalar_mlps.items():
+                if key in cond_input:
+                    scalar = cond_input[key].float()  # [B] or [B, 1]
+                    if scalar.ndim == 1:
+                        scalar = scalar[:, None]  # [B] -> [B, 1]
+                    t_emb = t_emb + mlp(scalar)
+        ######################################################
             
         context_hidden_states = None
         if self.text_cond:
