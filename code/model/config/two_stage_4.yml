@@ -162,6 +162,77 @@ temperature_control:
     accept_margin: 0.02  # Accept if predicted_p95 <= threshold + margin (normalized)
 
 # ===========================================================================
+# GENERIC SCALAR CONTROLS (NEW)
+# Flexible framework for multiple scalar conditioning (vegetation, heights, etc.)
+# Backwards compatible: temperature_control above is auto-converted if enabled
+# ===========================================================================
+
+scalar_controls:
+  enabled: false  # Master switch for all scalar controls
+  
+  controls:
+    # Temperature control (replaces temperature_control section above)
+    - name: "temperature"
+      enabled: false
+      keys: ["tmax"]  # Single scalar key
+      layer: "lst"
+      statistic: "p95"
+      region: "mask"
+      training:
+        strategy: "relative"
+        relative_delta_range: [-0.15, 0.15]
+        unconditional_value: 0.0
+        drop_prob: 0.1
+      conditioning:
+        mlp_hidden: 128
+    
+    # Vegetation coverage control
+    - name: "vegetation_coverage"
+      enabled: false
+      keys: ["veg_mean"]  # Or ["veg_min", "veg_max"] for range
+      layer: "vegetation"
+      statistic: "mean"  # Coverage fraction [0,1]
+      region: "mask"
+      training:
+        strategy: "relative"
+        relative_delta_range: [-0.15, 0.15]
+        unconditional_value: 0.5  # Neutral: 50% coverage
+        drop_prob: 0.1
+      conditioning:
+        mlp_hidden: 128
+    
+    # Building coverage control
+    - name: "building_coverage"
+      enabled: false
+      keys: ["bldg_mean"]
+      layer: "buildings"
+      statistic: "mean"
+      region: "mask"
+      training:
+        strategy: "relative"
+        relative_delta_range: [-0.15, 0.15]
+        unconditional_value: 0.5
+        drop_prob: 0.1
+      conditioning:
+        mlp_hidden: 128
+    
+    # Building height control (masked by building footprints)
+    - name: "building_height"
+      enabled: false
+      keys: ["height_p95"]
+      layer: "buildings_heights"
+      statistic: "p95"
+      region: "mask"
+      mask_by_layer: "buildings"  # Only compute where buildings exist
+      training:
+        strategy: "relative"
+        relative_delta_range: [-0.10, 0.10]
+        unconditional_value: 0.0  # Low height baseline
+        drop_prob: 0.1
+      conditioning:
+        mlp_hidden: 128
+
+# ===========================================================================
 # VAE GROUP CONFIGURATIONS
 # Each VAE specializes in encoding a semantic layer group
 # ===========================================================================
