@@ -1,4 +1,8 @@
 # adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/utils
+
+# Local imports
+from model.utils.scalar_controls import parse_scalar_controls_config
+
 def validate_class_config(condition_config):
     assert 'class_condition_config' in condition_config, \
         "Class conditioning desired but class condition config missing"
@@ -82,22 +86,49 @@ def build_unet_condition_config(stage_config, vae_groups_config, global_config=N
         'latent_space_specs': latent_space_specs  # Store for forward pass
     }
     
-    # Add temperature control config if enabled for this stage
-    temp_control_enabled = stage_config.get('temperature_control', False)
-    if temp_control_enabled and global_config is not None:
-        temp_control_config = global_config.get('temperature_control', {})
+    # Generic scalar controls config (replaces temperature_control)
+    # Supports multiple scalar controls: temperature, vegetation, building heights, etc.
+    scalar_controls_enabled = (
+        stage_config.get('temperature_control', False) or  # Backwards compat
+        stage_config.get('scalar_controls', False)
+    )
+    
+    if scalar_controls_enabled and global_config is not None:
+        # Parse all enabled scalar controls (includes legacy temperature_control conversion)
+        control_specs = parse_scalar_controls_config(global_config)
         
-        if temp_control_config.get('enabled', False):
-            # Extract relevant config for U-Net
-            conditioning_cfg = temp_control_config.get('conditioning', {})
-            training_cfg = temp_control_config.get('training', {})
+        if len(control_specs) > 0:
+            # Build scalar conditioning config
+            scalar_config = {}
             
-            condition_config['temperature_condition_config'] = {
+            for spec in control_specs:
+                control_name = spec['name']
+                scalar_keys = spec['keys']
+                training_cfg = spec.get('training', {})
+                conditioning_cfg = spec.get('conditioning', {})
+                
+                # Extract per-key config
+                for key in scalar_keys:
+                    scalar_config[key] = {
+                        'control_name': control_name,
+                        'mlp_hidden': conditioning_cfg.get('mlp_hidden', 128),
+                        'drop_prob': training_cfg.get('drop_prob', 0.1),
+                        'unconditional_value': training_cfg.get('unconditional_value', 0.0)
+                    }
+            
+            condition_config['scalar_condition_config'] = {
                 'enabled': True,
-                'mlp_hidden': conditioning_cfg.get('mlp_hidden', 128),
-                'drop_prob': training_cfg.get('drop_prob', 0.1),
-                'unconditional_value': training_cfg.get('unconditional_value', 0.0)
+                'scalars': scalar_config  # Dict: key -> config
             }
+            
+            # Backwards compatibility: also set temperature_condition_config if tmax exists
+            if 'tmax' in scalar_config:
+                condition_config['temperature_condition_config'] = {
+                    'enabled': True,
+                    'mlp_hidden': scalar_config['tmax']['mlp_hidden'],
+                    'drop_prob': scalar_config['tmax']['drop_prob'],
+                    'unconditional_value': scalar_config['tmax']['unconditional_value']
+                }
     
     return condition_config
 
