@@ -102,135 +102,6 @@ dataset_params:
   min_valid_percent: 90
   stride_overlap: 2  # 50% overlap
 
-# ===========================================================================
-# TEMPERATURE THRESHOLD CONTROL (Optional)
-# Three-layer control stack for constraining generated layouts by max temperature
-# ===========================================================================
-
-temperature_control:
-
-  temperature_layer: "lst"
-  
-  # statistic to compute (p95 recommended for robustness)
-  statistic: "p95"  # Options: "p95", "p99", "max", "mean"
-  
-  # compute statistic ("mask" = inside inpainting region only)
-  region: "mask"  # Options: "mask", "full"
-  
-  # Layer 1: Conditional training (core, required when enabled)
-  # Injects scalar T_max into U-Net via time embedding
-  enabled: false  # Set to true to enable temperature control
-  
-  training:
-    # Training target strategy
-    # "relative": current_temp + random_delta (learns continuous control)
-    # "sampled": random value from normalized range (more exploration)
-    # "fixed": always use fixed_value (single-target training)
-    strategy: "relative"
-    
-    # For "relative" strategy: delta range in normalized space
-    # Example: [-0.15, 0.15] ≈ ±10°C for LST range [0, 80]°C
-    relative_delta_range: [-0.15, 0.15]
-    
-    # For "fixed" strategy: constant target (normalized)
-    fixed_value: null
-    
-    # Dropout probability for classifier-free guidance
-    drop_prob: 0.1
-    
-    # Value for unconditional branch (CFG)
-    unconditional_value: 0.0
-  
-  conditioning:
-    # How to inject scalar into U-Net
-    inject_mode: "time_embed"  # Augment time embedding with MLP
-    mlp_hidden: 128  # Hidden dimension for tmax MLP
-  
-  # Layer 2: Soft guidance (optional)
-  # Use trained LST predictor to guide sampling toward threshold
-  guidance:
-    enabled: false  # Set to true to enable predictor-based guidance
-    scale: 0.5  # Guidance strength (0.0 = no guidance, 1.0+ = strong)
-    predictor_checkpoint: "lst_predictor_ckpt.pth"  # Path relative to results dir
-    eval_every_n_steps: 1  # Apply guidance every N denoising steps
-  
-  # Layer 3: Hard check (optional)
-  # Reject samples that violate threshold, retry with stronger guidance
-  hard_check:
-    enabled: false  # Set to true to enable acceptance/retry logic
-    max_tries: 4  # Maximum retry attempts
-    accept_margin: 0.02  # Accept if predicted_p95 <= threshold + margin (normalized)
-
-# ===========================================================================
-# GENERIC SCALAR CONTROLS (NEW)
-# Flexible framework for multiple scalar conditioning (vegetation, heights, etc.)
-# Backwards compatible: temperature_control above is auto-converted if enabled
-# ===========================================================================
-
-scalar_controls:
-  enabled: false  # Master switch for all scalar controls
-  
-  controls:
-    # Temperature control (replaces temperature_control section above)
-    - name: "temperature"
-      enabled: false
-      keys: ["tmax"]  # Single scalar key
-      layer: "lst"
-      statistic: "p95"
-      region: "mask"
-      training:
-        strategy: "relative"
-        relative_delta_range: [-0.15, 0.15]
-        unconditional_value: 0.0
-        drop_prob: 0.1
-      conditioning:
-        mlp_hidden: 128
-    
-    # Vegetation coverage control
-    - name: "vegetation_coverage"
-      enabled: false
-      keys: ["veg_mean"]  # Or ["veg_min", "veg_max"] for range
-      layer: "vegetation"
-      statistic: "mean"  # Coverage fraction [0,1]
-      region: "mask"
-      training:
-        strategy: "relative"
-        relative_delta_range: [-0.15, 0.15]
-        unconditional_value: 0.5  # Neutral: 50% coverage
-        drop_prob: 0.1
-      conditioning:
-        mlp_hidden: 128
-    
-    # Building coverage control
-    - name: "building_coverage"
-      enabled: false
-      keys: ["bldg_mean"]
-      layer: "buildings"
-      statistic: "mean"
-      region: "mask"
-      training:
-        strategy: "relative"
-        relative_delta_range: [-0.15, 0.15]
-        unconditional_value: 0.5
-        drop_prob: 0.1
-      conditioning:
-        mlp_hidden: 128
-    
-    # Building height control (masked by building footprints)
-    - name: "building_height"
-      enabled: false
-      keys: ["height_p95"]
-      layer: "buildings_heights"
-      statistic: "p95"
-      region: "mask"
-      mask_by_layer: "buildings"  # Only compute where buildings exist
-      training:
-        strategy: "relative"
-        relative_delta_range: [-0.10, 0.10]
-        unconditional_value: 0.0  # Low height baseline
-        drop_prob: 0.1
-      conditioning:
-        mlp_hidden: 128
 
 # ===========================================================================
 # VAE GROUP CONFIGURATIONS
@@ -309,7 +180,6 @@ diffusion_params:
 diffusion_stages:
   # Stage 1: Generate semantic urban layout
   semantic:
-    temperature_control: false  # Enable temperature threshold control for this stage
     prediction_group: 'semantic'
     
     # U-Net architecture
@@ -365,7 +235,6 @@ diffusion_stages:
   
   # Stage 2: Render satellite RGB from semantic layout
   satellite:
-    temperature_control: false  # Temperature control not applicable for satellite rendering
     prediction_group: 'satellite'
     
     # U-Net architecture
