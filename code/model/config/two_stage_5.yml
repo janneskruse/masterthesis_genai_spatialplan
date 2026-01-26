@@ -272,7 +272,7 @@ diffusion_params:
   beta_end: 0.02
 
   # Sampling algorithm (for inference)
-  sampler: 'ddpm'  # Options: 'ddpm' (1000 steps), 'ddim' (50-100 steps), 'dpm_solver' (20-30 steps)
+  sampler: 'ddim'  # Options: 'ddpm' (1000 steps, slow), 'ddim' (50 steps, 20x faster - recommended)
   ddim_steps: 50  # For DDIM sampler
   ddim_eta: 0.0  # 0.0 = deterministic, 1.0 = stochastic like DDPM
 
@@ -284,6 +284,7 @@ diffusion_params:
 diffusion_stages:
   # Stage 1: Generate semantic urban layout
   semantic:
+    validate: true  # Enable validation sampling during training (disable for faster iteration)
     scalar_controls: None # ["temperature", "building_coverage"]  # Enable temperature control for this stage
     prediction_group: 'semantic'
     
@@ -340,6 +341,7 @@ diffusion_stages:
   
   # Stage 2: Render satellite RGB from semantic layout
   satellite:
+    validate: true  # Enable validation sampling during training
     scalar_controls: None
     prediction_group: 'satellite'
     
@@ -471,9 +473,10 @@ train_params:
       min_snr_gamma: 5.0  # Clamp SNR to reduce loss from very noisy timesteps
       
       # Validation sampling during training
-      val_sample_every_n_epochs: 10
-      val_num_samples: 4
-      val_guidance_scale: 7.5
+      val_sample_epochs: 10  # Sample every N epochs (0 to disable)
+      val_num_samples: 4  # Number of validation samples per epoch
+      val_sample_steps: 50  # DDIM steps for fast validation (20x faster than 1000 DDPM steps)
+      val_guidance_scale: 7.5  # CFG scale for validation (None to disable CFG)
       
       checkpoint_name: 'semantic_diffusion_ckpt.pth'
       
@@ -494,8 +497,9 @@ train_params:
       min_snr_gamma: 5.0
       
       # Validation sampling
-      val_sample_every_n_epochs: 15
+      val_sample_epochs: 15  # Sample every N epochs (less frequent due to longer training)
       val_num_samples: 4
+      val_sample_steps: 50  # DDIM steps for fast validation
       val_guidance_scale: 7.5
       
       checkpoint_name: 'satellite_diffusion_ckpt.pth'
