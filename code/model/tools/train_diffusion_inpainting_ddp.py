@@ -229,6 +229,36 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         sampler=sampler
     )
     
+    # Load validation dataset for proper validation sampling
+    val_loader = None
+    try:
+        val_dataset = UrbanInpaintingDataset(
+            split='val',
+            mode=f'diffusion:{mode}',
+            use_cached_patches=use_cached_patches,
+            cache_dir=cache_dir
+        )
+        
+        if len(val_dataset) > 0:
+            # No distributed sampling for validation (only main process samples)
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=0,
+                pin_memory=True,
+                collate_fn=collate_fn
+            )
+            
+            if is_main:
+                print(f"✓ Loaded {len(val_dataset)} validation patches")
+        else:
+            if is_main:
+                print("⚠ Warning: Validation split is empty, will use training split for monitoring")
+    except Exception as e:
+        if is_main:
+            print(f"⚠ Warning: Could not load validation split ({e}), will use training split for monitoring")
+    
     ########## Create Model #############
     if is_main:
         print("\n" + "="*50)
@@ -425,6 +455,17 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     min_snr_gamma = train_config.get('min_snr_gamma', 5.0)
     use_loss_weighting = (timestep_loss_type != 'simple')
     
+    # Validation sampling configuration
+    val_sample_epochs = train_config.get('val_sample_epochs', 10)  # Sample every N epochs (0 = disabled)
+    val_num_samples = train_config.get('val_num_samples', 4)  # Number of validation samples to generate
+    val_sample_steps = train_config.get('val_sample_steps', 50)  # DDIM steps for faster validation
+    val_guidance_scale = train_config.get('val_guidance_scale', None)  # CFG scale for validation (None = no CFG)
+    
+    # Create validation samples directory
+    validation_dir_name = f'{mode}_diffusion_validation'
+    if is_main and val_sample_epochs > 0:
+        os.makedirs(os.path.join(out_dir, validation_dir_name), exist_ok=True)
+    
     if is_main:
         print(f"\n{'='*50}")
         print("Training Configuration")
@@ -449,6 +490,12 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f"✓ CFG dropout prob: {cond_drop_prob}")
         print(f"✓ CFG drop groups: {drop_groups}")
         print(f"✓ CFG keep mask: {keep_mask} (inpainting_mask always preserved)")
+        if val_sample_epochs > 0:
+            print(f"✓ Validation sampling: every {val_sample_epochs} epochs")
+            print(f"  - Num samples: {val_num_samples}")
+            print(f"  - Sample steps: {val_sample_steps}")
+            if val_guidance_scale is not None:
+                print(f"  - Guidance scale: {val_guidance_scale}")
         print(f"{'='*50}\n")
     
     ########## Training Loop #############
@@ -734,6 +781,143 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         if is_main:
             epoch_loss = np.mean(losses)
             print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f}')
+        
+        # Validation sampling (use EMA weights if available)
+        if is_main and val_sample_epochs > 0 and (epoch_idx + 1) % val_sample_epochs == 0:
+            print(f"\n{'='*50}")
+            print(f"Generating Validation Samples (Epoch {epoch_idx + 1})")
+            print(f"{'='*50}")
+            
+            with torch.no_grad():
+                # Use EMA weights for validation if available
+                if ema_model is not None:
+                    model_for_ema = model.module if hasattr(model, 'module') else model
+                    ema_model.store(model_for_ema)  # Store current weights
+                    ema_model.copy_to(model_for_ema)  # Copy EMA weights to model
+                    print("✓ Using EMA weights for validation sampling")
+                
+                model.eval()
+                
+                # Get validation batch from proper validation split (or training if unavailable)
+                if val_loader is not None:
+                    val_data = next(iter(val_loader))
+                    print("✓ Using validation split")
+                else:
+                    val_data = next(iter(data_loader))
+                    print("⚠ Using training split (validation unavailable)")
+                if len(val_data) == 2:
+                    val_prediction_data, val_cond_input = val_data
+                else:
+                    val_prediction_data = val_data
+                    val_cond_input = {}
+                
+                val_prediction_data = val_prediction_data[:val_num_samples].float().to(device)
+                
+                # Move conditioning to device
+                if 'image' in val_cond_input:
+                    val_cond_input['image'] = val_cond_input['image'][:val_num_samples].float().to(device)
+                
+                val_latent_group_keys = [k for k in val_cond_input.keys() if k not in ['image', 'meta']]
+                for group_key in val_latent_group_keys:
+                    val_cond_input[group_key] = val_cond_input[group_key][:val_num_samples].float().to(device)
+                
+                # Encode to latent space
+                if use_existing_latents:
+                    val_im_latent = val_prediction_data
+                else:
+                    val_im_latent, _, _ = vae.encode(val_prediction_data)
+                
+                # Extract mask
+                val_mask_latent = None
+                if 'image' in val_cond_input and 'meta' in val_cond_input:
+                    pixel_space_names = val_cond_input['meta'][0].get('pixel_space_names', [])
+                    if pixel_space_names and 'inpainting_mask' in pixel_space_names:
+                        mask_idx = pixel_space_names.index('inpainting_mask')
+                        val_mask_latent = val_cond_input['image'][:, mask_idx:mask_idx+1, :, :]
+                
+                if val_mask_latent is None:
+                    val_mask_latent = torch.ones_like(val_im_latent[:, :1, :, :])
+                
+                # Initialize from noise in masked region
+                x_val = val_im_latent.clone()
+                val_noise_context = None
+                
+                if inpainting_mode == "hard":
+                    x_val = val_mask_latent * torch.randn_like(x_val) + (1 - val_mask_latent) * x_val
+                    val_noise_context = torch.randn_like(x_val)
+                else:
+                    x_val = torch.randn_like(x_val)
+                
+                # Create timestep schedule for validation sampling
+                val_timesteps = np.linspace(scheduler.num_timesteps - 1, 0, val_sample_steps).astype(int)
+                
+                # Sampling loop
+                for t_idx in tqdm(range(len(val_timesteps)), desc="Validation sampling"):
+                    t = val_timesteps[t_idx]
+                    t_tensor = torch.full((val_num_samples,), t, device=device, dtype=torch.long)
+                    
+                    # Predict noise
+                    noise_pred = model(x_val, t_tensor, cond_input=val_cond_input)
+                    
+                    # Apply CFG if specified
+                    if val_guidance_scale is not None and val_guidance_scale != 1.0:
+                        # Unconditional prediction
+                        from model.utils.diffusion_utils import make_uncond_input_keep_mask
+                        uncond_input = make_uncond_input_keep_mask(val_cond_input)
+                        noise_pred_uncond = model(x_val, t_tensor, cond_input=uncond_input)
+                        # CFG: noise = uncond + scale * (cond - uncond)
+                        noise_pred = noise_pred_uncond + val_guidance_scale * (noise_pred - noise_pred_uncond)
+                    
+                    # Denoise step
+                    if inpainting_mode == "hard":
+                        x_val, _ = scheduler.sample_prev_timestep_inpainting(
+                            x_val, noise_pred, t,
+                            val_im_latent,
+                            val_mask_latent,
+                            noise_context=val_noise_context
+                        )
+                    else:
+                        x_val, _ = scheduler.sample_prev_timestep(x_val, noise_pred, t)
+                
+                # Decode to pixel space
+                if vae is not None:
+                    val_decoded = vae.decode(x_val)
+                else:
+                    val_decoded = x_val
+                
+                # Save validation samples
+                val_save_dir = os.path.join(out_dir, validation_dir_name, f'epoch_{epoch_idx + 1:04d}')
+                os.makedirs(val_save_dir, exist_ok=True)
+                
+                save_layerwise_samples(
+                    tensor=val_decoded,
+                    layer_names=prediction_layers,
+                    layers_registry=layers_registry,
+                    save_dir=val_save_dir,
+                    filename_prefix='validation',
+                    n_samples=val_num_samples,
+                    is_reconstruction=True,
+                    use_colormaps=True
+                )
+                
+                if 'rgb' in [l.lower() for l in prediction_layers]:
+                    rgb_val_path = os.path.join(val_save_dir, 'validation_RGB_composite.png')
+                    save_rgb_composite(
+                        tensor=val_decoded,
+                        layer_names=prediction_layers,
+                        save_path=rgb_val_path,
+                        n_samples=val_num_samples,
+                        normalize_per_channel=True
+                    )
+                
+                print(f"✓ Saved validation samples to {val_save_dir}")
+                
+                # Restore original weights if using EMA
+                if ema_model is not None:
+                    model_for_ema = model.module if hasattr(model, 'module') else model
+                    ema_model.restore(model_for_ema)  # Restore original weights
+                
+                model.train()
         
         # Save checkpoint
         if is_main:
