@@ -98,6 +98,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     unet_config = stage_config.get('unet_config', {})
     conditioning_config = stage_config.get('conditioning', {})
     inpainting_config = stage_config.get('inpainting', {})
+    validate_enabled = stage_config.get('validate', True)  # Enable validation by default
     
     if not prediction_group:
         raise ValueError(f"Diffusion stage '{mode}' has no prediction_group defined")
@@ -229,35 +230,39 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         sampler=sampler
     )
     
-    # Load validation dataset for proper validation sampling
+    # Load validation dataset for proper validation sampling (only if validation enabled)
     val_loader = None
-    try:
-        val_dataset = UrbanInpaintingDataset(
-            split='val',
-            mode=f'diffusion:{mode}',
-            use_cached_patches=use_cached_patches,
-            cache_dir=cache_dir
-        )
-        
-        if len(val_dataset) > 0:
-            # No distributed sampling for validation (only main process samples)
-            val_loader = DataLoader(
-                val_dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                num_workers=0,
-                pin_memory=True,
-                collate_fn=collate_fn
+    if validate_enabled:
+        try:
+            val_dataset = UrbanInpaintingDataset(
+                split='val',
+                mode=f'diffusion:{mode}',
+                use_cached_patches=use_cached_patches,
+                cache_dir=cache_dir
             )
             
+            if len(val_dataset) > 0:
+                # No distributed sampling for validation (only main process samples)
+                val_loader = DataLoader(
+                    val_dataset,
+                    batch_size=batch_size,
+                    shuffle=False,
+                    num_workers=0,
+                    pin_memory=True,
+                    collate_fn=collate_fn
+                )
+                
+                if is_main:
+                    print(f"✓ Loaded {len(val_dataset)} validation patches")
+            else:
+                if is_main:
+                    print("⚠ Warning: Validation split is empty, will use training split for monitoring")
+        except Exception as e:
             if is_main:
-                print(f"✓ Loaded {len(val_dataset)} validation patches")
-        else:
-            if is_main:
-                print("⚠ Warning: Validation split is empty, will use training split for monitoring")
-    except Exception as e:
+                print(f"⚠ Warning: Could not load validation split ({e}), will use training split for monitoring")
+    else:
         if is_main:
-            print(f"⚠ Warning: Could not load validation split ({e}), will use training split for monitoring")
+            print("✓ Validation disabled (validate=False in config)")
     
     ########## Create Model #############
     if is_main:
@@ -463,7 +468,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     # Create validation samples directory
     validation_dir_name = f'{mode}_diffusion_validation'
-    if is_main and val_sample_epochs > 0:
+    if is_main and validate_enabled and val_sample_epochs > 0:
         os.makedirs(os.path.join(out_dir, validation_dir_name), exist_ok=True)
     
     if is_main:
@@ -490,12 +495,16 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f"✓ CFG dropout prob: {cond_drop_prob}")
         print(f"✓ CFG drop groups: {drop_groups}")
         print(f"✓ CFG keep mask: {keep_mask} (inpainting_mask always preserved)")
-        if val_sample_epochs > 0:
+        if validate_enabled and val_sample_epochs > 0:
             print(f"✓ Validation sampling: every {val_sample_epochs} epochs")
             print(f"  - Num samples: {val_num_samples}")
             print(f"  - Sample steps: {val_sample_steps}")
             if val_guidance_scale is not None:
                 print(f"  - Guidance scale: {val_guidance_scale}")
+        elif not validate_enabled:
+            print(f"✓ Validation: disabled")
+        else:
+            print(f"✓ Validation: disabled (val_sample_epochs=0)")
         print(f"{'='*50}\n")
     
     ########## Training Loop #############
@@ -783,7 +792,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f}')
         
         # Validation sampling (use EMA weights if available)
-        if is_main and val_sample_epochs > 0 and (epoch_idx + 1) % val_sample_epochs == 0:
+        if is_main and validate_enabled and val_sample_epochs > 0 and (epoch_idx + 1) % val_sample_epochs == 0:
             print(f"\n{'='*50}")
             print(f"Generating Validation Samples (Epoch {epoch_idx + 1})")
             print(f"{'='*50}")
