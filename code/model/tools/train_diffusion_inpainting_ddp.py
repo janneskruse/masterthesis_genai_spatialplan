@@ -643,7 +643,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             # First batch validation
             if is_main and global_step == 0:
                 print(f"\n{'='*50}")
-                print("First Batch Validation")
+                print(f"First Batch Validation on rank {rank}:")
                 print(f"{'='*50}")
                 print(f"Prediction latent shape: {im_latent.shape}")
                 print(f"Mask latent shape: {mask_latent.shape}")
