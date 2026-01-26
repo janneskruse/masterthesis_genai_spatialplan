@@ -369,7 +369,8 @@ def compute_boundary_aware_loss(
     outside_weight: float = 0.0,
     use_boundary_ring: bool = False,
     ring_width_px: int = 1,
-    ring_weight: float = 2.0
+    ring_weight: float = 2.0,
+    reduction: str = 'mean'
 ) -> torch.Tensor:
     """
     Enhanced loss computation with optional boundary ring emphasis.
@@ -387,30 +388,46 @@ def compute_boundary_aware_loss(
         use_boundary_ring: If True, add extra weight to boundary ring
         ring_width_px: Width of boundary ring in pixels
         ring_weight: Weight multiplier for boundary ring region
+        reduction: 'mean' (scalar), 'batch' (per-sample [B]), or 'none' (per-pixel [B,C,H,W])
         
     Returns:
-        Loss scalar
+        Loss tensor:
+        - reduction='mean': scalar loss
+        - reduction='batch': per-sample loss [B]
+        - reduction='none': per-pixel loss [B, C, H, W]
     """
+    # Compute per-pixel MSE [B, C, H, W]
     if loss_type == "masked":
-        return F.mse_loss(noise_pred * mask_latent, noise * mask_latent)
-    
-    # Weighted full-image MSE
-    per_pix = F.mse_loss(noise_pred, noise, reduction='none')
-    
-    if use_boundary_ring:
-        # Create boundary ring for seam emphasis
-        ring = create_boundary_ring(mask_latent, ring_width_px)
-        
-        # Weight map: outside + ring + inside
-        # Ensure no overlap: outside * (1 - mask - ring) + ring * ring + mask * mask
-        w = (outside_weight * (1.0 - mask_latent - ring) +
-             ring_weight * ring +
-             mask_loss_weight * mask_latent)
+        per_pixel_loss = F.mse_loss(noise_pred * mask_latent, noise * mask_latent, reduction='none')
     else:
-        # Standard weighting
-        w = outside_weight * (1.0 - mask_latent) + mask_loss_weight * mask_latent
+        # Weighted loss
+        per_pixel_loss = F.mse_loss(noise_pred, noise, reduction='none')
+        
+        # Apply spatial weighting (boundary ring if enabled)
+        if use_boundary_ring:
+            # Create boundary ring for seam emphasis
+            ring = create_boundary_ring(mask_latent, ring_width_px)
+            
+            # Weight map: outside + ring + inside
+            # Ensure no overlap: outside * (1 - mask - ring) + ring * ring + mask * mask
+            w = (outside_weight * (1.0 - mask_latent - ring) +
+                 ring_weight * ring +
+                 mask_loss_weight * mask_latent)
+        else:
+            # Standard weighting
+            w = outside_weight * (1.0 - mask_latent) + mask_loss_weight * mask_latent
+        
+        per_pixel_loss = per_pixel_loss * w
     
-    return (per_pix * w).mean()
+    # Apply reduction
+    if reduction == 'none':
+        return per_pixel_loss  # [B, C, H, W]
+    elif reduction == 'batch':
+        return per_pixel_loss.mean(dim=[1, 2, 3])  # [B]
+    elif reduction == 'mean':
+        return per_pixel_loss.mean()  # scalar
+    else:
+        raise ValueError(f"Invalid reduction: '{reduction}'. Must be 'mean', 'batch', or 'none'.")
 
 
 def apply_seam_mode(

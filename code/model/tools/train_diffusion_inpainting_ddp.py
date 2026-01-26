@@ -31,6 +31,7 @@ from model.utils.diffusion_utils import (
     apply_seam_mode,
     compute_boundary_aware_loss
 )
+from model.utils.loss_weighting import compute_loss_weights
 from model.utils.scalar_controls import parse_scalar_controls_config
 from model.utils.samples import save_layerwise_samples, save_rgb_composite
 from model.utils.load_cuda import load_cuda
@@ -419,6 +420,11 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     gradient_accumulation_steps = train_config.get('gradient_accumulation_steps', 1)
     effective_batch_size = batch_size * world_size * gradient_accumulation_steps
     
+    # Timestep loss weighting configuration
+    timestep_loss_type = train_config.get('loss_type', 'simple')  # 'simple' | 'snr' | 'min_snr' | 'v_loss'
+    min_snr_gamma = train_config.get('min_snr_gamma', 5.0)
+    use_loss_weighting = (timestep_loss_type != 'simple')
+    
     if is_main:
         print(f"\n{'='*50}")
         print("Training Configuration")
@@ -429,6 +435,9 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f"✓ World size: {world_size}")
         print(f"✓ Gradient accumulation steps: {gradient_accumulation_steps}")
         print(f"✓ Effective batch size: {effective_batch_size} ({batch_size} x {world_size} x {gradient_accumulation_steps})")
+        print(f"✓ Timestep loss weighting: {timestep_loss_type}")
+        if timestep_loss_type == 'min_snr':
+            print(f"  - Min-SNR gamma: {min_snr_gamma}")
         print(f"✓ Inpainting mode: {inpainting_mode}")
         print(f"✓ Loss type: {loss_type}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
@@ -581,14 +590,25 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             # Predict noise (use dropped conditioning for CFG training)
             noise_pred = model(noisy_im, t, cond_input=cond_input_dropped)
             
-            # Compute loss with optional boundary-aware weighting
-            loss = compute_boundary_aware_loss(
+            # Compute per-sample loss [B] with spatial weighting
+            loss_per_sample = compute_boundary_aware_loss(
                 noise_pred, noise, mask_latent,
                 loss_type, mask_loss_weight, outside_weight,
                 use_boundary_ring=use_boundary_ring,
                 ring_width_px=ring_width_px,
-                ring_weight=ring_weight
+                ring_weight=ring_weight,
+                reduction='batch'  # Return per-sample loss [B]
             )
+            
+            # Apply timestep-dependent loss weighting (Min-SNR, SNR, etc.)
+            if use_loss_weighting:
+                loss_weights = compute_loss_weights(
+                    t, scheduler, timestep_loss_type, min_snr_gamma
+                )  # Returns [B] weights
+                loss_per_sample = loss_per_sample * loss_weights
+            
+            # Final reduction to scalar
+            loss = loss_per_sample.mean()
             
             # Scale loss by accumulation steps to maintain same average gradient
             scaled_loss = loss / gradient_accumulation_steps
