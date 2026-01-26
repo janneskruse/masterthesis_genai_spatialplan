@@ -25,6 +25,7 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.diffusion_blocks.unet_cond_base import Unet
 from model.utils.vae_registry import VAERegistry
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
+from model.scheduler.ddim_scheduler import DDIMScheduler
 from model.utils.data_utils import collate_fn
 from model.utils.diffusion_utils import (
     apply_classifier_free_guidance_dropout,
@@ -183,15 +184,24 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     ########## Create the noise scheduler #############
     # Training always uses DDPM (all timesteps for proper diffusion training)
-    # DDIM is for sampling only (faster inference after training)
     scheduler = LinearNoiseScheduler(
         num_timesteps=diffusion_config['num_timesteps'],
         beta_start=diffusion_config['beta_start'],
         beta_end=diffusion_config['beta_end']
     )
     
+    # Create separate DDIM scheduler for fast validation sampling
+    val_scheduler = DDIMScheduler(
+        num_timesteps=diffusion_config['num_timesteps'],
+        beta_start=diffusion_config['beta_start'],
+        beta_end=diffusion_config['beta_end'],
+        ddim_steps=train_config.get('val_sample_steps', 50),
+        ddim_eta=0.0  # Deterministic for reproducible validation
+    )
+    
     if is_main:
-        print(f"\n✓ Created DDPM noise scheduler ({scheduler.num_timesteps} timesteps)")
+        print(f"\n✓ Created DDPM training scheduler ({scheduler.num_timesteps} timesteps)")
+        print(f"✓ Created DDIM validation scheduler ({val_scheduler.ddim_steps} steps)")
     
     ########## Load Dataset #############
     if is_main:
@@ -860,13 +870,11 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 else:
                     x_val = torch.randn_like(x_val)
                 
-                # Create timestep schedule for validation sampling
-                val_timesteps = np.linspace(scheduler.num_timesteps - 1, 0, val_sample_steps).astype(int)
-                
-                # Sampling loop
-                for t_idx in tqdm(range(len(val_timesteps)), desc="Validation sampling"):
-                    t = val_timesteps[t_idx]
-                    t_tensor = torch.full((val_num_samples,), t, device=device, dtype=torch.long)
+                # Sampling loop with DDIM scheduler (fast validation)
+                for step_idx in tqdm(reversed(range(val_scheduler.ddim_steps)), desc="DDIM validation sampling", total=val_scheduler.ddim_steps):
+                    # Get full timestep value for model conditioning
+                    t_value = val_scheduler.ddim_timesteps[step_idx].item()
+                    t_tensor = torch.full((val_num_samples,), t_value, device=device, dtype=torch.long)
                     
                     # Predict noise
                     noise_pred = model(x_val, t_tensor, cond_input=val_cond_input)
@@ -880,16 +888,16 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         # CFG: noise = uncond + scale * (cond - uncond)
                         noise_pred = noise_pred_uncond + val_guidance_scale * (noise_pred - noise_pred_uncond)
                     
-                    # Denoise step
+                    # DDIM denoise step (uses step_idx, not timestep value)
                     if inpainting_mode == "hard":
-                        x_val, _ = scheduler.sample_prev_timestep_inpainting(
-                            x_val, noise_pred, t,
+                        x_val, _ = val_scheduler.sample_prev_timestep_inpainting(
+                            x_val, noise_pred, step_idx,
                             val_im_latent,
                             val_mask_latent,
                             noise_context=val_noise_context
                         )
                     else:
-                        x_val, _ = scheduler.sample_prev_timestep(x_val, noise_pred, t)
+                        x_val, _ = val_scheduler.sample_prev_timestep(x_val, noise_pred, step_idx)
                 
                 # Decode to pixel space
                 if vae is not None:
