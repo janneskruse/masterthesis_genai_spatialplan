@@ -483,7 +483,7 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
     # Load checkpoint if provided
     start_epoch = 0
     if load_checkpoint_path:
-        start_epoch = load_checkpoint(
+        start_epoch, _ = load_checkpoint(
             checkpoint_path=load_checkpoint_path,
             model=model,
             optimizer=optimizer_vae,

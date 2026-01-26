@@ -19,12 +19,14 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, device='cpu', is_mai
         is_main: Whether this is the main process (for logging)
         
     Returns:
-        start_epoch: Epoch number to resume from (0 if not found in checkpoint)
+        tuple: (start_epoch, checkpoint_dict) where:
+            - start_epoch: Epoch number to resume from (0 if not found in checkpoint)
+            - checkpoint_dict: Full checkpoint dictionary (None if file not found)
     """
     if not os.path.exists(checkpoint_path):
         if is_main:
             print(f"⚠ Checkpoint not found: {checkpoint_path}")
-        return 0
+        return 0, None
     
     if is_main:
         print(f"\n{'='*50}")
@@ -60,4 +62,4 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, device='cpu', is_mai
             print(f"✓ Resuming from epoch {start_epoch}")
         print(f"{'='*50}\n")
     
-    return start_epoch
+    return start_epoch, checkpoint

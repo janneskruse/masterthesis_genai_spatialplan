@@ -917,7 +917,7 @@ def infer(args, config):
     
     if os.path.exists(ldm_path):
         # Use checkpoint loader (handles both formats and provides logging)
-        load_checkpoint(
+        _, _ = load_checkpoint(
             checkpoint_path=ldm_path,
             model=model,
             optimizer=None,

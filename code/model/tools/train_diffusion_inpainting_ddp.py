@@ -376,11 +376,10 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     # Load checkpoint if specified
     start_epoch = 0
+    checkpoint_dict = None
     if load_checkpoint_path:
-        checkpoint_dict = torch.load(load_checkpoint_path, map_location=device, weights_only=False)
-        
         # Load model and optimizer
-        start_epoch = load_checkpoint(
+        start_epoch, checkpoint_dict = load_checkpoint(
             checkpoint_path=load_checkpoint_path,
             model=model,
             optimizer=optimizer,
@@ -389,13 +388,13 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         )
         
         # Load EMA state if available
-        if ema_model is not None and 'ema_state_dict' in checkpoint_dict:
+        if ema_model is not None and checkpoint_dict is not None and 'ema_state_dict' in checkpoint_dict:
             ema_model.load_state_dict(checkpoint_dict['ema_state_dict'])
             if is_main:
                 print("✓ Loaded EMA state from checkpoint")
         
         # Load LR scheduler state if available
-        if lr_scheduler is not None and 'lr_scheduler_state_dict' in checkpoint_dict:
+        if lr_scheduler is not None and checkpoint_dict is not None and 'lr_scheduler_state_dict' in checkpoint_dict:
             lr_scheduler.load_state_dict(checkpoint_dict['lr_scheduler_state_dict'])
             if is_main:
                 print("✓ Loaded LR scheduler state from checkpoint")

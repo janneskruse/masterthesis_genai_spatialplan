@@ -610,7 +610,7 @@ def infer(args, config):
     ldm_path = os.path.join(data_dir, ldm_checkpoint)
     
     if os.path.exists(ldm_path):
-        load_checkpoint(
+        _, _ = load_checkpoint(
             checkpoint_path=ldm_path,
             model=model,
             optimizer=None,
