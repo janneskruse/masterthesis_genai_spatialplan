@@ -338,12 +338,11 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # Build scalar unconditional values dict for all enabled scalar controls
     scalar_uncond = {}
     scalar_controls_enabled = (
-        stage_config.get('temperature_control', False) or
         stage_config.get('scalar_controls', False)
     )
     
     if scalar_controls_enabled:
-        # Parse all enabled scalar controls (includes legacy temperature_control)
+        # Parse all enabled scalar controls
         control_specs = parse_scalar_controls_config(config)
         
         for spec in control_specs:

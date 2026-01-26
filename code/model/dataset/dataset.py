@@ -1161,18 +1161,17 @@ class UrbanInpaintingDataset(Dataset):
             # Generic Scalar Controls: Add scalar conditioning if enabled for this stage
             # Supports temperature, vegetation coverage, building heights, etc.
             scalar_controls_enabled = (
-                stage_config.get('temperature_control', False) or  # Backwards compat
                 stage_config.get('scalar_controls', False)
             )
             
             if scalar_controls_enabled:
-                # Parse all enabled scalar controls (includes legacy temperature_control)
+                # Parse all enabled scalar controls
                 control_specs = parse_scalar_controls_config(self.config)
                 
                 if len(control_specs) == 0:
                     raise ValueError(
                         f"Scalar controls enabled for stage '{self.mode_target}' but no controls are configured. "
-                        f"Enable at least one control in scalar_controls.controls or temperature_control."
+                        f"Enable at least one control in scalar_controls.controls."
                     )
                 
                 # Process each control

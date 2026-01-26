@@ -186,7 +186,6 @@ def generate_training_target_scalar(
 def parse_scalar_controls_config(config: Dict) -> List[Dict]:
     """
     Parse scalar_controls config and return list of enabled control specs.
-    Also supports legacy temperature_control for backwards compatibility.
     
     Args:
         config: Full global config
@@ -217,19 +216,5 @@ def parse_scalar_controls_config(config: Dict) -> List[Dict]:
                     raise ValueError(f"Control spec must have 'key' or 'keys': {spec}")
                 
                 controls.append(spec)
-    
-    # Backwards compatibility: check for legacy temperature_control
-    temp_config = config.get('temperature_control', {})
-    if temp_config.get('enabled', False) and not any(c.get('name') == 'temperature' for c in controls):
-        # Convert to new format
-        temp_control = {
-            'name': 'temperature',
-            'keys': ['tmax'],
-            'layer': temp_config.get('temperature_layer', 'lst'),
-            'statistic': temp_config.get('statistic', 'p95'),
-            'region': temp_config.get('region', 'mask'),
-            'training': temp_config.get('training', {})
-        }
-        controls.append(temp_control)
     
     return controls

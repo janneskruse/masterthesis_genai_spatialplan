@@ -51,7 +51,7 @@ def build_unet_condition_config(stage_config, vae_groups_config, global_config=N
     Args:
         stage_config: Diffusion stage config dict with 'conditioning' key
         vae_groups_config: VAE groups configuration dict
-        global_config: Full global config dict (for temperature_control)
+        global_config: Full global config dict (for scalar controls)
         
     Returns:
         condition_config dict for U-Net initialization
@@ -86,15 +86,14 @@ def build_unet_condition_config(stage_config, vae_groups_config, global_config=N
         'latent_space_specs': latent_space_specs  # Store for forward pass
     }
     
-    # Generic scalar controls config (replaces temperature_control)
+    # Generic scalar controls config
     # Supports multiple scalar controls: temperature, vegetation, building heights, etc.
     scalar_controls_enabled = (
-        stage_config.get('temperature_control', False) or  # Backwards compat
         stage_config.get('scalar_controls', False)
     )
     
     if scalar_controls_enabled and global_config is not None:
-        # Parse all enabled scalar controls (includes legacy temperature_control conversion)
+        # Parse all enabled scalar controls
         control_specs = parse_scalar_controls_config(global_config)
         
         if len(control_specs) > 0:
