@@ -415,6 +415,10 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # Image save frequency
     img_save_steps = train_config_global.get('img_save_steps', 1000)
     
+    # Gradient accumulation configuration
+    gradient_accumulation_steps = train_config.get('gradient_accumulation_steps', 1)
+    effective_batch_size = batch_size * world_size * gradient_accumulation_steps
+    
     if is_main:
         print(f"\n{'='*50}")
         print("Training Configuration")
@@ -422,7 +426,9 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f"✓ Training for {num_epochs} epochs")
         print(f"✓ Learning rate: {adjusted_lr}")
         print(f"✓ Batch size per GPU: {batch_size}")
-        print(f"✓ Effective batch size: {batch_size * world_size}")
+        print(f"✓ World size: {world_size}")
+        print(f"✓ Gradient accumulation steps: {gradient_accumulation_steps}")
+        print(f"✓ Effective batch size: {effective_batch_size} ({batch_size} x {world_size} x {gradient_accumulation_steps})")
         print(f"✓ Inpainting mode: {inpainting_mode}")
         print(f"✓ Loss type: {loss_type}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
@@ -443,6 +449,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print("="*50)
     
     global_step = 0
+    accumulation_counter = 0  # Track batches for gradient accumulation
     
     for epoch_idx in range(start_epoch, num_epochs):
         if sampler is not None:
@@ -456,7 +463,9 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             progress_bar = data_loader
         
         for batch_idx, data in enumerate(progress_bar):
-            optimizer.zero_grad()
+            # Only zero gradients at start of accumulation cycle
+            if accumulation_counter == 0:
+                optimizer.zero_grad()
             
             # Unpack data
             if len(data) == 2:
@@ -581,24 +590,39 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 ring_weight=ring_weight
             )
             
-            loss.backward()
-            optimizer.step()
+            # Scale loss by accumulation steps to maintain same average gradient
+            scaled_loss = loss / gradient_accumulation_steps
+            scaled_loss.backward()
             
-            # Update LR scheduler (step per batch)
-            if lr_scheduler is not None:
-                lr_scheduler.step()
-            
-            # Update EMA (after each optimizer step)
-            if ema_model is not None:
-                model_for_ema = model.module if hasattr(model, 'module') else model
-                ema_model.update(model_for_ema)
-            
+            # Track unscaled loss for logging
             losses.append(loss.item())
-            global_step += 1
+            accumulation_counter += 1
+            
+            # Only update optimizer/scheduler/EMA after accumulating enough gradients
+            should_step = (accumulation_counter >= gradient_accumulation_steps)
+            
+            if should_step:
+                optimizer.step()
+                
+                # Update LR scheduler (step per optimizer update)
+                if lr_scheduler is not None:
+                    lr_scheduler.step()
+                
+                # Update EMA (after each optimizer step)
+                if ema_model is not None:
+                    model_for_ema = model.module if hasattr(model, 'module') else model
+                    ema_model.update(model_for_ema)
+                
+                # Reset accumulation counter
+                accumulation_counter = 0
+                global_step += 1
             
             # Update progress bar
             if is_main:
-                progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+                progress_bar.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'accum': f'{accumulation_counter}/{gradient_accumulation_steps}'
+                })
             
             # Save sample predictions periodically
             if is_main and global_step % img_save_steps == 0:
