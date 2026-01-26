@@ -19,6 +19,7 @@ from torchvision.utils import make_grid, save_image
 # Local libraries
 from model.diffusion_blocks.unet_cond_base import Unet
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
+from model.scheduler.ddim_scheduler import DDIMScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
 from model.utils.layer_config import count_layer_channels
@@ -256,12 +257,22 @@ def sample_semantics(
         use_latents=True
     )
     
+    # Get sampler configuration
+    sampler_type = diffusion_config.get('sampler', 'ddpm')  # 'ddpm' | 'ddim'
+    ddim_steps = diffusion_config.get('ddim_steps', 50)
+    ddim_eta = diffusion_config.get('ddim_eta', 0.0)
+    
     print("\n" + "="*50)
     print("Semantic Sampling Configuration")
     print("="*50)
     print(f"Image size: {im_size}x{im_size} ({im_size * dataset_config['res']}m)")
     print(f"Latent size: {latent_size}x{latent_size}")
     print(f"VAE downsample: {vae_factor}x, U-Net downsample: {unet_factor}x")
+    print(f"Sampler: {sampler_type.upper()}")
+    if sampler_type == 'ddim':
+        print(f"DDIM steps: {ddim_steps} (eta={ddim_eta})")
+    else:
+        print(f"DDPM steps: {scheduler.num_timesteps}")
     print(f"Number of samples: {num_samples}")
     print(f"Guidance scale (CFG): {guidance_scale}")
     print(f"LST guidance scale: {lst_guidance_scale}")
@@ -579,12 +590,30 @@ def sample_semantics(
                     mask_latent = torch.ones(1, 1, latent_size, latent_size, device=device)
                     x = mask_latent * x + (1 - mask_latent) * x_context
         
+        # Create timestep schedule and loop indices based on sampler type
+        if sampler_type == 'ddim':
+            # DDIM: Sample with fewer steps
+            # DDIMScheduler methods expect ddim_step INDEX (0 to ddim_steps-1)
+            num_steps = scheduler.ddim_steps
+            loop_range = reversed(range(num_steps))  # ddim_steps-1 down to 0
+        else:
+            # DDPM: Use all timesteps
+            num_steps = scheduler.num_timesteps
+            loop_range = reversed(range(num_steps))  # num_timesteps-1 down to 0
+        
         # Sampling loop
-        for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="Denoising"):
-            t = torch.full((1,), i, device=device, dtype=torch.long)
+        for step_idx in tqdm(loop_range, desc=f"Denoising ({sampler_type.upper()})", total=num_steps):
+            # Prepare timestep tensor for model
+            if sampler_type == 'ddim':
+                # Get full timestep value from DDIM schedule for model conditioning
+                t_value = scheduler.ddim_timesteps[step_idx].item()
+                t = torch.full((1,), t_value, device=device, dtype=torch.long)
+            else:
+                # DDPM: step_idx IS the timestep
+                t = torch.full((1,), step_idx, device=device, dtype=torch.long)
             
-            # Print GPU memory every 500 steps
-            if i % 500 == 0:
+            # Print GPU memory periodically
+            if step_idx % 50 == 0:
                 print_gpu_memory()
             
             # Classifier-free guidance
@@ -602,24 +631,28 @@ def sample_semantics(
                 with torch.no_grad():
                     noise_pred = model(x, t, cond_input=cond_input)
             
-            # Apply LST guidance
+            # Apply LST guidance (currently disabled)
             # if use_lst_guidance and lst_predictor is not None and lst_target is not None:
             #     pred_vae = vae_registry.get_vae(pred_group)
+            #     t_value_for_guidance = t_value if sampler_type == 'ddim' else step_idx
             #     noise_pred = apply_lst_guidance(
-            #         x, i, model, scheduler, cond_input,
+            #         x, t_value_for_guidance, model, scheduler, cond_input,
             #         lst_predictor, pred_vae, lst_target,
             #         semantic_channels, include_ndvi,
             #         guidance_scale=lst_guidance_scale,
             #         mask=mask_latent
             #     )
             
-            # FIX: Denoise with fixed noise_context for hard mode temporal consistency
+            # Denoise step (scheduler-specific)
             if inpainting_mode == "hard" and mask_latent is not None:
+                # Inpainting with context preservation
                 x, x0 = scheduler.sample_prev_timestep_inpainting(
-                    x, noise_pred, i, x_context, mask_latent, noise_context=noise_context
+                    x, noise_pred, step_idx, x_context, mask_latent, 
+                    noise_context=noise_context
                 )
             else:
-                x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
+                # Standard denoising (no inpainting)
+                x, x0 = scheduler.sample_prev_timestep(x, noise_pred, step_idx)
         
         # Decode to semantic space immediately
         print(f"  Decoding sample {sample_idx + 1}...")
@@ -836,11 +869,27 @@ def infer(args, config):
     unet_config = stage_config.get('unet_config', {})
     
     ########## Create Scheduler #############
-    scheduler = LinearNoiseScheduler(
-        num_timesteps=diffusion_config['num_timesteps'],
-        beta_start=diffusion_config['beta_start'],
-        beta_end=diffusion_config['beta_end']
-    )
+    # Support both DDPM (slow, 1000 steps) and DDIM (fast, 50 steps)
+    sampler_type = diffusion_config.get('sampler', 'ddpm')
+    
+    if sampler_type == 'ddim':
+        # DDIM: Fast deterministic sampling
+        scheduler = DDIMScheduler(
+            num_timesteps=diffusion_config['num_timesteps'],
+            beta_start=diffusion_config['beta_start'],
+            beta_end=diffusion_config['beta_end'],
+            ddim_steps=diffusion_config.get('ddim_steps', 50),
+            ddim_eta=diffusion_config.get('ddim_eta', 0.0)
+        )
+        print(f"✓ Using DDIM scheduler ({scheduler.ddim_steps} steps)")
+    else:
+        # DDPM: Standard sampling (backward compatible)
+        scheduler = LinearNoiseScheduler(
+            num_timesteps=diffusion_config['num_timesteps'],
+            beta_start=diffusion_config['beta_start'],
+            beta_end=diffusion_config['beta_end']
+        )
+        print(f"✓ Using DDPM scheduler ({scheduler.num_timesteps} steps)")
     
     ########## Load Models #############
     print("\n" + "="*50)
