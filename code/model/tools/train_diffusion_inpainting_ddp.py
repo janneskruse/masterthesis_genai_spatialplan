@@ -329,7 +329,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # Load prediction VAE if no existing latents
     vae = None
     vae_registry = None
-    if not use_existing_latents:
+    if not use_existing_latents or validate_enabled:
         if is_main:
             print(f"\nLoading {prediction_group.upper()} VAE...")
         
