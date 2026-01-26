@@ -1129,6 +1129,9 @@ class UrbanInpaintingDataset(Dataset):
                 cond['image'] = torch.cat(pixel_cond_list, dim=0)
                 cond['meta']['pixel_space_names'] = pixel_cond_names
             
+            # Track latent group names for metadata
+            latent_group_names = []
+            
             # Add latent-space conditioning (load from pre-loaded group latents)
             for cond_spec in conditioning_config.get('latent_space', []):
                 group_name = cond_spec['group']
@@ -1140,6 +1143,7 @@ class UrbanInpaintingDataset(Dataset):
                     
                     if cond_latent is not None:
                         cond[group_name] = cond_latent
+                        latent_group_names.append(group_name)
                     else:
                         # Latent loading failed - will need on-the-fly encoding
                         # Extract full-res image for this group
@@ -1157,6 +1161,10 @@ class UrbanInpaintingDataset(Dataset):
                         unified_image, channel_names, layer_names, cond_layers
                     )
                     cond[f'{group_name}_image'] = cond_image  # Mark for encoding
+            
+            # Store latent group names in metadata
+            if latent_group_names:
+                cond['meta']['latent_group_names'] = latent_group_names
             
             # Generic Scalar Controls: Add scalar conditioning if enabled for this stage
             # Supports temperature, vegetation coverage, building heights, etc.

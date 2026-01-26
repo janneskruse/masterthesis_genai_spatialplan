@@ -245,6 +245,9 @@ def render_satellite_from_semantics(
             cond_input['image'] = torch.cat(pixel_cond_list, dim=1)  # [1, C_pixel, H_latent, W_latent]
             cond_input['meta'][0]['pixel_space_names'] = pixel_cond_names
         
+        # Track latent group names for metadata
+        latent_group_names = []
+        
         # Load RGB context from dataset (for both hard and sdlike modes)
         # For hard mode: used during generation to preserve context in latent space
         # For sdlike mode: composited after decoding to preserve original context
@@ -304,6 +307,7 @@ def render_satellite_from_semantics(
                     semantic_latent, _, _ = cond_vae.encode(semantic_tensor)
                 
                 cond_input[cond_group] = semantic_latent  # [1, C_latent, H_latent, W_latent]
+                latent_group_names.append(cond_group)
                 print(f"  ✓ Encoded semantic to latent: {semantic_latent.shape}")
                 
             elif cond_group == 'environmental':
@@ -323,18 +327,25 @@ def render_satellite_from_semantics(
                     if cond_group in dataset_cond:
                         env_latent = dataset_cond[cond_group].unsqueeze(0).to(device)
                         cond_input[cond_group] = env_latent
+                        latent_group_names.append(cond_group)
                         print(f"  ✓ Loaded environmental conditioning from dataset patch {patch_index}")
                     else:
                         print(f"  ⚠ Environmental group '{cond_group}' not found in dataset, using zeros")
                         z_channels = vae_groups[cond_group]['z_channels']
                         env_latent = torch.zeros(1, z_channels, latent_size, latent_size, device=device)
                         cond_input[cond_group] = env_latent
+                        latent_group_names.append(cond_group)
                 else:
                     # Fallback to zeros if no patch metadata
                     print(f"  ⚠ No patch_index in sample metadata, using zero environmental conditioning")
                     z_channels = vae_groups[cond_group]['z_channels']
                     env_latent = torch.zeros(1, z_channels, latent_size, latent_size, device=device)
                     cond_input[cond_group] = env_latent
+                    latent_group_names.append(cond_group)
+        
+        # Store latent group names in metadata
+        if latent_group_names:
+            cond_input['meta'][0]['latent_group_names'] = latent_group_names
         
         # 3. Apply sampling-time mask to specified conditioning groups (e.g., environmental)
         if sample_mask_groups and 'image' in cond_input and 'pixel_space_names' in cond_input['meta'][0]:

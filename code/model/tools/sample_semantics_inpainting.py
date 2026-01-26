@@ -382,17 +382,27 @@ def sample_semantics(
             print(f"    Shape: {group_image.shape} → {group_latent.shape}")
     
     # Prepare conditioning inputs for batch
-    for key in cond_input:
-        # unsqueeze batch dimension
-        if isinstance(cond_input[key], torch.Tensor):
-            cond_input[key] = cond_input[key].unsqueeze(0).to(device)
-        elif key == 'meta':
-            # Meta is a dict - keep as is (will be wrapped in list by collate_fn)
-            pass
+    # Move pixel-space conditioning to device
+    if 'image' in cond_input and isinstance(cond_input['image'], torch.Tensor):
+        cond_input['image'] = cond_input['image'].unsqueeze(0).to(device)
     
     # Normalize meta structure to match training (list of dicts)
     if 'meta' in cond_input and isinstance(cond_input['meta'], dict):
         cond_input['meta'] = [cond_input['meta']]
+    
+    # Move latent-space conditioning groups to device (use metadata if available)
+    if 'meta' in cond_input and 'latent_group_names' in cond_input['meta'][0]:
+        latent_group_keys = cond_input['meta'][0]['latent_group_names']
+    else:
+        # Fallback: infer from keys (excludes image, meta, and scalar controls)
+        latent_group_keys = [k for k in cond_input.keys() 
+                            if k not in ['image', 'meta'] 
+                            and isinstance(cond_input[k], torch.Tensor) 
+                            and cond_input[k].ndim > 2]
+    
+    for group_key in latent_group_keys:
+        if isinstance(cond_input[group_key], torch.Tensor):
+            cond_input[group_key] = cond_input[group_key].unsqueeze(0).to(device)
     
     # Extract mask and LST target from conditioning channels
     mask_latent = None

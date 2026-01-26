@@ -557,8 +557,13 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             if 'image' in cond_input:
                 cond_input['image'] = cond_input['image'].float().to(device)
             
-            # Move latent-space conditioning groups to device
-            latent_group_keys = [k for k in cond_input.keys() if k not in ['image', 'meta']]
+            # Move latent-space conditioning groups to device (use metadata if available)
+            if 'meta' in cond_input and 'latent_group_names' in cond_input['meta'][0]:
+                latent_group_keys = cond_input['meta'][0]['latent_group_names']
+            else:
+                # Fallback: infer from keys (excludes image, meta, and scalar controls)
+                latent_group_keys = [k for k in cond_input.keys() if k not in ['image', 'meta'] and isinstance(cond_input[k], torch.Tensor) and cond_input[k].ndim > 2]
+            
             for group_key in latent_group_keys:
                 cond_input[group_key] = cond_input[group_key].float().to(device)
             
@@ -838,7 +843,17 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 if 'image' in val_cond_input:
                     val_cond_input['image'] = val_cond_input['image'][:val_num_samples].float().to(device)
                 
-                val_latent_group_keys = [k for k in val_cond_input.keys() if k not in ['image', 'meta']]
+                # Slice metadata list (one dict per sample)
+                if 'meta' in val_cond_input:
+                    val_cond_input['meta'] = val_cond_input['meta'][:val_num_samples]
+                
+                # Slice and move latent-space conditioning groups (use metadata if available)
+                if 'meta' in val_cond_input and 'latent_group_names' in val_cond_input['meta'][0]:
+                    val_latent_group_keys = val_cond_input['meta'][0]['latent_group_names']
+                else:
+                    # Fallback: infer from keys (excludes image, meta, and scalar controls)
+                    val_latent_group_keys = [k for k in val_cond_input.keys() if k not in ['image', 'meta'] and isinstance(val_cond_input.get(k), torch.Tensor) and val_cond_input[k].ndim > 2]
+                
                 for group_key in val_latent_group_keys:
                     val_cond_input[group_key] = val_cond_input[group_key][:val_num_samples].float().to(device)
                 
