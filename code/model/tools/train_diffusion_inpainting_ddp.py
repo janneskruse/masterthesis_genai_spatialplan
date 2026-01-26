@@ -843,11 +843,17 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 for group_key in val_latent_group_keys:
                     val_cond_input[group_key] = val_cond_input[group_key][:val_num_samples].float().to(device)
                 
-                # Encode to latent space
-                if use_existing_latents:
+                expected_latent_size = urban_dataset.latent_size  
+                is_already_latent = (val_prediction_data.shape[-1] == expected_latent_size)
+                
+                if is_already_latent:
+                    # Data is already in latent space (precomputed latents)
                     val_im_latent = val_prediction_data
-                else:
+                elif vae is not None:
+                    # Data is in pixel space - encode to latent
                     val_im_latent, _, _ = vae.encode(val_prediction_data)
+                else:
+                    raise ValueError("VAE is required for encoding pixel-space validation data to latents.")
                 
                 # Extract mask
                 val_mask_latent = None
