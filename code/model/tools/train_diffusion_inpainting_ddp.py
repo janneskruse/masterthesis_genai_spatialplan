@@ -182,13 +182,16 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         dist.barrier()
     
     ########## Create the noise scheduler #############
+    # Training always uses DDPM (all timesteps for proper diffusion training)
+    # DDIM is for sampling only (faster inference after training)
     scheduler = LinearNoiseScheduler(
         num_timesteps=diffusion_config['num_timesteps'],
         beta_start=diffusion_config['beta_start'],
         beta_end=diffusion_config['beta_end']
     )
+    
     if is_main:
-        print(f"\n✓ Created noise scheduler with {diffusion_config['num_timesteps']} timesteps")
+        print(f"\n✓ Created DDPM noise scheduler ({scheduler.num_timesteps} timesteps)")
     
     ########## Load Dataset #############
     if is_main:

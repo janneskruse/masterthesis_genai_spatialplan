@@ -18,8 +18,7 @@ from torchvision.utils import make_grid, save_image
 
 # Local libraries
 from model.diffusion_blocks.unet_cond_base import Unet
-from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
-from model.scheduler.ddim_scheduler import DDIMScheduler
+from model.scheduler.scheduler_factory import get_scheduler
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
 from model.utils.layer_config import count_layer_channels
@@ -258,7 +257,8 @@ def sample_semantics(
     )
     
     # Get sampler configuration
-    sampler_type = diffusion_config.get('sampler', 'ddpm')  # 'ddpm' | 'ddim'
+    # Default to DDIM for 20x speedup (state-of-the-art for inference)
+    sampler_type = diffusion_config.get('sampler', 'ddim')  # 'ddpm' | 'ddim'
     ddim_steps = diffusion_config.get('ddim_steps', 50)
     ddim_eta = diffusion_config.get('ddim_eta', 0.0)
     
@@ -869,26 +869,14 @@ def infer(args, config):
     unet_config = stage_config.get('unet_config', {})
     
     ########## Create Scheduler #############
-    # Support both DDPM (slow, 1000 steps) and DDIM (fast, 50 steps)
-    sampler_type = diffusion_config.get('sampler', 'ddpm')
+    # Sampling can use DDPM or DDIM
+    # DDIM is recommended (20x faster with similar quality)
+    scheduler = get_scheduler(diffusion_config)
     
+    sampler_type = diffusion_config.get('sampler', 'ddim')  # Default to DDIM for speed
     if sampler_type == 'ddim':
-        # DDIM: Fast deterministic sampling
-        scheduler = DDIMScheduler(
-            num_timesteps=diffusion_config['num_timesteps'],
-            beta_start=diffusion_config['beta_start'],
-            beta_end=diffusion_config['beta_end'],
-            ddim_steps=diffusion_config.get('ddim_steps', 50),
-            ddim_eta=diffusion_config.get('ddim_eta', 0.0)
-        )
         print(f"✓ Using DDIM scheduler ({scheduler.ddim_steps} steps)")
     else:
-        # DDPM: Standard sampling (backward compatible)
-        scheduler = LinearNoiseScheduler(
-            num_timesteps=diffusion_config['num_timesteps'],
-            beta_start=diffusion_config['beta_start'],
-            beta_end=diffusion_config['beta_end']
-        )
         print(f"✓ Using DDPM scheduler ({scheduler.num_timesteps} steps)")
     
     ########## Load Models #############
