@@ -6,6 +6,7 @@
 import os
 import argparse
 import random
+import json
 import numpy as np
 from tqdm import tqdm
 from pathlib import Path
@@ -26,6 +27,7 @@ from model.utils.checkpoint import load_checkpoint
 from model.utils.diffusion_utils import make_uncond_input_keep_mask
 from model.utils.data_utils import normalize_scalar_like_layer
 from model.utils.scalar_controls import parse_scalar_controls_config
+from model.utils.building_metrics import aggregate_metrics_batch, print_metrics_summary
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 from model.lst_predictor.predictor import LSTPredictor
@@ -665,6 +667,56 @@ def sample_semantics(
     
     # Stack all decoded samples for visualization
     semantic_samples = torch.cat(all_samples, dim=0)  # [N, C, H, W]
+    
+    # Compute building quality metrics if buildings layer present
+    if 'buildings' in semantic_layers:
+        print("\n" + "="*50)
+        print("Computing Building Quality Metrics")
+        print("="*50)
+        
+        try:
+            buildings_idx = semantic_layers.index('buildings')
+            pred_buildings = semantic_samples[:, buildings_idx:buildings_idx+1, :, :]
+            
+            # Get ground truth buildings from original dataset sample
+            with torch.no_grad():
+                # Decode the original pred_latent (context) to get ground truth
+                true_semantic = pred_vae.decode(pred_latent.unsqueeze(0).to(device))
+                true_buildings = true_semantic[:, buildings_idx:buildings_idx+1, :, :]
+                # Repeat to match batch size
+                true_buildings = true_buildings.repeat(semantic_samples.shape[0], 1, 1, 1)
+            
+            # Upsample mask to match semantic resolution if needed
+            if mask_latent is not None:
+                metrics_mask = mask_latent.repeat(semantic_samples.shape[0], 1, 1, 1)
+                if metrics_mask.shape[-2:] != pred_buildings.shape[-2:]:
+                    metrics_mask = F.interpolate(
+                        metrics_mask,
+                        size=pred_buildings.shape[-2:],
+                        mode='nearest'
+                    )
+            else:
+                metrics_mask = torch.ones_like(pred_buildings)
+            
+            # Compute metrics
+            metrics = aggregate_metrics_batch(
+                pred_buildings_batch=pred_buildings,
+                true_buildings_batch=true_buildings,
+                mask_batch=metrics_mask,
+                min_building_size=4
+            )
+            
+            # Print summary
+            print_metrics_summary(metrics, prefix="")
+            
+            # Save metrics to JSON
+            metrics_file = os.path.join(samples_dir, 'building_metrics.json')
+            with open(metrics_file, 'w') as f:
+                json.dump(metrics, f, indent=2)
+            print(f"\n✓ Saved building metrics to {metrics_file}")
+            
+        except Exception as e:
+            print(f"\n⚠ Warning: Could not compute building metrics: {e}")
     
     print("\nCreating layer visualizations...")
     
