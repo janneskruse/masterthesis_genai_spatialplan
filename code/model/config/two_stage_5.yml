@@ -455,7 +455,7 @@ train_params:
   # Diffusion training (per stage)
   diffusion_training:
     semantic:
-      epochs: 150
+      epochs: 300
       batch_size: 4
       gradient_accumulation_steps: 4  # Effective batch size: 16
       lr: 0.0001  # Higher initial LR with scheduler
