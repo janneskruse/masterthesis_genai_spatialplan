@@ -151,7 +151,7 @@ scalar_controls:
         strategy: "relative"
         relative_delta_range: [-0.15, 0.15] # Allow ±15% variation during training, so ≈ ±10°C for LST range [0, 80]°C
         unconditional_value: 0.0
-        drop_prob: 0.1
+        drop_prob: 0.15  # Increased for stronger CFG guidance
       conditioning:
         # inject_mode: "time_embed"  # todo: support other modes
         mlp_hidden: 128
@@ -166,7 +166,7 @@ scalar_controls:
         strategy: "relative"
         relative_delta_range: [-0.15, 0.15]
         unconditional_value: 0.5  # Neutral: 50% coverage
-        drop_prob: 0.1
+        drop_prob: 0.15
       conditioning:
         # inject_mode: "time_embed"
         mlp_hidden: 128
@@ -181,7 +181,7 @@ scalar_controls:
         strategy: "relative"
         relative_delta_range: [-0.15, 0.15]
         unconditional_value: 0.5
-        drop_prob: 0.1
+        drop_prob: 0.15
       conditioning:
         # inject_mode: "time_embed"
         mlp_hidden: 128
@@ -197,7 +197,7 @@ scalar_controls:
         strategy: "relative"
         relative_delta_range: [-0.10, 0.10]
         unconditional_value: 0.0  # Low height baseline
-        drop_prob: 0.1
+        drop_prob: 0.15
       conditioning:
         # inject_mode: "time_embed"
         mlp_hidden: 128
@@ -271,6 +271,11 @@ diffusion_params:
   beta_start: 0.0001
   beta_end: 0.02
 
+  # Sampling algorithm (for inference)
+  sampler: 'ddpm'  # Options: 'ddpm' (1000 steps), 'ddim' (50-100 steps), 'dpm_solver' (20-30 steps)
+  ddim_steps: 50  # For DDIM sampler
+  ddim_eta: 0.0  # 0.0 = deterministic, 1.0 = stochastic like DDPM
+
 # ===========================================================================
 # DIFFUSION STAGES
 # Define what each stage generates and conditions on
@@ -315,12 +320,12 @@ diffusion_stages:
     inpainting:
       mode: 'hard'  # or 'sdlike'
       loss: 'weighted'  # Use weighted to learn full distribution # 'masked' for focusing only on missing regions
-      mask_loss_weight: 8.0
+      mask_loss_weight: 10.0
       outside_weight: 1.0  # Non-zero to learn context! --> for coherent generation
       
       # Seam improvement strategy (optional)
       # Options: None (default), 'dilate' (boundary ring loss), 'feather' (mask blurring), 'repaint' (reinjection)
-      seam: None
+      seam: feather
       seam_config:
         ring_width_px: 1      # For 'dilate' mode: boundary ring width
         ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
@@ -329,7 +334,7 @@ diffusion_stages:
         jump_length: 3        # For 'repaint' mode: timesteps to jump back
       
       cfg:
-        drop_prob: 0.1
+        drop_prob: 0.15  # Higher for stronger CFG effect
         drop_groups: None
         sample_mask_groups: ['environmental']  # No special handling during sampling
   
@@ -369,7 +374,7 @@ diffusion_stages:
     inpainting:
       mode: 'hard'  # or 'sdlike'
       loss: 'weighted'  # Learn full distribution for realistic rendering # 'masked' to focus only on missing regions
-      mask_loss_weight: 4.0  # Lower weight for sdlike (model processes whole image)
+      mask_loss_weight: 8.0  # Lower weight for sdlike (model processes whole image)
       outside_weight: 1.0  # Learn photorealistic context
       
       # Seam improvement strategy (optional)
@@ -383,7 +388,7 @@ diffusion_stages:
         jump_length: 3        # For 'repaint' mode: timesteps to jump back
       
       cfg:
-        drop_prob: 0.1
+        drop_prob: 0.15  # Higher for stronger CFG effect
         drop_groups: ['semantic', 'environmental']
         sample_mask_groups: ['environmental']  # Apply inpainting mask to these groups during sampling only
 
@@ -452,13 +457,47 @@ train_params:
     semantic:
       epochs: 150
       batch_size: 4
-      lr: 0.00001
+      gradient_accumulation_steps: 4  # Effective batch size: 16
+      lr: 0.0001  # Higher initial LR with scheduler
+      lr_scheduler: 'cosine'  # Options: 'cosine', 'linear', 'constant'
+      lr_warmup_steps: 1000  # Warmup for stable training start
+      
+      # Exponential Moving Average - critical for stable high-quality samples
+      use_ema: True
+      ema_decay: 0.9999  # Slow decay for better averaging
+      
+      # Loss improvements
+      loss_type: 'min_snr'  # Options: 'simple', 'snr', 'min_snr', 'v_loss'
+      min_snr_gamma: 5.0  # Clamp SNR to reduce loss from very noisy timesteps
+      
+      # Validation sampling during training
+      val_sample_every_n_epochs: 10
+      val_num_samples: 4
+      val_guidance_scale: 7.5
+      
       checkpoint_name: 'semantic_diffusion_ckpt.pth'
       
     satellite:
-      epochs: 200
+      epochs: 400  # Satellite rendering is harder, needs more training
       batch_size: 4
-      lr: 0.00001
+      gradient_accumulation_steps: 4  # Effective batch size: 16
+      lr: 0.0001  # Higher initial LR with scheduler
+      lr_scheduler: 'cosine'
+      lr_warmup_steps: 1000
+      
+      # EMA is especially important for photorealistic satellite imagery
+      use_ema: True
+      ema_decay: 0.9999
+      
+      # Loss improvements
+      loss_type: 'min_snr'
+      min_snr_gamma: 5.0
+      
+      # Validation sampling
+      val_sample_every_n_epochs: 15
+      val_num_samples: 4
+      val_guidance_scale: 7.5
+      
       checkpoint_name: 'satellite_diffusion_ckpt.pth'
   
   # Sampling

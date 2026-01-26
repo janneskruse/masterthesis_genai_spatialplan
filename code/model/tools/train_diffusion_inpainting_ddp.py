@@ -265,6 +265,18 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         model_unwrapped = model.module if hasattr(model, 'module') else model
         print(f"✓ Created U-Net with {sum(p.numel() for p in model_unwrapped.parameters())/1e6:.2f}M parameters")
     
+    ########## Setup EMA (Exponential Moving Average) #############
+    ema_model = None
+    if train_config.get('use_ema', False):
+        from model.utils.ema import ExponentialMovingAverage
+        
+        ema_decay = train_config.get('ema_decay', 0.9999)
+        model_for_ema = model.module if hasattr(model, 'module') else model
+        ema_model = ExponentialMovingAverage(model_for_ema, decay=ema_decay, device=device)
+        
+        if is_main:
+            print(f"\n✓ EMA enabled with decay={ema_decay}")
+    
     # Load prediction VAE if no existing latents
     vae = None
     vae_registry = None
@@ -297,9 +309,28 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     optimizer = Adam(model.parameters(), lr=adjusted_lr)
     
+    ########## Setup LR Scheduler #############
+    lr_scheduler = None
+    if train_config.get('lr_scheduler', 'constant') != 'constant' or train_config.get('lr_warmup_steps', 0) > 0:
+        from model.scheduler.lr_scheduler import get_lr_scheduler
+        
+        lr_scheduler_config = {
+            'lr_scheduler': train_config.get('lr_scheduler', 'constant'),
+            'lr_warmup_steps': train_config.get('lr_warmup_steps', 0),
+            'num_epochs': num_epochs,
+            'steps_per_epoch': len(data_loader)
+        }
+        lr_scheduler = get_lr_scheduler(optimizer, lr_scheduler_config)
+        
+        if is_main:
+            print(f"\n✓ LR Scheduler configured")
+    
     # Load checkpoint if specified
     start_epoch = 0
     if load_checkpoint_path:
+        checkpoint_dict = torch.load(load_checkpoint_path, map_location=device, weights_only=False)
+        
+        # Load model and optimizer
         start_epoch = load_checkpoint(
             checkpoint_path=load_checkpoint_path,
             model=model,
@@ -307,6 +338,18 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             device=device,
             is_main=is_main
         )
+        
+        # Load EMA state if available
+        if ema_model is not None and 'ema_state_dict' in checkpoint_dict:
+            ema_model.load_state_dict(checkpoint_dict['ema_state_dict'])
+            if is_main:
+                print("✓ Loaded EMA state from checkpoint")
+        
+        # Load LR scheduler state if available
+        if lr_scheduler is not None and 'lr_scheduler_state_dict' in checkpoint_dict:
+            lr_scheduler.load_state_dict(checkpoint_dict['lr_scheduler_state_dict'])
+            if is_main:
+                print("✓ Loaded LR scheduler state from checkpoint")
     
     # Inpainting configuration
     inpainting_mode = inpainting_config.get('mode', 'hard')         # "hard" | "sdlike"
@@ -541,6 +584,15 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             loss.backward()
             optimizer.step()
             
+            # Update LR scheduler (step per batch)
+            if lr_scheduler is not None:
+                lr_scheduler.step()
+            
+            # Update EMA (after each optimizer step)
+            if ema_model is not None:
+                model_for_ema = model.module if hasattr(model, 'module') else model
+                ema_model.update(model_for_ema)
+            
             losses.append(loss.item())
             global_step += 1
             
@@ -652,6 +704,15 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': epoch_loss,
             }
+            
+            # Save EMA state if available
+            if ema_model is not None:
+                checkpoint_state['ema_state_dict'] = ema_model.state_dict()
+            
+            # Save LR scheduler state if available
+            if lr_scheduler is not None:
+                checkpoint_state['lr_scheduler_state_dict'] = lr_scheduler.state_dict()
+            
             torch.save(checkpoint_state, checkpoint_path)
             
             # Periodic checkpoint
