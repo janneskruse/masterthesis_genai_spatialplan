@@ -315,7 +315,7 @@ def render_satellite_from_semantics(
                 patch_index = sample_data.get('patch_index')
                 
                 if patch_index is not None and dataset is not None:
-                    # Load matching patch from dataset (already has encoded latents)
+                    # Load matching patch from dataset (may be latent or full-res image)
                     dataset_sample = dataset[patch_index]
                     
                     if isinstance(dataset_sample, tuple) and len(dataset_sample) == 2:
@@ -323,24 +323,41 @@ def render_satellite_from_semantics(
                     else:
                         dataset_cond = {}
                     
-                    # Extract environmental latents (already encoded by dataset)
+                    # Check if environmental is already latent or needs encoding
                     if cond_group in dataset_cond:
+                        # Already encoded latent
                         env_latent = dataset_cond[cond_group].unsqueeze(0).to(device)
                         cond_input[cond_group] = env_latent
                         latent_group_names.append(cond_group)
-                        print(f"  ✓ Loaded environmental conditioning from dataset patch {patch_index}")
+                        print(f"  ✓ Loaded environmental conditioning latent from dataset patch {patch_index}")
+                    elif f'{cond_group}_image' in dataset_cond:
+                        # Full-res image needs encoding
+                        print(f"  ⚠ {cond_group} latent not available, encoding on-the-fly")
+                        cond_image = dataset_cond[f'{cond_group}_image'].unsqueeze(0).to(device)
+                        
+                        # Encode using environmental VAE
+                        env_vae = vae_registry.get_vae(cond_group)
+                        if env_vae is None:
+                            raise ValueError(f"Environmental VAE not loaded in registry")
+                        
+                        with torch.no_grad():
+                            cond_latent, _, _ = env_vae.encode(cond_image)
+                        
+                        cond_input[cond_group] = cond_latent
+                        latent_group_names.append(cond_group)
+                        print(f"  ✓ Encoded {cond_group} conditioning from image: {cond_image.shape} → {cond_latent.shape}")
                     else:
-                        print(f"  ⚠ Environmental group '{cond_group}' not found in dataset, using zeros")
+                        print(f"  ⚠ Context group '{cond_group}' not found in dataset, using zeros")
                         z_channels = vae_groups[cond_group]['z_channels']
-                        env_latent = torch.zeros(1, z_channels, latent_size, latent_size, device=device)
-                        cond_input[cond_group] = env_latent
+                        cond_latent = torch.zeros(1, z_channels, latent_size, latent_size, device=device)
+                        cond_input[cond_group] = cond_latent
                         latent_group_names.append(cond_group)
                 else:
                     # Fallback to zeros if no patch metadata
                     print(f"  ⚠ No patch_index in sample metadata, using zero environmental conditioning")
                     z_channels = vae_groups[cond_group]['z_channels']
-                    env_latent = torch.zeros(1, z_channels, latent_size, latent_size, device=device)
-                    cond_input[cond_group] = env_latent
+                    cond_latent = torch.zeros(1, z_channels, latent_size, latent_size, device=device)
+                    cond_input[cond_group] = cond_latent
                     latent_group_names.append(cond_group)
         
         # Store latent group names in metadata
