@@ -77,10 +77,9 @@ class Unet(nn.Module):
         # Generic scalar control conditioning (temperature, vegetation, heights, etc.)
         # Each scalar key gets its own MLP to inject into time embedding
         scalar_cfg = self.condition_config.get('scalar_condition_config', None) if self.condition_config else None
-        self.use_scalar_controls = bool(scalar_cfg and scalar_cfg.get('enabled', False))
         self.scalar_mlps = nn.ModuleDict()
         
-        if self.use_scalar_controls:
+        if scalar_cfg:
             scalar_specs = scalar_cfg.get('scalars', {})
             for key, spec in scalar_specs.items():
                 hidden = int(spec.get('mlp_hidden', 128))
@@ -300,7 +299,7 @@ class Unet(nn.Module):
         
         ######## Generic Scalar Control Conditioning ########
         # Inject all configured scalar controls into time embedding
-        if self.use_scalar_controls and cond_input is not None:
+        if self.scalar_mlps and cond_input is not None:
             for key, mlp in self.scalar_mlps.items():
                 if key in cond_input:
                     scalar = cond_input[key].float()  # [B] or [B, 1]

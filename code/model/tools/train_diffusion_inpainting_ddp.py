@@ -337,13 +337,18 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     # Build scalar unconditional values dict for all enabled scalar controls
     scalar_uncond = {}
+    stage_scalar_controls = stage_config.get('scalar_controls', None)
+    
     scalar_controls_enabled = (
-        stage_config.get('scalar_controls', False)
+        isinstance(stage_scalar_controls, list) and len(stage_scalar_controls) > 0
+    ) or (
+        isinstance(stage_scalar_controls, bool) and stage_scalar_controls
     )
     
     if scalar_controls_enabled:
-        # Parse all enabled scalar controls
-        control_specs = parse_scalar_controls_config(config)
+        # Parse enabled scalar controls for this stage
+        stage_control_names = stage_scalar_controls if isinstance(stage_scalar_controls, list) else None
+        control_specs = parse_scalar_controls_config(config, stage_control_names=stage_control_names)
         
         for spec in control_specs:
             scalar_keys = spec['keys']

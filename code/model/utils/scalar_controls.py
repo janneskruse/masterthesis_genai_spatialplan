@@ -183,12 +183,16 @@ def generate_training_target_scalar(
     return target.squeeze()  # Return scalar []
 
 
-def parse_scalar_controls_config(config: Dict) -> List[Dict]:
+def parse_scalar_controls_config(config: Dict, stage_control_names: Optional[List[str]] = None) -> List[Dict]:
     """
     Parse scalar_controls config and return list of enabled control specs.
     
     Args:
         config: Full global config
+        stage_control_names: Optional list of control names to enable for this stage.
+                           If None, uses global enabled flags (backward compat).
+                           If provided, only returns controls in this list.
+                           Example: ["temperature", "building_coverage"]
         
     Returns:
         List of control spec dicts, each with:
@@ -202,15 +206,18 @@ def parse_scalar_controls_config(config: Dict) -> List[Dict]:
     """
     controls = []
     
-    # Check for new scalar_controls config
+    # Get scalar_controls config (global definitions)
     scalar_config = config.get('scalar_controls', {})
-    if scalar_config.get('enabled', False):
-        control_specs = scalar_config.get('controls', [])
+    control_specs = scalar_config.get('controls', [])
+    
+    # Determine which controls to enable
+    if stage_control_names is not None:
+        # Stage-based activation: only enable controls in the stage's list
         for spec in control_specs:
-            if spec.get('enabled', True):
+            control_name = spec.get('name')
+            if control_name in stage_control_names:
                 # Normalize keys format
                 if 'key' in spec:
-                    # Single key
                     spec['keys'] = [spec['key']]
                 elif 'keys' not in spec:
                     raise ValueError(f"Control spec must have 'key' or 'keys': {spec}")

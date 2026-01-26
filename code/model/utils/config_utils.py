@@ -88,13 +88,20 @@ def build_unet_condition_config(stage_config, vae_groups_config, global_config=N
     
     # Generic scalar controls config
     # Supports multiple scalar controls: temperature, vegetation, building heights, etc.
+    # Can be enabled per-stage with list of control names: scalar_controls: ["temperature", "building_coverage"]
+    stage_scalar_controls = stage_config.get('scalar_controls', None)
+    
+    # Check if scalar controls are enabled (list of names or legacy boolean)
     scalar_controls_enabled = (
-        stage_config.get('scalar_controls', False)
+        isinstance(stage_scalar_controls, list) and len(stage_scalar_controls) > 0
+    ) or (
+        isinstance(stage_scalar_controls, bool) and stage_scalar_controls
     )
     
     if scalar_controls_enabled and global_config is not None:
-        # Parse all enabled scalar controls
-        control_specs = parse_scalar_controls_config(global_config)
+        # Parse enabled scalar controls for this stage
+        stage_control_names = stage_scalar_controls if isinstance(stage_scalar_controls, list) else None
+        control_specs = parse_scalar_controls_config(global_config, stage_control_names=stage_control_names)
         
         if len(control_specs) > 0:
             # Build scalar conditioning config

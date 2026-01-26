@@ -127,15 +127,22 @@ dataset_params:
 # ===========================================================================
 # GENERIC SCALAR CONTROLS
 # Flexible framework for multiple scalar conditioning (vegetation, heights, etc.)
+# 
+# USAGE:
+# 1. Define all available controls here with their configurations
+# 2. Enable specific controls per-stage using:
+#    diffusion_stages:
+#      semantic:
+#        scalar_controls: ["temperature", "building_coverage"]  # List of control names
+# 
+# This allows different stages to use different controls flexibly.
 # ===========================================================================
 
 scalar_controls:
-  enabled: false  # Master switch for all scalar controls
   
   controls:
-    # Temperature control (replaces temperature_control section above)
+    # Temperature control
     - name: "temperature"
-      enabled: false
       keys: ["tmax"]  # Single scalar key
       layer: "lst"
       statistic: "p95"
@@ -151,7 +158,6 @@ scalar_controls:
     
     # Vegetation coverage control
     - name: "vegetation_coverage"
-      enabled: false
       keys: ["veg_mean"]  # Or ["veg_min", "veg_max"] for range
       layer: "vegetation"
       statistic: "mean"  # Coverage fraction [0,1]
@@ -167,7 +173,6 @@ scalar_controls:
     
     # Building coverage control
     - name: "building_coverage"
-      enabled: false
       keys: ["bldg_mean"] # Or ["bldg_min", "bldg_max"] for range
       layer: "buildings"
       statistic: "mean"
@@ -183,7 +188,6 @@ scalar_controls:
     
     # Building height control (masked by building footprints)
     - name: "building_height"
-      enabled: false
       keys: ["height_p95"] # Or ["height_min", "height_max"] for range
       layer: "buildings_heights"
       statistic: "p95"

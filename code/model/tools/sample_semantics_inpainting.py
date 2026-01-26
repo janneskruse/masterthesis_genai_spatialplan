@@ -420,8 +420,14 @@ def sample_semantics(
     scalar_uncond_values = {}  # Dict: key -> unconditional value
     
     if args.control:
-        # Parse all enabled scalar controls from config
-        control_specs = parse_scalar_controls_config(config)
+        # Extract stage control list
+        stage_scalar_controls = stage_config.get('scalar_controls', None)
+        stage_control_names = None
+        if isinstance(stage_scalar_controls, list) and len(stage_scalar_controls) > 0:
+            stage_control_names = stage_scalar_controls
+        
+        # Parse scalar controls enabled for this stage
+        control_specs = parse_scalar_controls_config(config, stage_control_names=stage_control_names)
         
         if len(control_specs) == 0:
             print("⚠ Warning: --control specified but no scalar controls configured. Ignoring.")
