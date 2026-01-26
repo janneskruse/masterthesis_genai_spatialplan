@@ -331,21 +331,40 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     vae_registry = None
     if not use_existing_latents or validate_enabled:
         if is_main:
-            print(f"\nLoading {prediction_group.upper()} VAE...")
+            print(f"\nLoading VAE models...")
         
         # Use VAERegistry for cleaner management
         vae_registry = VAERegistry(config, device)
+        
+        # Load prediction VAE
+        if is_main:
+            print(f"  - {prediction_group.upper()} (prediction group)")
         vae_registry.load_vae(
             group_name=prediction_group,
             checkpoint_path=os.path.join(out_dir, prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')),
             autoencoder_config=prediction_vae_config
         )
-        
         vae = vae_registry.get_vae(prediction_group)
-        
-        # Freeze VAE to prevent gradient updates during diffusion training
         vae_registry.freeze(prediction_group)
         vae.eval()
+        
+        # Load conditioning VAEs for latent-space conditioning groups
+        latent_space_specs = conditioning_config.get('latent_space', [])
+        for spec in latent_space_specs:
+            cond_group = spec.get('group')
+            if cond_group and cond_group in vae_groups:
+                if is_main:
+                    print(f"  - {cond_group.upper()} (conditioning group)")
+                cond_vae_config = vae_groups[cond_group]
+                vae_registry.load_vae(
+                    group_name=cond_group,
+                    checkpoint_path=os.path.join(out_dir, cond_vae_config.get('checkpoint_name', f'{cond_group}_vae_ckpt.pth')),
+                    autoencoder_config=cond_vae_config
+                )
+                vae_registry.freeze(cond_group)
+        
+        if is_main:
+            print(f"✓ Loaded {len(vae_registry.vaes)} VAE model(s)")
     
     ########## Training Setup #############
     num_epochs = train_config.get('epochs', 300)
@@ -846,6 +865,25 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 # Slice metadata list (one dict per sample)
                 if 'meta' in val_cond_input:
                     val_cond_input['meta'] = val_cond_input['meta'][:val_num_samples]
+                
+                # Encode conditioning groups that need encoding (*_image keys)
+                # This happens when validation latents don't exist - dataset provides full-res images
+                if vae_registry is not None:
+                    groups_to_encode = [k for k in val_cond_input.keys() if k.endswith('_image')]
+                    if groups_to_encode:
+                        print(f"⚠ Encoding conditioning groups on-the-fly (validation latents missing): {groups_to_encode}")
+                        for group_key in groups_to_encode:
+                            group_name = group_key.replace('_image', '')
+                            group_image = val_cond_input.pop(group_key)[:val_num_samples].float().to(device)
+                            
+                            # Encode through VAE
+                            vae_model = vae_registry.get_vae(group_name)
+                            if vae_model is not None:
+                                with torch.no_grad():
+                                    group_latent, _, _ = vae_model.encode(group_image)
+                                val_cond_input[group_name] = group_latent
+                            else:
+                                raise ValueError(f"VAE for group '{group_name}' not found in registry")
                 
                 # Slice and move latent-space conditioning groups (use metadata if available)
                 if 'meta' in val_cond_input and 'latent_group_names' in val_cond_input['meta'][0]:
