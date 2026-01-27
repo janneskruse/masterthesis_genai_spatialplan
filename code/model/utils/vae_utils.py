@@ -93,7 +93,8 @@ def compute_reconstruction_loss(
     layers_registry,
     binary_weight=1.0, continuous_weight=1.0, 
     layer_dice_config=None, posw_ema=None,
-    all_channels_tensor=None  # Full tensor with all channels for mask lookup
+    all_channels_tensor=None,  # Full tensor with all channels for mask lookup
+    layer_weights=None  # Per-layer weight overrides
 ):
     """
     Compute reconstruction loss for any tensor using dynamic layer configuration.
@@ -110,11 +111,12 @@ def compute_reconstruction_loss(
         channel_names: List of channel names (e.g., ['rgb:red', 'buildings', 'lst'])
         layer_names: List of layer names for each channel (e.g., ['rgb', 'buildings', 'lst'])
         layers_registry: Global layers configuration dict
-        binary_weight: Weight for binary channel losses
-        continuous_weight: Weight for continuous channel losses
+        binary_weight: Weight for binary channel losses (default weight)
+        continuous_weight: Weight for continuous channel losses (default weight)
         layer_dice_config: Optional dict mapping layer names to dice config overrides
         posw_ema: Optional PosWeightEMA tracker for stable class weighting (indexed by binary channel index)
         all_channels_tensor: Full input/target tensor with all channels (for mask layer lookup)
+        layer_weights: Optional dict mapping layer names to custom weights (overrides binary/continuous defaults)
         
     Layer Config Options:
         - loss_type: 'mse' (default), 'l1', or 'smooth_l1'
@@ -176,7 +178,10 @@ def compute_reconstruction_loss(
                 loss = bce
             
             losses[f'{channel_name}_bce'] = bce.item()
-            binary_loss += loss * binary_weight
+            
+            # Apply per-layer weight if specified, otherwise use default
+            layer_weight = layer_weights.get(layer_name, binary_weight) if layer_weights else binary_weight
+            binary_loss += loss * layer_weight
             binary_count += 1
             binary_ch_idx += 1  # Increment binary channel index
             
@@ -248,7 +253,9 @@ def compute_reconstruction_loss(
             else:
                 losses[f'{channel_name}_mse'] = loss.item()
             
-            continuous_loss += loss * continuous_weight
+            # Apply per-layer weight if specified, otherwise use default
+            layer_weight = layer_weights.get(layer_name, continuous_weight) if layer_weights else continuous_weight
+            continuous_loss += loss * layer_weight
             continuous_count += 1
     
     # Normalize by channel count

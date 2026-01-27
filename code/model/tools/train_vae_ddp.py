@@ -315,6 +315,9 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
     # Get layer-specific dice loss config
     layer_dice_config = train_config.get('layer_dice_config', {})
     
+    # Get per-layer weight overrides (optional)
+    layer_weights = train_config.get('layer_weights', None)
+    
     # Directory and naming setup from VAE group config
     checkpoint_name = vae_group_config.get('checkpoint_name', f'{mode}_vae_ckpt.pth')
     latent_dir_name = vae_group_config.get('latents_dir', f'{mode}_latents')
@@ -508,6 +511,8 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
         print(f"✓ Binary channel weight: {binary_channel_weight}")
         print(f"✓ Continuous channel weight: {continuous_channel_weight}")
         print(f"✓ Dice weight: {dice_weight}")
+        if layer_weights:
+            print(f"✓ Per-layer weights: {layer_weights}")
     
     ########## Training Loop #############
     if is_main:
