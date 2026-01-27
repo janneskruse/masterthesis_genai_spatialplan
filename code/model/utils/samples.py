@@ -219,8 +219,8 @@ def save_layerwise_samples(
             # Compute mask boundary (edge detection)
             mask_tensor = mask_upsampled.float()  # [B, 1, H, W]
             
-            # Create erosion kernel (3x3 all ones)
-            kernel = torch.ones(1, 1, 3, 3, device=channel_vis.device)
+            # Create erosion kernel (3x3 all ones) on same device as mask
+            kernel = torch.ones(1, 1, 3, 3, device=mask_tensor.device)
             
             # Erode the mask (shrink it inward)
             mask_eroded = F.conv2d(mask_tensor, kernel, padding=1)
