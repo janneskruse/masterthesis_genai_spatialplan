@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 # Data Science/ML libraries
 import torch
+import torch.nn.functional as F
 from torchvision.utils import save_image, make_grid
 
 # Local imports
@@ -149,7 +150,8 @@ def save_layerwise_samples(
     filename_prefix: str,
     n_samples: int = 8,
     is_reconstruction: bool = False,
-    use_colormaps: bool = True
+    use_colormaps: bool = True,
+    mask: Optional[torch.Tensor] = None
 ) -> None:
     """
     Save each layer of a multi-channel tensor as separate visualizations.
@@ -165,7 +167,9 @@ def save_layerwise_samples(
         n_samples: Number of samples to visualize
         is_reconstruction: If True, applies sigmoid to binary logits
         use_colormaps: Whether to apply colormaps to continuous layers
+        mask: Optional mask tensor [B, 1, H, W] to overlay red border
     """
+    
     n_samples = min(n_samples, tensor.shape[0])
     
     for ch_idx, layer_name in enumerate(layer_names):
@@ -192,6 +196,44 @@ def save_layerwise_samples(
         cmap_name = None
         if apply_cmap:
             cmap_name = get_colormap_for_layer(layer_name)
+        
+        # Apply colormap if needed before mask overlay
+        if apply_cmap and cmap_name:
+            channel_vis = apply_colormap_to_tensor(channel_vis, cmap_name)
+            apply_cmap = False  # Already applied
+            cmap_name = None
+        
+        # Overlay red mask border if mask is provided
+        if mask is not None:
+            # Upsample mask to match channel resolution
+            mask_upsampled = F.interpolate(
+                mask[:n_samples],
+                size=(channel_vis.shape[2], channel_vis.shape[3]),
+                mode='nearest'
+            )
+            
+            # Convert grayscale to RGB for red border overlay
+            if channel_vis.shape[1] == 1:
+                channel_vis = channel_vis.repeat(1, 3, 1, 1)  # [B, 3, H, W]
+            
+            # Compute mask boundary (edge detection)
+            mask_tensor = mask_upsampled.float()  # [B, 1, H, W]
+            
+            # Create erosion kernel (3x3 all ones)
+            kernel = torch.ones(1, 1, 3, 3, device=channel_vis.device)
+            
+            # Erode the mask (shrink it inward)
+            mask_eroded = F.conv2d(mask_tensor, kernel, padding=1)
+            mask_eroded = (mask_eroded == 9).float()  # Only keep pixels where all 9 neighbors were 1
+            
+            # Boundary = original mask - eroded mask (pixels on the edge)
+            mask_boundary = mask_tensor - mask_eroded
+            mask_boundary = (mask_boundary > 0).float()
+            
+            # Apply red border (set R=1, G=0, B=0 where boundary)
+            channel_vis[:, 0:1, :, :] = torch.where(mask_boundary > 0, torch.ones_like(channel_vis[:, 0:1, :, :]), channel_vis[:, 0:1, :, :])
+            channel_vis[:, 1:2, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(channel_vis[:, 1:2, :, :]), channel_vis[:, 1:2, :, :])
+            channel_vis[:, 2:3, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(channel_vis[:, 2:3, :, :]), channel_vis[:, 2:3, :, :])
         
         # Save this layer
         save_path = os.path.join(save_dir, f'{filename_prefix}_{layer_name}.png')

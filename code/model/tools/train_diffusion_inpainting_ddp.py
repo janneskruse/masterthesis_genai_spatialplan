@@ -967,6 +967,16 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 val_save_dir = os.path.join(out_dir, validation_dir_name, f'epoch_{epoch_idx + 1:04d}')
                 os.makedirs(val_save_dir, exist_ok=True)
                 
+                # Upsample mask to match decoded resolution for visualization
+                val_mask_vis = None
+                if val_mask_latent is not None:
+                    import torch.nn.functional as F
+                    val_mask_vis = F.interpolate(
+                        val_mask_latent,
+                        size=(val_decoded.shape[2], val_decoded.shape[3]),
+                        mode='nearest'
+                    )
+                
                 save_layerwise_samples(
                     tensor=val_decoded,
                     layer_names=prediction_layers,
@@ -975,7 +985,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     filename_prefix='validation',
                     n_samples=val_num_samples,
                     is_reconstruction=True,
-                    use_colormaps=True
+                    use_colormaps=True,
+                    mask=val_mask_vis
                 )
                 
                 if 'rgb' in [l.lower() for l in prediction_layers]:
