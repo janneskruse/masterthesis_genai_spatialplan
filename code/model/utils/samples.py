@@ -230,6 +230,9 @@ def save_layerwise_samples(
             mask_boundary = mask_tensor - mask_eroded
             mask_boundary = (mask_boundary > 0).float()
             
+            # Ensure mask_boundary is on same device as channel_vis
+            mask_boundary = mask_boundary.to(channel_vis.device)
+            
             # Apply red border (set R=1, G=0, B=0 where boundary)
             channel_vis[:, 0:1, :, :] = torch.where(mask_boundary > 0, torch.ones_like(channel_vis[:, 0:1, :, :]), channel_vis[:, 0:1, :, :])
             channel_vis[:, 1:2, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(channel_vis[:, 1:2, :, :]), channel_vis[:, 1:2, :, :])
