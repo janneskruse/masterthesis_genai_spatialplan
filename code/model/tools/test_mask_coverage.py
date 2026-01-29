@@ -3,34 +3,41 @@ Test script to check inpainting mask coverage statistics across dataset.
 
 Tests the mixed mask strategy with multiple methods (street_blocks, random_polygon, 
 random_rectangle, random_square) and visualizes samples from each type.
+
+If mask stats CSV exists (from cached patches), loads it and samples from each mask type.
+Otherwise, falls back to random sampling.
 """
 
 ###### import libraries ######
 # Standard libraries
 import os
+import argparse
 from pathlib import Path
 from collections import defaultdict
 
 # Data handling
 import torch
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 # Local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
-from helpers.load_configs import load_configs
+from helpers.load_configs import load_configs, add_config_arguments
 
 
-def analyze_mask_coverage(num_samples=100, plot_samples=True, samples_per_type=2):
+def analyze_mask_coverage(split='val', num_samples=100, plot_samples=True, samples_per_type=3):
     """
     Analyze mask coverage statistics across dataset samples.
     
     Tests the mixed mask strategy and collects samples from each mask type.
+    Prefers loading from saved mask stats CSV for deterministic sampling.
     
     Args:
-        num_samples: Number of samples to analyze
+        split: Dataset split to analyze ('train' or 'val')
+        num_samples: Number of samples to analyze (if stats CSV doesn't exist)
         plot_samples: Whether to plot sample visualizations
         samples_per_type: Number of samples to visualize per mask type
     """
@@ -45,20 +52,27 @@ def analyze_mask_coverage(num_samples=100, plot_samples=True, samples_per_type=2
     
     # Check cache directory (use same logic as dataset)
     cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
-    use_cached_patches = cache_dir.exists() and (cache_dir / "patches_metadata_val.csv").exists()
+    use_cached_patches = cache_dir.exists() and (cache_dir / f"patches_metadata_{split}.csv").exists()
+    
+    # Try to load mask stats CSV
+    stats_csv_path = cache_dir / f"inpainting_mask_stats_{split}.csv"
+    use_stats_csv = stats_csv_path.exists()
     
     print("\n" + "="*60)
     print("Mask Coverage Analysis")
     print("="*60)
     print(f"Task: {task_name}")
+    print(f"Split: {split}")
     print(f"Use cached patches: {use_cached_patches}")
     print(f"Cache directory: {cache_dir}")
-    print(f"Analyzing {num_samples} samples from validation set")
+    print(f"Use mask stats CSV: {use_stats_csv}")
+    if use_stats_csv:
+        print(f"Stats CSV path: {stats_csv_path}")
     print("="*60 + "\n")
     
     # Load dataset in diffusion mode (automatically handles latents)
     dataset = UrbanInpaintingDataset(
-        split='val',
+        split=split,
         mode='diffusion:semantic',  # Automatically loads latents if available
         use_cached_patches=use_cached_patches,
         cache_dir=str(cache_dir) if use_cached_patches else None
@@ -66,19 +80,149 @@ def analyze_mask_coverage(num_samples=100, plot_samples=True, samples_per_type=2
     
     print(f"✓ Loaded dataset with {len(dataset)} samples\n")
     
-    # Analyze samples
+    # Load and analyze based on availability of stats CSV
+    if use_stats_csv:
+        mask_stats = analyze_from_stats_csv(dataset, stats_csv_path, samples_per_type)
+        num_analyzed = len(mask_stats['coverage_percent'])
+    else:
+        print("⚠ Mask stats CSV not found. Using random sampling...")
+        print(f"  To generate stats CSV, run prepare_cached_patches() on the dataset\n")
+        mask_stats = analyze_random_samples(dataset, num_samples, samples_per_type)
+        num_analyzed = num_samples
+    
+    # Print statistics
+    print_mask_statistics(mask_stats, num_analyzed)
+    
+    # Plot samples if requested
+    if plot_samples and len(mask_stats['samples_by_type']) > 0:
+        plot_mask_samples(mask_stats['samples_by_type'], samples_per_type, task_name, repo_dir)
+    
+    # Plot samples if requested
+    if plot_samples and len(mask_stats['samples_by_type']) > 0:
+        plot_mask_samples(mask_stats['samples_by_type'], samples_per_type, task_name, repo_dir)
+
+
+def analyze_from_stats_csv(dataset, stats_csv_path: Path, samples_per_type: int) -> dict:
+    """
+    Analyze masks using pre-saved statistics CSV.
+    
+    This ensures we test all mask types systematically rather than randomly.
+    
+    Args:
+        dataset: UrbanInpaintingDataset instance
+        stats_csv_path: Path to inpainting_mask_stats CSV
+        samples_per_type: Number of samples per mask type to collect
+        
+    Returns:
+        Dictionary with mask statistics and samples
+    """
+    print("Loading mask statistics from CSV...")
+    stats_df = pd.read_csv(stats_csv_path)
+    
+    print(f"✓ Loaded {len(stats_df)} mask records from CSV\n")
+    
+    # Extract base type from actual_type (handles fallback notation)
+    def extract_base_type(actual_type):
+        if pd.isna(actual_type):
+            return 'unknown'
+        if 'fallback(' in actual_type and ')' in actual_type:
+            return actual_type.split('fallback(')[1].split(')')[0]
+        elif 'mixed(' in actual_type and ')' in actual_type:
+            return actual_type.split('mixed(')[1].split(')')[0]
+        return actual_type
+    
+    stats_df['base_type'] = stats_df['actual_type'].apply(extract_base_type)
+    
+    # Group by base type
+    type_groups = stats_df.groupby('base_type')
+    
+    print(f"Found {len(type_groups)} unique mask types:")
+    for mask_type, group in type_groups:
+        print(f"  - {mask_type:20s}: {len(group):4d} samples ({len(group)/len(stats_df)*100:5.1f}%)")
+    print()
+    
+    # Initialize mask stats dict
+    mask_stats = {
+        'coverage_percent': stats_df['coverage_percent'].tolist(),
+        'actual_type': stats_df['actual_type'].tolist(),
+        'requested_type': stats_df['requested_type'].tolist(),
+        'fallback_reason': stats_df['fallback_reason'].tolist(),
+        'shape': None,
+        'samples_by_type': defaultdict(list),
+        'stats_df': stats_df  # Store for later analysis
+    }
+    
+    # Sample indices from each type for visualization
+    print(f"Sampling {samples_per_type} examples from each mask type for visualization...")
+    
+    for mask_type, group in type_groups:
+        # Select diverse samples (spread across coverage percentages)
+        sample_indices = group.nsmallest(samples_per_type * 3, 'coverage_percent')  # Get variety
+        
+        if len(sample_indices) > samples_per_type:
+            # Take from low, medium, high coverage
+            step = len(sample_indices) // samples_per_type
+            sample_indices = sample_indices.iloc[::step][:samples_per_type]
+        
+        print(f"  Loading {len(sample_indices)} samples for type '{mask_type}'...")
+        
+        for _, row in sample_indices.iterrows():
+            idx = int(row['index'])
+            
+            try:
+                # Load sample from dataset
+                pred_latent, cond_input = dataset[idx]
+                
+                # Extract mask
+                if 'image' in cond_input and 'meta' in cond_input:
+                    pixel_space_names = cond_input['meta'].get('pixel_space_names', [])
+                    
+                    try:
+                        mask_idx = pixel_space_names.index('inpainting_mask')
+                        mask = cond_input['image'][mask_idx]  # [H, W]
+                        
+                        if mask_stats['shape'] is None:
+                            mask_stats['shape'] = tuple(mask.shape)
+                        
+                        mask_np = mask.numpy() if torch.is_tensor(mask) else mask
+                        
+                        mask_stats['samples_by_type'][mask_type].append((
+                            idx, mask_np, row['coverage_percent'], row['actual_type']
+                        ))
+                    except ValueError:
+                        print(f"    ⚠ Warning: Mask not found in sample {idx}")
+            except Exception as e:
+                print(f"    ⚠ Warning: Failed to load sample {idx}: {e}")
+    
+    print()
+    return mask_stats
+
+
+def analyze_random_samples(dataset, num_samples: int, samples_per_type: int) -> dict:
+    """
+    Analyze masks via random sampling (fallback when CSV doesn't exist).
+    
+    Args:
+        dataset: UrbanInpaintingDataset instance
+        num_samples: Number of samples to randomly analyze
+        samples_per_type: Number of samples per type to collect for visualization
+        
+    Returns:
+        Dictionary with mask statistics and samples
+    """
     mask_stats = {
         'coverage_percent': [],
         'actual_type': [],
         'requested_type': [],
         'fallback_reason': [],
         'shape': None,
-        'samples_by_type': defaultdict(list)  # Store sample indices by mask type
+        'samples_by_type': defaultdict(list)
     }
     
     num_samples = min(num_samples, len(dataset))
+    num_samples = min(num_samples, len(dataset))
     
-    for idx in tqdm(range(num_samples), desc="Analyzing masks"):
+    for idx in tqdm(range(num_samples), desc="Randomly sampling masks"):
         try:
             # Get sample (returns: pred_latent, conditioning_dict)
             pred_latent, cond_input = dataset[idx]
@@ -136,7 +280,17 @@ def analyze_mask_coverage(num_samples=100, plot_samples=True, samples_per_type=2
             print(f"\n⚠ Warning: Failed to process sample {idx}: {e}")
             continue
     
-    # Print statistics
+    return mask_stats
+
+    
+def print_mask_statistics(mask_stats: dict, num_samples: int):
+    """
+    Print comprehensive mask statistics.
+    
+    Args:
+        mask_stats: Dictionary with mask statistics
+        num_samples: Total number of samples analyzed
+    """
     print("\n" + "="*60)
     print("Mask Statistics")
     print("="*60)
@@ -182,34 +336,31 @@ def analyze_mask_coverage(num_samples=100, plot_samples=True, samples_per_type=2
     for actual_type in mask_stats['actual_type']:
         # Extract base type
         base_type = actual_type
-        if 'fallback(' in actual_type:
-            base_type = actual_type.split('fallback(')[1].split(')')[0]
-        elif 'mixed(' in actual_type:
-            base_type = actual_type.split('mixed(')[1].split(')')[0]
+        if pd.notna(actual_type):
+            if 'fallback(' in actual_type:
+                base_type = actual_type.split('fallback(')[1].split(')')[0]
+            elif 'mixed(' in actual_type:
+                base_type = actual_type.split('mixed(')[1].split(')')[0]
         type_counts[base_type] += 1
     
     for mask_type, count in sorted(type_counts.items(), key=lambda x: -x[1]):
         print(f"  {mask_type:20s}: {count:3d} samples ({count/num_samples*100:5.1f}%)")
     
     # Fallback statistics
-    fallback_count = sum(1 for r in mask_stats['fallback_reason'] if r is not None)
+    fallback_count = sum(1 for r in mask_stats['fallback_reason'] if pd.notna(r))
     if fallback_count > 0:
         print(f"\nFallback triggers:")
         print(f"  Total: {fallback_count} samples ({fallback_count/num_samples*100:.1f}%)")
         
         fallback_reasons = defaultdict(int)
         for reason in mask_stats['fallback_reason']:
-            if reason is not None:
+            if pd.notna(reason):
                 fallback_reasons[reason] += 1
         
         for reason, count in sorted(fallback_reasons.items(), key=lambda x: -x[1]):
             print(f"    {reason:30s}: {count:3d} samples")
     
     print("\n" + "="*60)
-    
-    # Plot samples if requested
-    if plot_samples and len(mask_stats['samples_by_type']) > 0:
-        plot_mask_samples(mask_stats['samples_by_type'], samples_per_type, task_name, repo_dir)
 
 
 def plot_mask_samples(samples_by_type, samples_per_type, task_name, repo_dir):
@@ -290,4 +441,26 @@ def plot_mask_samples(samples_by_type, samples_per_type, task_name, repo_dir):
 
 
 if __name__ == '__main__':
-    analyze_mask_coverage(num_samples=100, plot_samples=True, samples_per_type=3)
+    parser = argparse.ArgumentParser(description='Analyze inpainting mask coverage statistics')
+    
+    # Add config file arguments
+    add_config_arguments(parser)
+    
+    # Add mask coverage specific arguments
+    parser.add_argument('--split', type=str, default='val', choices=['train', 'val'],
+                       help='Dataset split to analyze (default: val)')
+    parser.add_argument('--num_samples', type=int, default=100,
+                       help='Number of samples to analyze if CSV does not exist (default: 100)')
+    parser.add_argument('--samples_per_type', type=int, default=3,
+                       help='Number of samples to visualize per mask type (default: 3)')
+    parser.add_argument('--no_plot', action='store_true',
+                       help='Disable plotting (only show statistics)')
+    
+    args = parser.parse_args()
+    
+    analyze_mask_coverage(
+        split=args.split,
+        num_samples=args.num_samples,
+        plot_samples=not args.no_plot,
+        samples_per_type=args.samples_per_type
+    )

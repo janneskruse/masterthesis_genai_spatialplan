@@ -684,6 +684,9 @@ class UrbanInpaintingDataset(Dataset):
         metadata_path = self.cache_dir / f"patches_metadata_{self.split}.csv"
         metadata_df.to_csv(metadata_path, index=False)
         
+        # save stats for inpainting masks etc.
+        self.save_stats(self.cache_dir)
+        
         print(f"\n✓ Successfully cached {len(metadata_records)} patches")
         print(f"✓ Metadata saved to: {metadata_path}")
         print(f"✓ Total disk usage: ~{self._estimate_cache_size()} MB\n")
