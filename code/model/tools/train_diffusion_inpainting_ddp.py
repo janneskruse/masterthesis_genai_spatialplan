@@ -18,7 +18,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torchvision.utils import save_image, make_grid
+
 
 # local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
@@ -775,8 +775,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         x_sample = torch.randn_like(x_sample)
                     
                     # Quick sampling (DDIM-style with fewer steps for speed)
-                    # Use more steps for preview to get cleaner results (100 is good balance)
-                    sample_steps = min(100, scheduler.num_timesteps)
+                    # For cleaner results: more steps
+                    sample_steps = min(500, scheduler.num_timesteps)
                     
                     # Create timestep schedule: evenly spaced from T to 0
                     timesteps = np.linspace(scheduler.num_timesteps - 1, 0, sample_steps).astype(int)
@@ -816,6 +816,13 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     else:
                         sample_decoded = x_sample
                     
+                    # Upsample mask to match decoded resolution for visualization
+                    mask_vis = torchF.interpolate(
+                        mask_latent[:num_samples],
+                        size=(sample_decoded.shape[2], sample_decoded.shape[3]),
+                        mode='nearest'
+                    )
+                    
                     # Save layerwise visualizations using unified utility
                     save_layerwise_samples(
                         tensor=sample_decoded,
@@ -825,7 +832,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         filename_prefix=f'sample_step_{global_step}',
                         n_samples=num_samples,
                         is_reconstruction=True,  # VAE decoding, may have different scale
-                        use_colormaps=True
+                        use_colormaps=True,
+                        mask=mask_vis
                     )
                     
                     # Also save RGB composite if available
