@@ -61,12 +61,12 @@ code/model/tools/prepare_patches.py
 code/model/tools/run_pipeline.py
 code/model/tools/sample_satellite_from_semantics.py
 code/model/tools/sample_semantics_inpainting.py
-code/model/tools/test_mask_coverage.py
 code/model/tools/train_diffusion_inpainting_ddp.py
 code/model/tools/train_lst_predictor_ddp.py
 code/model/tools/train_vae_ddp.py
 code/model/tools/train_vqvae.py
 code/model/tools/validate_dataset.py
+code/model/tools/validate_inpainting_mask_coverage.py
 code/model/tools/validate_lst_predictor.py
 code/model/tools/validate_vae.py
 code/model/utils/__init__.py
