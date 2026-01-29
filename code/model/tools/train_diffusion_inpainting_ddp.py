@@ -850,7 +850,11 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             epoch_loss = np.mean(losses)
             print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f}')
         
-        # Validation sampling (use EMA weights if available)
+        # Synchronize before validation (all ranks pause)
+        if world_size > 1 and validate_enabled and val_sample_epochs > 0 and (epoch_idx + 1) % val_sample_epochs == 0:
+            dist.barrier()
+        
+        # Validation sampling (only rank 0, others wait at barrier above)
         if is_main and validate_enabled and val_sample_epochs > 0 and (epoch_idx + 1) % val_sample_epochs == 0:
             run_validation_sampling(
                 model=model,
@@ -872,6 +876,10 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 val_guidance_scale=val_guidance_scale,
                 ema_model=ema_model
             )
+        
+        # Synchronize after validation (ensure rank 0 finishes before all continue)
+        if world_size > 1 and validate_enabled and val_sample_epochs > 0 and (epoch_idx + 1) % val_sample_epochs == 0:
+            dist.barrier()
         
         # Save checkpoint
         if is_main:
