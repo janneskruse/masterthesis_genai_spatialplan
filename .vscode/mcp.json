@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "LanPaint Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/scraed/LanPaint"
+    }
+  }
+}
