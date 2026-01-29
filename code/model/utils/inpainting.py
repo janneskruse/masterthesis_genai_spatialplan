@@ -272,7 +272,8 @@ def create_inpainting_mask(
     hole_config: Dict[str, Any],
     street_blocks_layer: Optional[np.ndarray] = None,
     patch_info: Optional[Dict[str, Any]] = None,
-    stats_list: Optional[list] = None
+    stats_list: Optional[list] = None,
+    seed: int = 42
 ) -> np.ndarray:
     """
     Create inpainting hole mask using specified method or mixed strategy.
@@ -321,7 +322,7 @@ def create_inpainting_mask(
     
     # Set deterministic seed for reproducible mask generation per patch
     if patch_info is not None:
-        patch_seed = _compute_patch_seed(patch_info)
+        patch_seed = _compute_patch_seed(patch_info, base_seed=seed)
         np.random.seed(patch_seed)
     
     # Initialize mask info for stats tracking

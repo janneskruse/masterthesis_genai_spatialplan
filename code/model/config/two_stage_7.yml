@@ -85,13 +85,14 @@ inpainting_params:
   # Mask generation strategy
   # Options: 'mixed' (diverse training), 'street_blocks', 'random_polygon', 'random_rectangle', 'random_square', 'center_square'
   type: 'mixed'
+  seed: 42 # for reproducibility in inpainting shuffle of patches
   
   # Mixed strategy: randomly select from multiple methods per sample
   # Provides diverse training data for robust area-level urban redesign
   methods:
     - name: 'street_blocks'
       weight: 0.50  # 50% of training samples use realistic street blocks
-      max_coverage_percent: 35  # Reject blocks larger than 25% of image
+      max_coverage_percent: 35  # Reject blocks larger than 35% of image
       
     - name: 'random_polygon'
       weight: 0.30  # 30% use irregular organic shapes

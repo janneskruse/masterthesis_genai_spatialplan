@@ -949,13 +949,15 @@ class UrbanInpaintingDataset(Dataset):
         """
         Create inpainting hole mask (wrapper for pure function).
         """
+        seed = self.inpainting_config.get('seed', 42)
         return create_inpainting_mask(
             H=H,
             W=W,
             hole_config=self.hole_config,
             street_blocks_layer=street_blocks_layer,
             patch_info=patch_info,
-            stats_list=self.stats["inpainting_mask"]
+            stats_list=self.stats["inpainting_mask"],
+            seed=seed
         )
     
     def __len__(self):
