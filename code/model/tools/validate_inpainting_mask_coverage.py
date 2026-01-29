@@ -70,10 +70,10 @@ def analyze_mask_coverage(split='val', num_samples=100, plot_samples=True, sampl
         print(f"Stats CSV path: {stats_csv_path}")
     print("="*60 + "\n")
     
-    # Load dataset in diffusion mode (automatically handles latents)
+    # Load dataset in diffusion mode
     dataset = UrbanInpaintingDataset(
         split=split,
-        mode='diffusion:semantic',  # Automatically loads latents if available
+        mode='default',
         use_cached_patches=use_cached_patches,
         cache_dir=str(cache_dir) if use_cached_patches else None
     )
@@ -170,16 +170,16 @@ def analyze_from_stats_csv(dataset, stats_csv_path: Path, samples_per_type: int)
             idx = int(row['index'])
             
             try:
-                # Load sample from dataset
-                pred_latent, cond_input = dataset[idx]
+                # Load sample from dataset (default mode: returns rgb, conditioning_dict)
+                rgb_image, conditioning = dataset[idx]
                 
-                # Extract mask
-                if 'image' in cond_input and 'meta' in cond_input:
-                    pixel_space_names = cond_input['meta'].get('pixel_space_names', [])
+                # Extract mask from conditioning
+                if conditioning['image'] is not None and 'meta' in conditioning:
+                    channel_names = conditioning['meta'].get('channel_names', [])
                     
                     try:
-                        mask_idx = pixel_space_names.index('inpainting_mask')
-                        mask = cond_input['image'][mask_idx]  # [H, W]
+                        mask_idx = channel_names.index('inpainting_mask')
+                        mask = conditioning['image'][mask_idx]  # [H, W]
                         
                         if mask_stats['shape'] is None:
                             mask_stats['shape'] = tuple(mask.shape)
@@ -190,7 +190,7 @@ def analyze_from_stats_csv(dataset, stats_csv_path: Path, samples_per_type: int)
                             idx, mask_np, row['coverage_percent'], row['actual_type']
                         ))
                     except ValueError:
-                        print(f"    ⚠ Warning: Mask not found in sample {idx}")
+                        print(f"    ⚠ Warning: 'inpainting_mask' not found in channels: {channel_names}")
             except Exception as e:
                 print(f"    ⚠ Warning: Failed to load sample {idx}: {e}")
     
@@ -224,27 +224,28 @@ def analyze_random_samples(dataset, num_samples: int, samples_per_type: int) -> 
     
     for idx in tqdm(range(num_samples), desc="Randomly sampling masks"):
         try:
-            # Get sample (returns: pred_latent, conditioning_dict)
-            pred_latent, cond_input = dataset[idx]
+            # Get sample (default mode: returns rgb, conditioning_dict)
+            rgb_image, conditioning = dataset[idx]
             
-            # Extract mask from pixel-space conditioning
+            # Extract mask from conditioning
             mask = None
             mask_info = {}
             
-            # Mask is in pixel-space within 'image' tensor
-            if 'image' in cond_input and 'meta' in cond_input:
-                pixel_space_names = cond_input['meta'].get('pixel_space_names', [])
+            if conditioning['image'] is not None and 'meta' in conditioning:
+                channel_names = conditioning['meta'].get('channel_names', [])
                 
                 # Find inpainting mask channel
                 try:
-                    mask_idx = pixel_space_names.index('inpainting_mask')
-                    mask = cond_input['image'][mask_idx]  # [H, W]
+                    mask_idx = channel_names.index('inpainting_mask')
+                    mask = conditioning['image'][mask_idx]  # [H, W]
                 except ValueError:
                     pass
             
             # Extract patch_info from meta (contains mask generation stats)
-            if 'meta' in cond_input and 'patch_info' in cond_input['meta']:
-                mask_info = cond_input['meta']['patch_info']
+            if 'meta' in conditioning and 'patch_index' in conditioning['meta']:
+                # Mask info is stored in dataset.stats during patch extraction
+                # For random sampling, we'll compute stats on-the-fly
+                pass
             
             if mask is not None:
                 if mask_stats['shape'] is None:
