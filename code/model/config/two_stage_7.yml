@@ -90,11 +90,11 @@ inpainting_params:
   # Provides diverse training data for robust area-level urban redesign
   methods:
     - name: 'street_blocks'
-      weight: 0.60  # 60% of training samples use realistic street blocks
+      weight: 0.50  # 50% of training samples use realistic street blocks
       max_coverage_percent: 25  # Reject blocks larger than 25% of image
       
     - name: 'random_polygon'
-      weight: 0.20  # 20% use irregular organic shapes
+      weight: 0.30  # 30% use irregular organic shapes
       min_nodes: 3  # Triangle minimum
       max_nodes: 10  # Complex irregular boundaries
       min_area_percent: 0.15  # Small interventions (120px @ 128×128)
