@@ -33,6 +33,7 @@ def get_scheduler(diffusion_config: dict):
                          - beta_start (float): Starting beta value (0.0001)
                          - beta_end (float): Ending beta value (0.02)
                          Optional keys:
+                         - beta_schedule (str): 'linear' | 'cosine' (default: 'linear')
                          - sampler (str): 'ddpm' | 'ddim' (default: 'ddpm')
                          - ddim_steps (int): DDIM sampling steps (default: 50)
                          - ddim_eta (float): DDIM stochasticity (default: 0.0)
@@ -48,6 +49,7 @@ def get_scheduler(diffusion_config: dict):
         ...     'num_timesteps': 1000,
         ...     'beta_start': 0.0001,
         ...     'beta_end': 0.02,
+        ...     'beta_schedule': 'cosine',
         ...     'sampler': 'ddim',
         ...     'ddim_steps': 50,
         ...     'ddim_eta': 0.0
@@ -56,6 +58,7 @@ def get_scheduler(diffusion_config: dict):
         >>> # Use for training or sampling
     """
     sampler_type = diffusion_config.get('sampler', 'ddpm')
+    beta_schedule = diffusion_config.get('beta_schedule', 'linear')
     
     if sampler_type == 'ddim':
         # DDIM: Fast deterministic sampling
@@ -63,6 +66,7 @@ def get_scheduler(diffusion_config: dict):
             num_timesteps=diffusion_config['num_timesteps'],
             beta_start=diffusion_config['beta_start'],
             beta_end=diffusion_config['beta_end'],
+            beta_schedule=beta_schedule,
             ddim_steps=diffusion_config.get('ddim_steps', 50),
             ddim_eta=diffusion_config.get('ddim_eta', 0.0)
         )
@@ -73,7 +77,8 @@ def get_scheduler(diffusion_config: dict):
         scheduler = LinearNoiseScheduler(
             num_timesteps=diffusion_config['num_timesteps'],
             beta_start=diffusion_config['beta_start'],
-            beta_end=diffusion_config['beta_end']
+            beta_end=diffusion_config['beta_end'],
+            beta_schedule=beta_schedule
         )
         return scheduler
         

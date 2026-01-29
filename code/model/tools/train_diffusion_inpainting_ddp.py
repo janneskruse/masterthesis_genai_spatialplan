@@ -184,10 +184,12 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     ########## Create the noise scheduler #############
     # Training always uses DDPM (all timesteps for proper diffusion training)
+    beta_schedule = diffusion_config.get('beta_schedule', 'linear')
     scheduler = LinearNoiseScheduler(
         num_timesteps=diffusion_config['num_timesteps'],
         beta_start=diffusion_config['beta_start'],
-        beta_end=diffusion_config['beta_end']
+        beta_end=diffusion_config['beta_end'],
+        beta_schedule=beta_schedule
     )
     
     # Create separate DDIM scheduler for fast validation sampling
@@ -195,12 +197,13 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         num_timesteps=diffusion_config['num_timesteps'],
         beta_start=diffusion_config['beta_start'],
         beta_end=diffusion_config['beta_end'],
+        beta_schedule=beta_schedule,
         ddim_steps=train_config.get('val_sample_steps', 50),
         ddim_eta=0.0  # Deterministic for reproducible validation
     )
     
     if is_main:
-        print(f"\n✓ Created DDPM training scheduler ({scheduler.num_timesteps} timesteps)")
+        print(f"\n✓ Created DDPM training scheduler ({scheduler.num_timesteps} timesteps, {beta_schedule} schedule)")
         print(f"✓ Created DDIM validation scheduler ({val_scheduler.ddim_steps} steps)")
     
     ########## Load Dataset #############

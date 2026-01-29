@@ -61,6 +61,7 @@ class DDIMScheduler:
         num_timesteps: int = 1000,
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
+        beta_schedule: str = 'linear',
         ddim_steps: int = 50,
         ddim_eta: float = 0.0
     ):
@@ -71,19 +72,30 @@ class DDIMScheduler:
             num_timesteps: Total timesteps in diffusion process
             beta_start: Initial beta value
             beta_end: Final beta value
+            beta_schedule: Schedule type - 'linear' (default) or 'cosine'
             ddim_steps: Number of sampling steps (< num_timesteps)
             ddim_eta: Stochasticity (0=deterministic, 1=DDPM-like)
         """
         self.num_timesteps = num_timesteps
         self.beta_start = beta_start
         self.beta_end = beta_end
+        self.beta_schedule = beta_schedule
         self.ddim_steps = ddim_steps
         self.ddim_eta = ddim_eta
         
-        # Create beta schedule (same as DDPM)
-        self.betas = (
-            torch.linspace(beta_start ** 0.5, beta_end ** 0.5, num_timesteps) ** 2
-        )
+        # Create beta schedule (same options as LinearNoiseScheduler)
+        if beta_schedule == 'cosine':
+            self.betas = self._cosine_beta_schedule(num_timesteps)
+        elif beta_schedule == 'linear':
+            # Scaled-linear schedule (original DDPM)
+            self.betas = (
+                torch.linspace(beta_start ** 0.5, beta_end ** 0.5, num_timesteps) ** 2
+            )
+        else:
+            raise ValueError(
+                f"Unknown beta_schedule: '{beta_schedule}'. "
+                f"Supported: 'linear', 'cosine'"
+            )
         
         # Pre-compute alpha values
         self.alphas = 1.0 - self.betas
@@ -101,10 +113,29 @@ class DDIMScheduler:
         self.ddim_alpha_cum_prod_prev = self._get_prev_alpha_cum_prod()
         
         print(f"✓ DDIM Scheduler initialized:")
+        print(f"  Beta schedule: {beta_schedule}")
         print(f"  Total timesteps: {num_timesteps}")
         print(f"  Sampling steps: {ddim_steps} ({ddim_steps/num_timesteps*100:.1f}% of total)")
         print(f"  Eta (stochasticity): {ddim_eta:.2f}")
         print(f"  Speedup: {num_timesteps/ddim_steps:.1f}x faster than DDPM")
+    
+    def _cosine_beta_schedule(self, timesteps, s=0.008):
+        """
+        Cosine schedule (same as LinearNoiseScheduler).
+        
+        Args:
+            timesteps: Number of diffusion steps
+            s: Offset parameter (default: 0.008)
+            
+        Returns:
+            Tensor of beta values [timesteps]
+        """
+        steps = timesteps + 1
+        t = torch.linspace(0, timesteps, steps)
+        alphas_cumprod = torch.cos(((t / timesteps) + s) / (1 + s) * np.pi * 0.5) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+        return torch.clip(betas, 0.0001, 0.9999)
     
     def _create_ddim_timesteps(self) -> torch.Tensor:
         """

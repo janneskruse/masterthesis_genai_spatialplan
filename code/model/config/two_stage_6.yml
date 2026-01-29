@@ -270,6 +270,11 @@ diffusion_params:
   num_timesteps: 1000
   beta_start: 0.0001
   beta_end: 0.02
+  
+  # Beta schedule type (affects noise distribution across timesteps)
+  beta_schedule: 'linear'  # Options: 'linear' (scaled-linear, default) | 'cosine' (improved DDPM)
+  # Cosine: More gradual noise at early steps, better high-res quality, works with min-SNR
+  # Linear: Original DDPM, well-tested, slightly faster convergence
 
   # Sampling algorithm (for inference)
   sampler: 'ddim'  # Options: 'ddpm' (1000 steps, slow), 'ddim' (50 steps, 20x faster - recommended)
