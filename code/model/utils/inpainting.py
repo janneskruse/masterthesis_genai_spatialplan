@@ -58,29 +58,20 @@ def _generate_street_blocks_mask(
     Returns:
         Mask array or None if generation failed (triggers fallback)
     """
-    print(f"\n[DEBUG] _generate_street_blocks_mask called:")
-    print(f"  H={H}, W={W}, total_pixels={H*W}")
-    print(f"  street_blocks_layer type: {type(street_blocks_layer)}")
-    print(f"  street_blocks_layer shape: {street_blocks_layer.shape if street_blocks_layer is not None else 'None'}")
-    
     # Create binary mask from street blocks
     block_mask = (street_blocks_layer > 0).astype(np.float32)
-    print(f"  block_mask sum: {block_mask.sum()}")
     
     if block_mask.sum() == 0:
-        print(f"  -> FAIL: no_street_blocks (sum=0)")
         mask_info['fallback_reason'] = 'no_street_blocks'
         return None
     
     # Find connected components
     labeled_array, num_features = label(block_mask)
-    print(f"  Found {num_features} connected components")
     
     # Filter components by max coverage, then select largest valid one
     max_coverage_percent = method_config.get('max_coverage_percent', 25)
     total_pixels = H * W
     max_pixels = (max_coverage_percent / 100.0) * total_pixels
-    print(f"  Max coverage: {max_coverage_percent}% = {max_pixels:.0f} pixels")
     
     max_area = 0
     best_mask = np.zeros_like(block_mask)
@@ -88,30 +79,19 @@ def _generate_street_blocks_mask(
     for i in range(1, num_features + 1):
         component = (labeled_array == i).astype(np.float32)
         area = component.sum()
-        coverage_pct = (area / total_pixels) * 100
-        
-        print(f"    Component {i}: area={area:.0f} pixels ({coverage_pct:.2f}%)", end="")
         
         # Only consider components that satisfy coverage constraint
-        if area <= max_pixels:
-            if area > max_area:
-                print(f" -> NEW BEST (was {max_area:.0f})")
-                max_area = area
-                best_mask = component
-            else:
-                print(f" -> valid but smaller than best ({max_area:.0f})")
-        else:
-            print(f" -> TOO LARGE (max={max_pixels:.0f})")
+        if area <= max_pixels and area > max_area:
+            max_area = area
+            best_mask = component
     
     # Check if we found any valid block
     if max_area == 0:
-        print(f"  -> FAIL: all_blocks_too_large")
         mask_info['fallback_reason'] = 'all_blocks_too_large'
         return None
     
     block_mask = best_mask
     mask_info['coverage_percent'] = (block_mask.sum() / (H * W)) * 100
-    print(f"  -> SUCCESS: selected block with {max_area:.0f} pixels ({mask_info['coverage_percent']:.2f}%)")
     
     return block_mask
 
