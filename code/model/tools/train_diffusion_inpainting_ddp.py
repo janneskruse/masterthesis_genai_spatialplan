@@ -185,6 +185,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     ########## Create the noise scheduler #############
     # Training always uses DDPM (all timesteps for proper diffusion training)
     beta_schedule = diffusion_config.get('beta_schedule', 'linear')
+    prediction_type = diffusion_config.get('prediction_type', 'epsilon')
+    
     scheduler = LinearNoiseScheduler(
         num_timesteps=diffusion_config['num_timesteps'],
         beta_start=diffusion_config['beta_start'],
@@ -204,6 +206,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     if is_main:
         print(f"\n✓ Created DDPM training scheduler ({scheduler.num_timesteps} timesteps, {beta_schedule} schedule)")
+        print(f"✓ Prediction type: {prediction_type}")
         print(f"✓ Created DDIM validation scheduler ({val_scheduler.ddim_steps} steps)")
     
     ########## Load Dataset #############
@@ -682,11 +685,22 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 print(f"{'='*50}\n")
             
             # Predict noise (use dropped conditioning for CFG training)
-            noise_pred = model(noisy_im, t, cond_input=cond_input_dropped)
+            model_output = model(noisy_im, t, cond_input=cond_input_dropped)
+            
+            # Compute training target based on prediction type
+            if prediction_type == 'v_prediction':
+                # Model predicts velocity v
+                # Target: v = √ᾱ_t · ε - √(1-ᾱ_t) · x_0
+                target = scheduler.get_velocity(im_latent, noise, t)
+                prediction = model_output
+            else:  # prediction_type == 'epsilon'
+                # Model predicts noise ε (standard)
+                target = noise
+                prediction = model_output
             
             # Compute per-sample loss [B] with spatial weighting
             loss_per_sample = compute_boundary_aware_loss(
-                noise_pred, noise, mask_latent,
+                prediction, target, mask_latent,
                 loss_type, mask_loss_weight, outside_weight,
                 use_boundary_ring=use_boundary_ring,
                 ring_width_px=ring_width_px,
@@ -775,8 +789,14 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         t = timesteps[t_idx]
                         t_tensor = torch.full((num_samples,), t, device=device, dtype=torch.long)
                         
-                        # Predict noise
-                        noise_pred = model(x_sample, t_tensor, cond_input=sample_cond)
+                        # Get model prediction
+                        model_output = model(x_sample, t_tensor, cond_input=sample_cond)
+                        
+                        # Convert to epsilon if using v-prediction
+                        if prediction_type == 'v_prediction':
+                            noise_pred = scheduler.velocity_to_epsilon(model_output, x_sample, t)
+                        else:
+                            noise_pred = model_output
                         
                         if inpainting_mode == "hard":
                             # Use inpainting scheduler with fixed noise_context
@@ -936,8 +956,14 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     t_value = val_scheduler.ddim_timesteps[step_idx].item()
                     t_tensor = torch.full((val_num_samples,), t_value, device=device, dtype=torch.long)
                     
-                    # Predict noise
-                    noise_pred = model(x_val, t_tensor, cond_input=val_cond_input)
+                    # Get model prediction
+                    model_output = model(x_val, t_tensor, cond_input=val_cond_input)
+                    
+                    # Convert to epsilon if using v-prediction
+                    if prediction_type == 'v_prediction':
+                        noise_pred = val_scheduler.velocity_to_epsilon(model_output, x_val, t_value)
+                    else:
+                        noise_pred = model_output
                     
                     # Apply CFG if specified
                     if val_guidance_scale is not None and val_guidance_scale != 1.0:

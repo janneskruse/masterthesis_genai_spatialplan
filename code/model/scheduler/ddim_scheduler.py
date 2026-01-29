@@ -137,6 +137,29 @@ class DDIMScheduler:
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
         return torch.clip(betas, 0.0001, 0.9999)
     
+    def velocity_to_epsilon(self, v_pred, xt, t):
+        """
+        Convert velocity prediction to noise prediction.
+        
+        From v = √ᾱ_t · ε - √(1-ᾱ_t) · x_0 and x_t = √ᾱ_t · x_0 + √(1-ᾱ_t) · ε,
+        we can solve for ε:
+        ε = √ᾱ_t · x_t + √(1-ᾱ_t) · v
+        
+        Args:
+            v_pred: Predicted velocity [B, C, H, W]
+            xt: Noisy latent at timestep t [B, C, H, W]
+            t: Timestep index (scalar or tensor)
+            
+        Returns:
+            Predicted noise ε [B, C, H, W]
+        """
+        sqrt_alpha_cum_prod = torch.sqrt(self.alpha_cum_prod.to(xt.device)[t])
+        sqrt_one_minus_alpha_cum_prod = torch.sqrt(1 - self.alpha_cum_prod.to(xt.device)[t])
+        
+        # ε = √ᾱ_t · x_t + √(1-ᾱ_t) · v
+        epsilon = sqrt_alpha_cum_prod * xt + sqrt_one_minus_alpha_cum_prod * v_pred
+        return epsilon
+    
     def _create_ddim_timesteps(self) -> torch.Tensor:
         """
         Create evenly-spaced timestep schedule for DDIM sampling.

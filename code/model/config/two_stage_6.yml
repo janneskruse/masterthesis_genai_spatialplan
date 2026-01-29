@@ -275,6 +275,12 @@ diffusion_params:
   beta_schedule: 'linear'  # Options: 'linear' (scaled-linear, default) | 'cosine' (improved DDPM)
   # Cosine: More gradual noise at early steps, better high-res quality, works with min-SNR
   # Linear: Original DDPM, well-tested, slightly faster convergence
+  
+  # Prediction type (what the model learns to predict)
+  prediction_type: 'epsilon'  # Options: 'epsilon' (noise, default) | 'v_prediction' (velocity)
+  # Epsilon: Standard DDPM, predicts noise ε. Well-tested, works great with min-SNR.
+  # V-prediction: Predicts velocity v = √ᾱ_t·ε - √(1-ᾱ_t)·x_0. More balanced gradients,
+  #               can improve quality 5-10% in some cases. Requires same training time.
 
   # Sampling algorithm (for inference)
   sampler: 'ddim'  # Options: 'ddpm' (1000 steps, slow), 'ddim' (50 steps, 20x faster - recommended)

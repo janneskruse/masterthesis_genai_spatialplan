@@ -55,6 +55,57 @@ class LinearNoiseScheduler:
         self.sqrt_alpha_cum_prod = torch.sqrt(self.alpha_cum_prod)
         self.sqrt_one_minus_alpha_cum_prod = torch.sqrt(1 - self.alpha_cum_prod)
     
+    def get_velocity(self, x0, noise, t):
+        """
+        Compute velocity (v-prediction target) from x0 and noise.
+        
+        v = √ᾱ_t · ε - √(1-ᾱ_t) · x_0
+        
+        This is the target for v-prediction training.
+        
+        Args:
+            x0: Clean latent [B, C, H, W]
+            noise: Sampled noise ε [B, C, H, W]
+            t: Timestep indices [B]
+            
+        Returns:
+            Velocity v [B, C, H, W]
+        """
+        sqrt_alpha_cum_prod = self.sqrt_alpha_cum_prod.to(x0.device)[t]
+        sqrt_one_minus_alpha_cum_prod = self.sqrt_one_minus_alpha_cum_prod.to(x0.device)[t]
+        
+        # Reshape to [B, 1, 1, 1] for broadcasting
+        for _ in range(len(x0.shape) - 1):
+            sqrt_alpha_cum_prod = sqrt_alpha_cum_prod.unsqueeze(-1)
+            sqrt_one_minus_alpha_cum_prod = sqrt_one_minus_alpha_cum_prod.unsqueeze(-1)
+        
+        # v = √ᾱ_t · ε - √(1-ᾱ_t) · x_0
+        v = sqrt_alpha_cum_prod * noise - sqrt_one_minus_alpha_cum_prod * x0
+        return v
+    
+    def velocity_to_epsilon(self, v_pred, xt, t):
+        """
+        Convert velocity prediction to noise prediction.
+        
+        From v = √ᾱ_t · ε - √(1-ᾱ_t) · x_0 and x_t = √ᾱ_t · x_0 + √(1-ᾱ_t) · ε,
+        we can solve for ε:
+        ε = √ᾱ_t · x_t + √(1-ᾱ_t) · v
+        
+        Args:
+            v_pred: Predicted velocity [B, C, H, W]
+            xt: Noisy latent at timestep t [B, C, H, W]
+            t: Timestep index
+            
+        Returns:
+            Predicted noise ε [B, C, H, W]
+        """
+        sqrt_alpha_cum_prod = torch.sqrt(self.alpha_cum_prod.to(xt.device)[t])
+        sqrt_one_minus_alpha_cum_prod = torch.sqrt(1 - self.alpha_cum_prod.to(xt.device)[t])
+        
+        # ε = √ᾱ_t · x_t + √(1-ᾱ_t) · v
+        epsilon = sqrt_alpha_cum_prod * xt + sqrt_one_minus_alpha_cum_prod * v_pred
+        return epsilon
+    
     def _cosine_beta_schedule(self, timesteps, s=0.008):
         """
         Cosine schedule as proposed in "Improved Denoising Diffusion Probabilistic Models".
