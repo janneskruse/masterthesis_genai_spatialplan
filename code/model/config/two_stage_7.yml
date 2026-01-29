@@ -104,7 +104,7 @@ inpainting_params:
       weight: 0.15  # 15% use variable aspect rectangles
       min_aspect_ratio: 0.33  # 1:3 (tall narrow)
       max_aspect_ratio: 3.0   # 3:1 (wide corridor)
-      min_area_percent: 0.15
+      min_area_percent: 10.0
       max_area_percent: 25.0
       
     - name: 'random_square'
