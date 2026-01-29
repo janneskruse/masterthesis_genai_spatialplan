@@ -61,7 +61,8 @@ class LinearNoiseScheduler:
         
         v = √ᾱ_t · ε - √(1-ᾱ_t) · x_0
         
-        This is the target for v-prediction training.
+        This is the target for v-prediction training. V-prediction provides more balanced
+        gradients across timesteps compared to epsilon prediction.
         
         Args:
             x0: Clean latent [B, C, H, W]
@@ -70,6 +71,11 @@ class LinearNoiseScheduler:
             
         Returns:
             Velocity v [B, C, H, W]
+            
+        Reference:
+            Salimans, T., & Ho, J. (2022). Progressive Distillation for Fast Sampling of 
+            Diffusion Models. ICLR 2022. arXiv:2202.00512.
+            https://arxiv.org/abs/2202.00512
         """
         sqrt_alpha_cum_prod = self.sqrt_alpha_cum_prod.to(x0.device)[t]
         sqrt_one_minus_alpha_cum_prod = self.sqrt_one_minus_alpha_cum_prod.to(x0.device)[t]
@@ -91,6 +97,9 @@ class LinearNoiseScheduler:
         we can solve for ε:
         ε = √ᾱ_t · x_t + √(1-ᾱ_t) · v
         
+        This conversion is needed during sampling when using v-prediction mode,
+        as the DDPM/DDIM sampling formulas expect epsilon (noise) predictions.
+        
         Args:
             v_pred: Predicted velocity [B, C, H, W]
             xt: Noisy latent at timestep t [B, C, H, W]
@@ -98,6 +107,11 @@ class LinearNoiseScheduler:
             
         Returns:
             Predicted noise ε [B, C, H, W]
+            
+        Reference:
+            Salimans, T., & Ho, J. (2022). Progressive Distillation for Fast Sampling of 
+            Diffusion Models. ICLR 2022. arXiv:2202.00512.
+            https://arxiv.org/abs/2202.00512
         """
         sqrt_alpha_cum_prod = torch.sqrt(self.alpha_cum_prod.to(xt.device)[t])
         sqrt_one_minus_alpha_cum_prod = torch.sqrt(1 - self.alpha_cum_prod.to(xt.device)[t])
