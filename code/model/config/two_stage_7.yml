@@ -368,7 +368,7 @@ diffusion_stages:
       
       # Seam improvement strategy (optional)
       # Options: None (default), 'dilate' (boundary ring loss), 'feather' (mask blurring), 'repaint' (reinjection)
-      seam: feather
+      seam: dilate
       seam_config:
         ring_width_px: 1      # For 'dilate' mode: boundary ring width
         ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
