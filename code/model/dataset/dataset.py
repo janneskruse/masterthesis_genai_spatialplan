@@ -627,7 +627,7 @@ class UrbanInpaintingDataset(Dataset):
         print(f"\n✓ Successfully loaded latents for {len(self.group_latents)} VAE groups")
         print(f"{'='*60}\n")
                     
-    def prepare_cached_patches(self) -> None:
+    def prepare_cached_patches(self, max_patches: Optional[int] = None) -> None:
         """
         Pre-save all patches to disk for faster training.
         
@@ -638,16 +638,21 @@ class UrbanInpaintingDataset(Dataset):
         4. Creates metadata CSV for index mapping
         
         Args:
-            num_workers: Number of parallel workers for processing
+            max_patches: Maximum number of patches to cache (None = all patches)
         """
         if not hasattr(self, 'datasets') or not self.datasets:
             raise RuntimeError("Cannot cache patches: Xarray datasets not loaded. Set use_cached_patches=False first.")
+        
+        # Limit patches if max_patches specified
+        patches_to_process = self.patches[:max_patches] if max_patches else self.patches
         
         print(f"\n{'='*60}")
         print(f"Preparing cached patches")
         print(f"{'='*60}")
         print(f"Output directory: {self.cache_dir}")
-        print(f"Total patches to process: {len(self.patches)}")
+        print(f"Total patches to process: {len(patches_to_process)}")
+        if max_patches:
+            print(f"(Limited to {max_patches} patches for testing)")
         print(f"{'='*60}\n")
         
         # Create cache directory
@@ -657,7 +662,7 @@ class UrbanInpaintingDataset(Dataset):
         metadata_records = []
         
         # Process and save each patch
-        for cache_idx, (y, x, region) in enumerate(tqdm(self.patches, desc="Caching patches")):
+        for cache_idx, (y, x, region) in enumerate(tqdm(patches_to_process, desc="Caching patches")):
             try:
                 # Extract patch data (reuse existing logic)
                 patch_data = self._extract_patch_from_xarray(y, x, region, cache_idx)
