@@ -88,3 +88,4 @@ code/model/utils/scalar_controls.py
 code/model/utils/text_utils.py
 code/model/utils/vae_registry.py
 code/model/utils/vae_utils.py
+code/model/utils/validate.py
