@@ -91,7 +91,7 @@ inpainting_params:
   methods:
     - name: 'street_blocks'
       weight: 0.50  # 50% of training samples use realistic street blocks
-      max_coverage_percent: 25  # Reject blocks larger than 25% of image
+      max_coverage_percent: 35  # Reject blocks larger than 25% of image
       
     - name: 'random_polygon'
       weight: 0.30  # 30% use irregular organic shapes
