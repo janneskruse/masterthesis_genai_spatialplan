@@ -412,7 +412,7 @@ def plot_mask_samples(samples_by_type, samples_per_type, task_name, repo_dir):
             ax = axes[type_idx, sample_idx]
             
             # Plot mask (1=inpaint, 0=keep)
-            im = ax.imshow(mask_np, cmap='RdYlGn_r', vmin=0, vmax=1, interpolation='nearest')
+            im = ax.imshow(mask_np, cmap='binary', vmin=0, vmax=1, interpolation='nearest')
             
             # Title with coverage
             title = f"{mask_type}\n"
