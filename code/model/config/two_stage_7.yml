@@ -361,9 +361,9 @@ diffusion_stages:
     # Inpainting configuration
     inpainting:
       mode: 'hard'  # or 'sdlike'
-      loss: 'weighted'  # Use weighted to learn full distribution # 'masked' for focusing only on missing regions
-      mask_loss_weight: 10.0
-      outside_weight: 1.0  # Non-zero to learn context! --> for coherent generation
+      loss: 'masked'  # weighted to learn full distribution for realistic rendering # 'masked' to focus only on missing regions
+      mask_loss_weight: 10.0  # Lower weight for sdlike (model processes whole image)
+      outside_weight: 0.0  # > 0 Learn photorealistic context
       
       # Seam improvement strategy (optional)
       # Options: None (default), 'dilate' (boundary ring loss), 'feather' (mask blurring), 'repaint' (reinjection)
@@ -416,9 +416,9 @@ diffusion_stages:
     # Inpainting configuration
     inpainting:
       mode: 'hard'  # or 'sdlike'
-      loss: 'weighted'  # Learn full distribution for realistic rendering # 'masked' to focus only on missing regions
+      loss: 'masked'  # weighted to learn full distribution for realistic rendering # 'masked' to focus only on missing regions
       mask_loss_weight: 8.0  # Lower weight for sdlike (model processes whole image)
-      outside_weight: 1.0  # Learn photorealistic context
+      outside_weight: 1.0  # > 0 Learn photorealistic context
       
       # Seam improvement strategy (optional)
       # 'feather' recommended for sdlike mode to blend generated content smoothly
