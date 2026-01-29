@@ -293,8 +293,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # Instantiate the U-Net model for diffusion
     model = Unet(
         im_channels=vae_arch_config['z_channels'],
-        model_config=unet_config_with_cond,
-        mode=mode
+        model_config=unet_config_with_cond
     ).to(device)
     
     # Wrap with DDP

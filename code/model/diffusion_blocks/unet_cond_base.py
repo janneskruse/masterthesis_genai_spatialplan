@@ -9,7 +9,6 @@ import torch.nn as nn
 from model.diffusion_blocks.blocks import get_time_embedding
 from model.diffusion_blocks.blocks import DownBlock, MidBlock, UpBlockUnet
 from model.utils.config_utils import *
-from model.utils.config_utils import get_prediction_channels
 
 
 class Unet(nn.Module):
@@ -18,15 +17,13 @@ class Unet(nn.Module):
     Down blocks, Midblocks and Uplocks
     """
     
-    def __init__(self, im_channels, model_config, mode='satellite'):
+    def __init__(self, im_channels, model_config):
         """
         Args:
             im_channels: Number of input channels
             model_config: Model configuration dict
-            mode: 'semantic' or 'satellite'. Auxiliary prediction heads only enabled in 'semantic' mode.
         """
         super().__init__()
-        self.mode = mode
         self.down_channels = model_config['down_channels']
         self.mid_channels = model_config['mid_channels']
         self.t_emb_dim = model_config['time_emb_dim']
@@ -54,6 +51,8 @@ class Unet(nn.Module):
         if self.condition_config is not None:
             assert 'condition_types' in self.condition_config, 'Condition Type not provided in model config'
             condition_types = self.condition_config['condition_types']
+            
+            # class and text are kept for potential future use cases
             if 'class' in condition_types:
                 validate_class_config(self.condition_config)
                 self.class_cond = True
@@ -62,17 +61,55 @@ class Unet(nn.Module):
                 validate_text_config(self.condition_config)
                 self.text_cond = True
                 self.text_embed_dim = self.condition_config['text_condition_config']['text_embed_dim']
-            if 'image' in condition_types:
+            
+            # currently hardcoded by build_unet_condition_config()
+            if 'image' in condition_types: 
                 self.image_cond = True
                 self.im_cond_input_ch = self.condition_config['image_condition_config'][
                     'image_condition_input_channels']
                 self.im_cond_output_ch = self.condition_config['image_condition_config'][
                     'image_condition_output_channels']
+                
         if self.class_cond:
             # Rather than using a special null class we dont add the
             # class embedding information for unconditional generation
             self.class_emb = nn.Embedding(self.num_classes,
                                           self.t_emb_dim)
+        
+        if self.image_cond:
+            # Validate that we have conditioning channels
+            if self.im_cond_input_ch == 0:
+                print(f"⚠ Warning: image conditioning enabled but im_cond_input_ch=0. Disabling image conditioning.")
+                self.image_cond = False
+            else:
+                # Conditioning injection layers:
+                # 1. Project conditioning to learned representation (1x1 conv, no spatial mixing)
+                #    This allows the model to learn how to interpret raw conditioning signals
+                #    Example: [B, 3, H, W] → [B, 6, H, W] where 3 = mask(1) + env_latent(2)
+                self.cond_conv_in = nn.Conv2d(
+                    in_channels=self.im_cond_input_ch,   # Total conditioning channels (pixel + latent groups)
+                    out_channels=self.im_cond_output_ch,  # Projected size (typically 2x input or capped at 128)
+                    kernel_size=1,  # Pointwise: per-pixel channel mixing only
+                    bias=False
+                )
+                
+                # 2. Fuse prediction input + projected conditioning (3x3 conv with spatial mixing)
+                #    Concatenates [input_latent, projected_conditioning] then maps to first U-Net layer
+                #    Example: [B, 4+6=10, H, W] → [B, 32, H, W] where 32 = down_channels[0]
+                self.conv_in_concat = nn.Conv2d(
+                    im_channels + self.im_cond_output_ch,  # Concatenated channels
+                    self.down_channels[0],  # First U-Net layer size
+                    kernel_size=3,  # Spatial mixing for joint representation
+                    padding=1
+                )
+        
+        if not self.image_cond:
+            # No image conditioning - standard conv input
+            self.conv_in = nn.Conv2d(im_channels, self.down_channels[0], kernel_size=3, padding=1)
+        
+        # Determine the conditioning used
+        self.cond = self.text_cond or self.image_cond or self.class_cond
+        
         
         # Generic scalar control conditioning (temperature, vegetation, heights, etc.)
         # Each scalar key gets its own MLP to inject into time embedding
@@ -90,29 +127,9 @@ class Unet(nn.Module):
                 )
             print(f"✓ Scalar controls enabled: {list(self.scalar_mlps.keys())}")
         
-        if self.image_cond:
-            # Compute expected input channels from condition_config
-            expected_channels = self._compute_expected_conditioning_channels()
-            
-            # Validate or override configured channels
-            if expected_channels != self.im_cond_input_ch:
-                print(f"⚠ Warning: Configured image_condition_input_channels={self.im_cond_input_ch}, "
-                      f"but computed={expected_channels} based on condition_types.")
-                print(f"  Using computed value: {expected_channels}")
-                self.im_cond_input_ch = expected_channels
-            
-            # Map the mask image to a N channel image and
-            # concat that with input across channel dimension
-            self.cond_conv_in = nn.Conv2d(in_channels=self.im_cond_input_ch,
-                                          out_channels=self.im_cond_output_ch,
-                                          kernel_size=1,
-                                          bias=False)
-            self.conv_in_concat = nn.Conv2d(im_channels + self.im_cond_output_ch,
-                                            self.down_channels[0], kernel_size=3, padding=1)
-        else:
-            self.conv_in = nn.Conv2d(im_channels, self.down_channels[0], kernel_size=3, padding=1)
-        self.cond = self.text_cond or self.image_cond or self.class_cond
-        ###################################
+        #####################################################
+        
+        
         
         # Initial projection from sinusoidal time embedding
         self.t_proj = nn.Sequential(
@@ -159,74 +176,8 @@ class Unet(nn.Module):
         
         self.norm_out = nn.GroupNorm(self.norm_channels, self.conv_out_channels)
         self.conv_out = nn.Conv2d(self.conv_out_channels, im_channels, kernel_size=3, padding=1)
-        
-        # Segmentation head for reconstructing OSM masks
-        self.segmentation_head = None
-        self.environmental_head = None
-        
-        # Only allow auxiliary prediction heads in satellite mode
-        if self.mode == 'satellite' and self.condition_config is not None:
-            # Get prediction channels using utility function
-            prediction_channels = get_prediction_channels(self.condition_config)
-            
-            # Count OSM and environmental prediction channels
-            osm_pred_channels = [ch for ch in prediction_channels if ch.startswith('osm:')]
-            env_pred_channels = [ch for ch in prediction_channels if ch.startswith('env:')]
-            
-            # OSM feature prediction head - only if there are OSM channels to predict
-            if len(osm_pred_channels) > 0:
-                self.segmentation_head = nn.Sequential(
-                    nn.GroupNorm(self.norm_channels, self.conv_out_channels),
-                    nn.SiLU(),
-                    nn.Conv2d(self.conv_out_channels, len(osm_pred_channels), kernel_size=3, padding=1)
-                )
-                print(f"✓ Initialized OSM segmentation head with {len(osm_pred_channels)} classes: {osm_pred_channels}")
-            
-            # Environmental layer prediction head - only if there are env channels to predict
-            if len(env_pred_channels) > 0:
-                self.environmental_head = nn.Sequential(
-                    nn.GroupNorm(self.norm_channels, self.conv_out_channels),
-                    nn.SiLU(),
-                    nn.Conv2d(self.conv_out_channels, len(env_pred_channels), kernel_size=3, padding=1)
-                )
-                print(f"✓ Initialized environmental prediction head with {len(env_pred_channels)} layers: {env_pred_channels}")
     
-    def _compute_expected_conditioning_channels(self) -> int:
-        """
-        Compute expected number of image conditioning channels based on condition_config.
-        
-        Returns:
-            Total channels: pixel_space + latent_space (all z_channels for each group)
-        """
-        if not self.condition_config:
-            return 0
-        
-        # New config format from build_unet_condition_config
-        if 'image_condition_config' in self.condition_config:
-            img_config = self.condition_config['image_condition_config']
-            if 'image_condition_input_channels' in img_config:
-                return img_config['image_condition_input_channels']
-        
-        # Legacy fallback
-        total_channels = 0
-        condition_types = self.condition_config.get('condition_types', [])
-        
-        if 'inpainting' in condition_types:
-            if 'masked_rgb' in condition_types:
-                total_channels += 3
-            total_channels += 1
-        
-        if 'osm_features' in condition_types:
-            osm_layers = self.condition_config.get('osm_layers', [])
-            total_channels += len(osm_layers)
-        
-        if 'environmental' in condition_types:
-            env_layers = self.condition_config.get('environmental_layers', [])
-            total_channels += len(env_layers)
-        
-        return total_channels
-    
-    def forward(self, x, t, cond_input=None, return_segmentation=False):
+    def forward(self, x, t, cond_input=None):
         """
         Forward pass through U-Net.
         
@@ -234,14 +185,9 @@ class Unet(nn.Module):
             x: Input tensor [B, C, H, W]
             t: Timestep [B] or int
             cond_input: Conditioning dictionary
-            return_segmentation: If True, return auxiliary predictions (OSM, environmental)
             
         Returns:
-            If return_segmentation=False: noise prediction [B, C, H, W]
-            If return_segmentation=True: (noise_pred, osm_seg, env_pred)
-                - noise_pred: [B, C, H, W]
-                - osm_seg: [B, num_osm, H, W] or None
-                - env_pred: [B, num_env, H, W] or None
+            Noise prediction [B, C, H, W]
         """
         # Shapes assuming downblocks are [C1, C2, C3, C4]
         # Shapes assuming midblocks are [C4, C4, C3]
@@ -250,7 +196,7 @@ class Unet(nn.Module):
             assert cond_input is not None, \
                 "Model initialized with conditioning so cond_input cannot be None"
         if self.image_cond:
-            ######## Image Conditioning (Pixel-space + Latent-space) ########
+            ######## Image Conditioning ########
             validate_image_conditional_input(cond_input, x)
             
             # Collect all conditioning tensors
@@ -280,7 +226,6 @@ class Unet(nn.Module):
             x = torch.cat([x, im_cond], dim=1)
             # B x (C+N) x H x W
             out = self.conv_in_concat(x)
-            #####################################
         else:
             # B x C x H x W
             out = self.conv_in(x)
@@ -295,7 +240,7 @@ class Unet(nn.Module):
             validate_class_conditional_input(cond_input, x, self.num_classes)
             class_embed = einsum(cond_input['class'].float(), self.class_emb.weight, 'b n, n d -> b d')
             t_emb += class_embed
-        ####################################
+
         
         ######## Generic Scalar Control Conditioning ########
         # Inject all configured scalar controls into time embedding
@@ -306,8 +251,8 @@ class Unet(nn.Module):
                     if scalar.ndim == 1:
                         scalar = scalar[:, None]  # [B] -> [B, 1]
                     t_emb = t_emb + mlp(scalar)
-        ######################################################
             
+        ############## hidden states for cross-attention ##############
         context_hidden_states = None
         if self.text_cond:
             assert 'text' in cond_input, \
@@ -315,6 +260,7 @@ class Unet(nn.Module):
             context_hidden_states = cond_input['text']
         down_outs = []
         
+        ########## Downsampling path ########
         for idx, down in enumerate(self.downs):
             down_outs.append(out)
             out = down(out, t_emb, context_hidden_states)
@@ -330,32 +276,10 @@ class Unet(nn.Module):
             out = up(out, down_out, t_emb, context_hidden_states)
             # out [B x C2 x H/4 x W/4, B x C1 x H/2 x W/2, B x 16 x H x W]
         
-        # RGB output (noise prediction)
-        rgb_out = self.norm_out(out)
-        rgb_out = nn.SiLU()(rgb_out)
-        rgb_out = self.conv_out(rgb_out)
-        # rgb_out B x C x H x W
+        # Output (noise prediction)
+        out = self.norm_out(out)
+        out = nn.SiLU()(out)
+        out = self.conv_out(out)
+        # out B x C x H x W
         
-        # Optional auxiliary predictions
-        if return_segmentation:
-            outputs = [rgb_out]
-            
-            # OSM segmentation
-            if self.segmentation_head is not None:
-                seg_out = self.segmentation_head(out)
-                # seg_out B x num_osm_classes x H x W
-                outputs.append(seg_out)
-            else:
-                outputs.append(None)
-            
-            # Environmental predictions
-            if self.environmental_head is not None:
-                env_out = self.environmental_head(out)
-                # env_out B x num_env_classes x H x W
-                outputs.append(env_out)
-            else:
-                outputs.append(None)
-            
-            return tuple(outputs)  # (rgb_out, seg_out, env_out)
-        
-        return rgb_out
+        return out
