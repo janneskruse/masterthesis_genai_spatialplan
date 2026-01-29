@@ -736,12 +736,26 @@ class UrbanInpaintingDataset(Dataset):
             # Special handling for inpainting_mask (generated on-the-fly)
             if layer_name == 'inpainting_mask':
                 # Get street blocks if available for mask generation
+                # Load street_blocks for mixed strategy or direct street_blocks mode
                 street_blocks_layer = None
-                if 'street_blocks' in data_layers and self.inpainting_config.get('type') == 'street_blocks':
-                    street_blocks_layer = data_layers['street_blocks'].isel(
-                        y=slice(y, y+ps),
-                        x=slice(x, x+ps)
-                    ).values
+                inpainting_type = self.inpainting_config.get('type')
+                
+                # Check if street_blocks might be needed (direct mode or mixed strategy)
+                if 'street_blocks' in data_layers:
+                    if inpainting_type == 'street_blocks':
+                        # Direct street_blocks mode
+                        street_blocks_layer = data_layers['street_blocks'].isel(
+                            y=slice(y, y+ps),
+                            x=slice(x, x+ps)
+                        ).values
+                    elif inpainting_type == 'mixed':
+                        # Mixed strategy - check if street_blocks is in methods list
+                        methods = self.inpainting_config.get('methods', [])
+                        if any(m.get('name') == 'street_blocks' for m in methods):
+                            street_blocks_layer = data_layers['street_blocks'].isel(
+                                y=slice(y, y+ps),
+                                x=slice(x, x+ps)
+                            ).values
                 
                 # Create inpainting mask
                 patch_info = {
