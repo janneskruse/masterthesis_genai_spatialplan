@@ -19,8 +19,7 @@ from model.utils.diffusion_utils import load_latents
 from model.utils.diffusion_utils import load_single_latent
 from model.utils.data_utils import (
     apply_layer_transform,
-    masked_quantile,
-    normalize_layer
+    augment_patch
 )
 from model.utils.scalar_controls import (
     compute_scalar_from_layer,
@@ -187,6 +186,14 @@ class UrbanInpaintingDataset(Dataset):
         
         # Alias for backward compatibility
         self.hole_config = self.inpainting_config
+        
+        # Data augmentation configuration
+        train_config_global = config.get('train_params', {})
+        self.augmentation_config = train_config_global.get('augmentation', {'enabled': False})
+        self.use_augmentation = (
+            self.augmentation_config.get('enabled', False) and 
+            self.split == 'train'  # Only augment training split
+        )
         
         # Select regions based on split
         train_regions = dataset_config.get('train_regions', ['Dresden', 'Hamburg', 'Stuttgart'])
@@ -982,6 +989,12 @@ class UrbanInpaintingDataset(Dataset):
             - vae mode: (image, metadata_dict)
             - diffusion mode: (pred_latent, conditioning_dict)
         """
+
+        # Augment entire unified image before mode-specific extraction
+        # This ensures all channels (RGB, mask, buildings, etc.) stay aligned
+        if self.use_augmentation:
+            unified_image = augment_patch(unified_image, config=self.augmentation_config)
+        
         layer_names = patch_data['meta']['layer_names']
         channel_names = patch_data['meta']['channel_names']
             

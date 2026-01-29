@@ -1,10 +1,12 @@
 ###### import libraries ######
 # Standard libraries
+import random
 from typing import Dict, List, Tuple, Union
 
 # Data Science/ML
 import torch
 import numpy as np
+import torchvision.transforms.functional as TF
 
 # Local imports
 from model.utils.layer_config import is_binary_layer
@@ -426,3 +428,67 @@ def collate_fn(batch):
     else:
         # Just tensors, no conditioning
         return torch.stack(batch)
+
+
+def augment_patch(
+    patch: torch.Tensor,
+    config: Dict = None
+) -> torch.Tensor:
+    """
+    Apply spatial augmentations to patch data.
+    
+    Applies random flips and 90° rotations that preserve spatial semantics
+    while increasing data diversity. All augmentations are applied to the
+    entire patch tensor, ensuring all channels (RGB, mask, buildings, etc.)
+    remain perfectly aligned.
+    
+    Augmentation improves:
+    - Rotational invariance (buildings look the "same" from any angle)
+    - Mirror symmetry learning (roads work in both directions)
+    - Generalization (reduces overfitting to specific orientations)
+    
+    Args:
+        patch: [C, H, W] tensor with all data channels
+               (RGB, semantic layers, mask, environmental, etc.)
+        config: Optional augmentation configuration with keys:
+                - horizontal_flip (bool): Enable horizontal flips (default: True)
+                - vertical_flip (bool): Enable vertical flips (default: True)
+                - rotation_90 (bool): Enable 90° rotations (default: True)
+                
+    Returns:
+        Augmented patch [C, H, W] with same shape as input
+        
+    Example:
+        >>> # Unified patch with all channels
+        >>> patch = torch.randn(10, 128, 128)  # RGB + buildings + streets + mask
+        >>> 
+        >>> # Apply augmentation (train time only)
+        >>> if split == 'train':
+        >>>     patch = augment_patch(patch, config={'horizontal_flip': True})
+        >>> 
+        >>> # All channels are augmented together -> perfect alignment preserved
+    """
+    if config is None:
+        config = {}
+    
+    # Extract config (default all enabled)
+    use_hflip = config.get('horizontal_flip', True)
+    use_vflip = config.get('vertical_flip', True)
+    use_rot90 = config.get('rotation_90', True)
+    
+    # Random horizontal flip (50% chance)
+    if use_hflip and random.random() > 0.5:
+        patch = TF.hflip(patch)
+    
+    # Random vertical flip (50% chance)
+    if use_vflip and random.random() > 0.5:
+        patch = TF.vflip(patch)
+    
+    # Random 90° rotations (0°, 90°, 180°, 270°)
+    if use_rot90:
+        k = random.randint(0, 3)  # 0=no rotation, 1=90°, 2=180°, 3=270°
+        if k > 0:
+            # torch.rot90 rotates in dims [-2, -1] (H, W)
+            patch = torch.rot90(patch, k, dims=[-2, -1])
+    
+    return patch

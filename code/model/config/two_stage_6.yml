@@ -402,6 +402,13 @@ train_params:
   seed: 45
   task_name: 'two_stage_6'
   
+  # Data augmentation for training (spatial transformations only)
+  augmentation:
+    enabled: False  # Toggle on/off (only applies to train split)
+    horizontal_flip: True  # 50% chance horizontal flip
+    vertical_flip: True    # 50% chance vertical flip
+    rotation_90: True      # Random 0°/90°/180°/270° rotation
+  
   # VAE training (per group)
   vae_training:
     satellite:
