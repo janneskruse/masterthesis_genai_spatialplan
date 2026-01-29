@@ -302,15 +302,15 @@ diffusion_params:
   beta_end: 0.02
   
   # Beta schedule type (affects noise distribution across timesteps)
-  beta_schedule: 'linear'  # Options: 'linear' (scaled-linear, default) | 'cosine' (improved DDPM)
+  beta_schedule: 'cosine'  # Options: 'linear' (scaled-linear, default) | 'cosine' (improved DDPM)
   # Cosine: More gradual noise at early steps, better high-res quality, works with min-SNR
   # Linear: Original DDPM, well-tested, slightly faster convergence
   
   # Prediction type (what the model learns to predict)
   prediction_type: 'epsilon'  # Options: 'epsilon' (noise, default) | 'v_prediction' (velocity)
-  # Epsilon: Standard DDPM, predicts noise ε. Well-tested, works great with min-SNR.
+  # Epsilon: Standard DDPM, predicts noise ε. Well-tested, works good with min-SNR.
   # V-prediction: Predicts velocity v = √ᾱ_t·ε - √(1-ᾱ_t)·x_0. More balanced gradients,
-  #               can improve quality 5-10% in some cases. Requires same training time.
+  #               can improve quality 5-10% in some cases.
 
   # Sampling algorithm (for inference)
   sampler: 'ddim'  # Options: 'ddpm' (1000 steps, slow), 'ddim' (50 steps, 20x faster - recommended)
@@ -445,7 +445,7 @@ train_params:
   
   # Data augmentation for training (spatial transformations only)
   augmentation:
-    enabled: False  # Toggle on/off (only applies to train split)
+    enabled: True  # Toggle on/off (only applies to train split)
     horizontal_flip: True  # 50% chance horizontal flip
     vertical_flip: True    # 50% chance vertical flip
     rotation_90: True      # Random 0°/90°/180°/270° rotation
