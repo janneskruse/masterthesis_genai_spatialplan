@@ -102,6 +102,7 @@ The HPC cluster of the University of Leipzig can be used to run the training and
 - ssh login using: `ssh <username>@login01.sc.uni-leipzig.de`
 - check available modules: `module avail`
 - load required modules: `module load <module_name>`
+- request interactive shell for running scripts: `srun --pty -p paula --cpus-per-task=8 --mem=32G --time=02:00:00 bash`
 
 ### Copy from and to HPC
 - copy files from local to HPC: `scp <local_file_path> <username>@login01.sc.uni-leipzig.de:<remote_file_path>`
