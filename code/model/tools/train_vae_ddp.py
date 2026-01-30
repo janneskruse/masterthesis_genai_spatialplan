@@ -31,6 +31,7 @@ from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.vae_utils import save_vae_reconstruction_samples, PosWeightEMA, compute_reconstruction_loss
 from model.utils.layer_config import count_layer_channels, get_layer_info
 from model.utils.checkpoint import load_checkpoint
+from model.utils.jacobian_sensitivity import compute_and_save_sensitivity
 from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
@@ -767,6 +768,40 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
         if is_main:
             urban_dataset.save_stats(f"{out_dir}/{stats_name}")
             print("✓ Saved dataset statistics")
+        
+        # Compute and save Jacobian sensitivity (main rank only)
+        # This enables class-balanced loss weighting in diffusion training
+        if is_main:
+            # Build layer_channel_ranges from layer config
+            # Maps layer names to (start_channel, end_channel) in decoded output
+            layer_channel_ranges = {}
+            channel_offset = 0
+            for layer_name in layer_names:
+                layer_config = get_layer_info(layers_registry, layer_name)
+                n_channels = count_layer_channels(layer_config)
+                layer_channel_ranges[layer_name] = (channel_offset, channel_offset + n_channels)
+                channel_offset += n_channels
+            
+            # Get sensitivity config from train_params (with defaults)
+            sensitivity_config = train_config.get('sensitivity', {})
+            num_sensitivity_samples = sensitivity_config.get('num_samples', 750)
+            polynomial_degree = sensitivity_config.get('polynomial_degree', 2)
+            
+            try:
+                checkpoint_path = os.path.join(out_dir, checkpoint_name)
+                compute_and_save_sensitivity(
+                    vae=model,
+                    latent_dir=latent_dir,
+                    layer_channel_ranges=layer_channel_ranges,
+                    checkpoint_path=checkpoint_path,
+                    num_samples=num_sensitivity_samples,
+                    polynomial_degree=polynomial_degree,
+                    device=device,
+                )
+                print("✓ Jacobian sensitivity computed and saved to checkpoint")
+            except Exception as e:
+                print(f"⚠ Warning: Failed to compute sensitivity: {e}")
+                print("  Diffusion training will proceed without class balancing.")
     
     # Synchronize before cleanup
     if world_size > 1:
