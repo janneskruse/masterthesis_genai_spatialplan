@@ -18,7 +18,7 @@ from torchvision.utils import make_grid, save_image
 
 # Local libraries
 from model.diffusion_blocks.unet_cond_base import Unet
-from model.scheduler.scheduler_factory import get_scheduler
+from model.scheduler.scheduler_factory import get_scheduler, get_inpainting_sampler_for_stage
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
 from model.utils.layer_config import count_layer_channels
@@ -532,7 +532,28 @@ def sample_semantics(
     inpainting_cfg = stage_config.get('inpainting', {})
     inpainting_mode = inpainting_cfg.get('mode', 'hard')
     
+    # Get inpainting sampler configuration
+    sampler_cfg = inpainting_cfg.get('sampler', {'type': 'standard'})
+    inpainting_sampler_type = sampler_cfg.get('type', 'standard')
+    
+    # Create inpainting sampler if using advanced methods (repaint/lanpaint)
+    inpainting_sampler = None
+    if inpainting_sampler_type != 'standard':
+        try:
+            # Import config for stage-based sampler
+            full_config = {
+                'diffusion_params': diffusion_config,
+                'diffusion_stages': {mode: stage_config}
+            }
+            inpainting_sampler = get_inpainting_sampler_for_stage(full_config, mode, device)
+            print(f"\n✓ Using {inpainting_sampler_type.upper()} inpainting sampler")
+        except Exception as e:
+            print(f"\n⚠ Failed to create {inpainting_sampler_type} sampler: {e}")
+            print("  Falling back to standard inpainting")
+            inpainting_sampler = None
+    
     print(f"\n✓ Inpainting mode: {inpainting_mode}")
+    print(f"✓ Inpainting sampler: {inpainting_sampler_type}")
     
     # Print initial GPU memory
     print("\nInitial GPU memory:")
@@ -600,69 +621,88 @@ def sample_semantics(
                     mask_latent = torch.ones(1, 1, latent_size, latent_size, device=device)
                     x = mask_latent * x + (1 - mask_latent) * x_context
         
-        # Create timestep schedule and loop indices based on sampler type
-        if sampler_type == 'ddim':
-            # DDIM: Sample with fewer steps
-            # DDIMScheduler methods expect ddim_step INDEX (0 to ddim_steps-1)
-            num_steps = scheduler.ddim_steps
-            loop_range = reversed(range(num_steps))  # ddim_steps-1 down to 0
-        else:
-            # DDPM: Use all timesteps
-            num_steps = scheduler.num_timesteps
-            loop_range = reversed(range(num_steps))  # num_timesteps-1 down to 0
+        # =====================================================================
+        # INPAINTING SAMPLING - Use advanced sampler (RePaint/LanPaint) or standard loop
+        # =====================================================================
         
-        # Sampling loop
-        for step_idx in tqdm(loop_range, desc=f"Denoising ({sampler_type.upper()})", total=num_steps):
-            # Prepare timestep tensor for model
+        if inpainting_sampler is not None and inpainting_mode == "hard" and x_context is not None:
+            # Use advanced inpainting sampler (RePaint or LanPaint)
+            print(f"  Using {inpainting_sampler_type.upper()} sampler...")
+            x = inpainting_sampler.sample(
+                model=model,
+                x_init=x,
+                x_context=x_context,
+                mask=mask_latent,
+                cond_input=cond_input,
+                uncond_input=uncond_input if guidance_scale > 0 else None,
+                guidance_scale=guidance_scale,
+                show_progress=True
+            )
+        else:
+            # Standard sampling loop (original code path)
+            # Create timestep schedule and loop indices based on sampler type
             if sampler_type == 'ddim':
-                # Get full timestep value from DDIM schedule for model conditioning
-                t_value = scheduler.ddim_timesteps[step_idx].item()
-                t = torch.full((1,), t_value, device=device, dtype=torch.long)
+                # DDIM: Sample with fewer steps
+                # DDIMScheduler methods expect ddim_step INDEX (0 to ddim_steps-1)
+                num_steps = scheduler.ddim_steps
+                loop_range = reversed(range(num_steps))  # ddim_steps-1 down to 0
             else:
-                # DDPM: step_idx IS the timestep
-                t = torch.full((1,), step_idx, device=device, dtype=torch.long)
+                # DDPM: Use all timesteps
+                num_steps = scheduler.num_timesteps
+                loop_range = reversed(range(num_steps))  # num_timesteps-1 down to 0
             
-            # Print GPU memory periodically
-            if step_idx % 50 == 0:
-                print_gpu_memory()
-            
-            # Classifier-free guidance
-            if guidance_scale > 0:
-                with torch.no_grad():
-                    # Conditional prediction
-                    noise_pred_cond = model(x, t, cond_input=cond_input)
-                    
-                    # Unconditional prediction
-                    noise_pred_uncond = model(x, t, cond_input=uncond_input)
+            # Sampling loop
+            for step_idx in tqdm(loop_range, desc=f"Denoising ({sampler_type.upper()})", total=num_steps):
+                # Prepare timestep tensor for model
+                if sampler_type == 'ddim':
+                    # Get full timestep value from DDIM schedule for model conditioning
+                    t_value = scheduler.ddim_timesteps[step_idx].item()
+                    t = torch.full((1,), t_value, device=device, dtype=torch.long)
+                else:
+                    # DDPM: step_idx IS the timestep
+                    t = torch.full((1,), step_idx, device=device, dtype=torch.long)
                 
-                # CFG
-                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
-            else:
-                with torch.no_grad():
-                    noise_pred = model(x, t, cond_input=cond_input)
-            
-            # Apply LST guidance (currently disabled)
-            # if use_lst_guidance and lst_predictor is not None and lst_target is not None:
-            #     pred_vae = vae_registry.get_vae(pred_group)
-            #     t_value_for_guidance = t_value if sampler_type == 'ddim' else step_idx
-            #     noise_pred = apply_lst_guidance(
-            #         x, t_value_for_guidance, model, scheduler, cond_input,
-            #         lst_predictor, pred_vae, lst_target,
-            #         semantic_channels, include_ndvi,
-            #         guidance_scale=lst_guidance_scale,
-            #         mask=mask_latent
-            #     )
-            
-            # Denoise step (scheduler-specific)
-            if inpainting_mode == "hard" and mask_latent is not None:
-                # Inpainting with context preservation
-                x, x0 = scheduler.sample_prev_timestep_inpainting(
-                    x, noise_pred, step_idx, x_context, mask_latent, 
-                    noise_context=noise_context
-                )
-            else:
-                # Standard denoising (no inpainting)
-                x, x0 = scheduler.sample_prev_timestep(x, noise_pred, step_idx)
+                # Print GPU memory periodically
+                if step_idx % 50 == 0:
+                    print_gpu_memory()
+                
+                # Classifier-free guidance
+                if guidance_scale > 0:
+                    with torch.no_grad():
+                        # Conditional prediction
+                        noise_pred_cond = model(x, t, cond_input=cond_input)
+                        
+                        # Unconditional prediction
+                        noise_pred_uncond = model(x, t, cond_input=uncond_input)
+                    
+                    # CFG
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+                else:
+                    with torch.no_grad():
+                        noise_pred = model(x, t, cond_input=cond_input)
+                
+                # Apply LST guidance (currently disabled)
+                # if use_lst_guidance and lst_predictor is not None and lst_target is not None:
+                #     pred_vae = vae_registry.get_vae(pred_group)
+                #     t_value_for_guidance = t_value if sampler_type == 'ddim' else step_idx
+                #     noise_pred = apply_lst_guidance(
+                #         x, t_value_for_guidance, model, scheduler, cond_input,
+                #         lst_predictor, pred_vae, lst_target,
+                #         semantic_channels, include_ndvi,
+                #         guidance_scale=lst_guidance_scale,
+                #         mask=mask_latent
+                #     )
+                
+                # Denoise step (scheduler-specific)
+                if inpainting_mode == "hard" and mask_latent is not None:
+                    # Inpainting with context preservation
+                    x, x0 = scheduler.sample_prev_timestep_inpainting(
+                        x, noise_pred, step_idx, x_context, mask_latent, 
+                        noise_context=noise_context
+                    )
+                else:
+                    # Standard denoising (no inpainting)
+                    x, x0 = scheduler.sample_prev_timestep(x, noise_pred, step_idx)
         
         # Decode to semantic space immediately
         print(f"  Decoding sample {sample_idx + 1}...")

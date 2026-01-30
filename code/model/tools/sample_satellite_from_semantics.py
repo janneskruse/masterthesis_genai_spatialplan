@@ -30,6 +30,7 @@ from model.utils.diffusion_utils import (
     sample_with_repaint,
     make_uncond_input_keep_mask
 )
+from model.scheduler.scheduler_factory import get_inpainting_sampler_for_stage
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 
@@ -132,6 +133,14 @@ def render_satellite_from_semantics(
     # Seam improvement configuration
     seam_mode = inpainting_cfg.get('seam', None)
     seam_config = inpainting_cfg.get('seam_config', {})
+    
+    # Initialize inpainting sampler (RePaint/LanPaint) if configured
+    sampler_cfg = inpainting_cfg.get('sampler', {'type': 'standard'})
+    inpainting_sampler_type = sampler_cfg.get('type', 'standard')
+    inpainting_sampler = None
+    if inpainting_sampler_type != 'standard':
+        inpainting_sampler = get_inpainting_sampler_for_stage(config, 'satellite', device)
+        print(f"✓ Loaded {inpainting_sampler_type.upper()} inpainting sampler for satellite stage")
     
     print("\n" + "="*60)
     print("Satellite Rendering Configuration")
@@ -405,51 +414,23 @@ def render_satellite_from_semantics(
         if inpainting_mode == "sdlike" and rgb_context_latent is not None:
             noise_context_sd = torch.randn_like(rgb_context_latent)
         
-        # Check if using RePaint seam mode
-        if seam_mode == 'repaint':
-            print(f"  Using RePaint sampling strategy...")
-            resample_steps = seam_config.get('resample_steps', 10)
-            jump_length = seam_config.get('jump_length', 3)
-            
-            # Use RGB context latent as x0 (or zeros if unavailable)
-            x0_latent = rgb_context_latent if rgb_context_latent is not None else torch.zeros_like(x)
-            
-            # RePaint with guidance
-            if guidance_scale > 0:
-                # Build guided noise prediction function
-                def guided_model(x_t, t_tensor, cond):
-                    noise_pred_cond = model(x_t, t_tensor, cond_input=cond)
-                    noise_pred_uncond = model(x_t, t_tensor, cond_input=uncond_input)
-                    return noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
-                
-                # Wrap for RePaint (it expects standard model signature)
-                class GuidedModel:
-                    def __call__(self, x_t, t_tensor, cond_input):
-                        return guided_model(x_t, t_tensor, cond_input)
-                
-                x = sample_with_repaint(
-                    GuidedModel(),
-                    scheduler,
-                    x0_latent,
-                    mask_latent,
-                    cond_input,
-                    num_steps=50,
-                    resample_steps=resample_steps,
-                    jump_length=jump_length,
-                    device=device
-                )
-            else:
-                x = sample_with_repaint(
-                    model,
-                    scheduler,
-                    x0_latent,
-                    mask_latent,
-                    cond_input,
-                    num_steps=50,
-                    resample_steps=resample_steps,
-                    jump_length=jump_length,
-                    device=device
-                )
+        # =====================================================================
+        # INPAINTING SAMPLING - Use advanced sampler (RePaint/LanPaint) or standard loop
+        # =====================================================================
+        
+        if inpainting_sampler is not None and inpainting_mode == "hard" and rgb_context_latent is not None:
+            # Use advanced inpainting sampler (RePaint or LanPaint)
+            print(f"  Using {inpainting_sampler_type.upper()} sampler...")
+            x = inpainting_sampler.sample(
+                model=model,
+                x_init=x,
+                x_context=rgb_context_latent,
+                mask=mask_latent,
+                cond_input=cond_input,
+                uncond_input=uncond_input if guidance_scale > 0 else None,
+                guidance_scale=guidance_scale,
+                show_progress=True
+            )
         else:
             # Standard sampling loop
             print(f"  Denoising {scheduler.num_timesteps} steps...")
