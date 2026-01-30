@@ -3,6 +3,10 @@
     "LanPaint Docs": {
       "type": "sse",
       "url": "https://gitmcp.io/scraed/LanPaint"
+    },
+    "RePaint Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/andreas128/RePaint"
     }
   }
 }
