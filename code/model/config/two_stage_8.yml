@@ -313,11 +313,6 @@ diffusion_params:
   # V-prediction: Predicts velocity v = √ᾱ_t·ε - √(1-ᾱ_t)·x_0. More balanced gradients,
   #               can improve quality 5-10% in some cases.
 
-  # Sampling algorithm (for inference)
-  sampler: 'ddim'  # Options: 'ddpm' (1000 steps, slow), 'ddim' (50 steps, 20x faster - recommended)
-  ddim_steps: 50  # For DDIM sampler
-  ddim_eta: 0.0  # 0.0 = deterministic, 1.0 = stochastic like DDPM
-
 # ===========================================================================
 # DIFFUSION STAGES
 # Define what each stage generates and conditions on

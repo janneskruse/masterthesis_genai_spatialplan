@@ -313,11 +313,6 @@ diffusion_params:
   # V-prediction: Predicts velocity v = √ᾱ_t·ε - √(1-ᾱ_t)·x_0. More balanced gradients,
   #               can improve quality 5-10% in some cases.
 
-  # Sampling algorithm (for inference)
-  sampler: 'ddim'  # Options: 'ddpm' (1000 steps, slow), 'ddim' (50 steps, 20x faster - recommended)
-  ddim_steps: 50  # For DDIM sampler
-  ddim_eta: 0.0  # 0.0 = deterministic, 1.0 = stochastic like DDPM
-
 # ===========================================================================
 # DIFFUSION STAGES
 # Define what each stage generates and conditions on
@@ -366,8 +361,24 @@ diffusion_stages:
       mask_loss_weight: 10.0  # Lower weight for sdlike (model processes whole image)
       outside_weight: 0.0  # > 0 Learn photorealistic context
       
+      # Inpainting sampler for boundary harmonization during sampling
+      # Options: 'standard' (simple replace), 'repaint' (time-travel), 'lanpaint' (SHO dynamics)
+      sampler:
+        type: 'standard'  # 'repaint' recommended for semantic to harmonize urban features
+        # RePaint params (if type='repaint') - See: https://arxiv.org/abs/2201.09865
+        repaint:
+          jump_length: 10      # Timesteps to jump back (10 default)
+          jump_n_sample: 10    # Resample iterations per jump (10 default)
+        # LanPaint params (if type='lanpaint') - See: https://arxiv.org/abs/2502.03491
+        lanpaint:
+          num_steps: 5         # K: Inner Langevin iterations (5-10)
+          lambda: 16.0         # λ: BiG score alignment (16 default)
+          step_size: 0.2       # η: Langevin step size (0.1-0.3)
+          friction: 15.0       # γ: Friction for stability (10-20)
+          early_stop: 1        # Stop iterations before final N steps
+      
       # Seam improvement strategy (optional)
-      # Options: None (default), 'dilate' (boundary ring loss), 'feather' (mask blurring), 'repaint' (reinjection)
+      # Options: None (default), 'dilate' (boundary ring loss), 'feather' (mask blurring)
       seam: dilate
       seam_config:
         ring_width_px: 1      # For 'dilate' mode: boundary ring width
@@ -421,8 +432,24 @@ diffusion_stages:
       mask_loss_weight: 8.0  # Lower weight for sdlike (model processes whole image)
       outside_weight: 1.0  # > 0 Learn photorealistic context
       
+      # Inpainting sampler for boundary harmonization during sampling
+      # Satellite benefits from LanPaint for photorealistic blending
+      sampler:
+        type: 'standard'  # 'lanpaint' recommended for satellite to blend textures
+        # RePaint params (if type='repaint') - See: https://arxiv.org/abs/2201.09865
+        repaint:
+          jump_length: 10      # Timesteps to jump back
+          jump_n_sample: 10    # Resample iterations per jump
+        # LanPaint params (if type='lanpaint') - See: https://arxiv.org/abs/2502.03491  
+        lanpaint:
+          num_steps: 5         # K: Inner Langevin iterations
+          lambda: 16.0         # λ: BiG score alignment
+          step_size: 0.2       # η: Langevin step size
+          friction: 15.0       # γ: Friction for stability
+          early_stop: 1        # Stop iterations before final N steps
+      
       # Seam improvement strategy (optional)
-      # 'feather' recommended for sdlike mode to blend generated content smoothly
+      # 'feather' recommended for satellite to blend generated content smoothly
       seam: 'feather'
       seam_config:
         ring_width_px: 1      # For 'dilate' mode: boundary ring width
