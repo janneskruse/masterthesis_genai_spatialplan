@@ -41,6 +41,7 @@ from model.utils.config_utils import build_unet_condition_config
 from model.utils.layer_config import count_layer_channels, get_layer_info
 from model.utils.checkpoint import load_checkpoint
 from model.utils.validate import run_validation_sampling
+from model.utils.jacobian_sensitivity import load_sensitivity_predictor, SensitivityPredictor
 from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
@@ -372,6 +373,67 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         if is_main:
             print(f"✓ Loaded {len(vae_registry.vaes)} VAE model(s)")
     
+    ########## Load Sensitivity Predictor for Class Balancing #############
+    sensitivity_predictor = None
+    latent_channel_weights = None
+    class_balancing_config = stage_config.get('class_balancing', {})
+    latent_weights_config = class_balancing_config.get('latent_weights', {})
+    
+    if latent_weights_config.get('enabled', False):
+        method = latent_weights_config.get('method', 'linear_jacobian')
+        layer_weights_dict = latent_weights_config.get('layer_weights', {})
+        
+        if method and layer_weights_dict:
+            # Get VAE checkpoint path for loading sensitivity
+            vae_checkpoint_path = os.path.join(
+                out_dir, 
+                prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')
+            )
+            
+            try:
+                # Determine predictor mode
+                predictor_mode = 'linear' if method == 'linear_jacobian' else 'polynomial'
+                
+                sensitivity_predictor = load_sensitivity_predictor(
+                    checkpoint_path=vae_checkpoint_path,
+                    mode=predictor_mode
+                )
+                
+                # Build layer weights tensor in correct order
+                layer_weights_list = []
+                for layer_name in layer_names:
+                    weight = layer_weights_dict.get(layer_name, 1.0)
+                    layer_weights_list.append(weight)
+                
+                layer_weights_tensor = torch.tensor(layer_weights_list, dtype=torch.float32, device=device)
+                
+                # For linear mode, compute fixed latent weights once
+                if predictor_mode == 'linear':
+                    latent_channel_weights = sensitivity_predictor.compute_latent_weights(
+                        z=None,  # Not needed for linear
+                        layer_weights=layer_weights_tensor
+                    ).to(device)
+                
+                if is_main:
+                    print(f"\n{'='*50}")
+                    print("Class Balancing: Latent Weighting Enabled")
+                    print(f"{'='*50}")
+                    print(f"  Method: {method}")
+                    print(f"  Layer weights: {layer_weights_dict}")
+                    if latent_channel_weights is not None:
+                        print(f"  Computed latent weights: {latent_channel_weights.cpu().numpy()}")
+                    print(f"{'='*50}\n")
+                    
+            except Exception as e:
+                if is_main:
+                    print(f"\n\u26a0 Warning: Could not load sensitivity predictor: {e}")
+                    print("  Continuing without class balancing.")
+                sensitivity_predictor = None
+                latent_channel_weights = None
+        else:
+            if is_main and method:
+                print(f"\n⚠ Warning: class_balancing.latent_weights enabled but layer_weights not configured.")
+    
     ########## Training Setup #############
     num_epochs = train_config.get('epochs', 300)
     
@@ -699,14 +761,33 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 target = noise
                 prediction = model_output
             
-            # Compute per-sample loss [B] with spatial weighting
+            # Compute channel weights for class balancing
+            # For linear mode: use precomputed fixed weights
+            # For polynomial mode: compute per-sample weights from latent statistics
+            current_channel_weights = latent_channel_weights  # May be None
+            
+            if (sensitivity_predictor is not None 
+                and latent_weights_config.get('method') == 'non_linear_jacobian'
+                and latent_weights_config.get('layer_weights')):
+                # Polynomial mode: compute per-sample weights
+                layer_weights_tensor = torch.tensor(
+                    [latent_weights_config['layer_weights'].get(ln, 1.0) for ln in layer_names],
+                    dtype=torch.float32, device=device
+                )
+                current_channel_weights = sensitivity_predictor.compute_latent_weights(
+                    z=im_latent,
+                    layer_weights=layer_weights_tensor
+                )  # [B, C]
+            
+            # Compute per-sample loss [B] with spatial weighting and channel weighting
             loss_per_sample = compute_boundary_aware_loss(
                 prediction, target, mask_latent,
                 loss_type, mask_loss_weight, outside_weight,
                 use_boundary_ring=use_boundary_ring,
                 ring_width_px=ring_width_px,
                 ring_weight=ring_weight,
-                reduction='batch'  # Return per-sample loss [B]
+                reduction='batch',  # Return per-sample loss [B]
+                channel_weights=current_channel_weights,  # Class balancing weights
             )
             
             # Apply timestep-dependent loss weighting (Min-SNR, SNR, etc.)

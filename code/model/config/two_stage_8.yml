@@ -259,7 +259,7 @@ vae_groups:
     
   # Land-use/urban layout VAE
   semantic:
-    layers: ['buildings', 'streets', 'vegetation'] # 'buildings_heights'
+    layers: ['buildings', 'streets', 'buildings_heights','vegetation'] # 'buildings_heights'
     z_channels: 3  # Tight bottleneck for clean binary representations
     down_channels: [32, 64, 128, 128]
     mid_channels: [128, 128]
@@ -389,6 +389,44 @@ diffusion_stages:
         drop_prob: 0.2  # Higher for stronger CFG effect
         drop_groups: None
         sample_mask_groups: ['environmental']  # No special handling during sampling
+    
+    # Class balancing via latent weighting
+    # Addresses class imbalance (sparse buildings, over-represented streets)
+    class_balancing:
+      
+      # Latent-space weighting (derived from Jacobian sensitivity)
+      latent_weights:
+        enabled: true
+        method: 'linear_jacobian'  # 'linear_jacobian' | 'non_linear_jacobian' | null
+        
+        # For non_linear_jacobian only
+        non_linear_predictor: 'polynomial'  # Only 'polynomial' supported for now
+        polynomial_degree: 2
+        
+        # Desired layer weights (what we want to emphasize)
+        # Higher = more emphasis on that layer in loss
+        layer_weights:
+          buildings: 3.0      # Boost buildings (sparse class)
+          streets: 0.3        # Reduce streets (over-represented)
+          vegetation: 1.0     # Neutral
+      
+      # Ground truth loss - decode to pixel space and apply reconstruction loss
+      # Similar to VAE training loss (BCE + Dice for binary, MSE/L1 for continuous)
+      ground_truth_loss:
+        enabled: false
+        weight: 0.1           # Weight relative to noise prediction loss
+        apply_every_n_steps: 4  # Don't decode every step (expensive)
+        apply_below_timestep: 500  # Only apply when t < threshold (cleaner x0_pred)
+        
+        # Per-layer weights (null = use global layer_dice_config from VAE training)
+        layer_weights: null   # Or override: {buildings: 2.0, streets: 0.5, ...}
+        
+        # Dice loss settings (for binary layers)
+        use_dice: true
+        dice_weight: 0.5
+        
+        # Loss type for continuous layers
+        continuous_loss_type: 'mse'  # 'mse' | 'l1' | 'smooth_l1'
   
   # Stage 2: Render satellite RGB from semantic layout
   satellite:
@@ -418,7 +456,7 @@ diffusion_stages:
           
       latent_space:
         - group: 'semantic'
-          layers: ['buildings', 'streets', 'vegetation'] # 'buildings_heights'
+          layers: ['buildings', 'streets', 'buildings_heights', 'vegetation'] # 'buildings_heights'
           
         - group: 'environmental'
           layers: ['ndvi', 'lst']

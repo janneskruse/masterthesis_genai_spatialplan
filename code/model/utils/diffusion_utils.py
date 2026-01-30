@@ -370,13 +370,15 @@ def compute_boundary_aware_loss(
     use_boundary_ring: bool = False,
     ring_width_px: int = 1,
     ring_weight: float = 2.0,
-    reduction: str = 'mean'
+    reduction: str = 'mean',
+    channel_weights: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
-    Enhanced loss computation with optional boundary ring emphasis.
+    Enhanced loss computation with optional boundary ring emphasis and channel weighting.
     
     Adds extra weight to the boundary ring region to improve seam coherence
-    without allowing edits outside the mask.
+    without allowing edits outside the mask. Optionally applies per-channel
+    weights for class balancing in latent diffusion.
     
     Args:
         noise_pred: Predicted noise [B, C, H, W]
@@ -389,6 +391,7 @@ def compute_boundary_aware_loss(
         ring_width_px: Width of boundary ring in pixels
         ring_weight: Weight multiplier for boundary ring region
         reduction: 'mean' (scalar), 'batch' (per-sample [B]), or 'none' (per-pixel [B,C,H,W])
+        channel_weights: Optional per-channel weights [C] or [B, C] for class balancing
         
     Returns:
         Loss tensor:
@@ -418,6 +421,18 @@ def compute_boundary_aware_loss(
             w = outside_weight * (1.0 - mask_latent) + mask_loss_weight * mask_latent
         
         per_pixel_loss = per_pixel_loss * w
+    
+    # Apply channel weights for class balancing (BEFORE spatial reduction)
+    # This weights each latent channel based on its contribution to desired layer emphasis
+    if channel_weights is not None:
+        if channel_weights.dim() == 1:
+            # Fixed weights [C] -> broadcast to [1, C, 1, 1]
+            channel_weights = channel_weights.view(1, -1, 1, 1)
+        elif channel_weights.dim() == 2:
+            # Per-sample weights [B, C] -> broadcast to [B, C, 1, 1]
+            channel_weights = channel_weights.view(channel_weights.shape[0], -1, 1, 1)
+        
+        per_pixel_loss = per_pixel_loss * channel_weights
     
     # Apply reduction
     if reduction == 'none':

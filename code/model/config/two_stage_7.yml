@@ -259,7 +259,7 @@ vae_groups:
     
   # Land-use/urban layout VAE
   semantic:
-    layers: ['buildings', 'streets', 'vegetation'] # 'buildings_heights'
+    layers: ['buildings', 'streets', 'buildings_heights', 'vegetation'] # 'buildings_heights'
     z_channels: 3  # Tight bottleneck for clean binary representations
     down_channels: [32, 64, 128, 128]
     mid_channels: [128, 128]
@@ -420,7 +420,7 @@ diffusion_stages:
           
       latent_space:
         - group: 'semantic'
-          layers: ['buildings', 'streets', 'vegetation'] # 'buildings_heights'
+          layers: ['buildings', 'streets', 'buildings_heights', 'vegetation'] # 
           
         - group: 'environmental'
           layers: ['ndvi', 'lst']
