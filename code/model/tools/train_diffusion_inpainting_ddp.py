@@ -39,9 +39,9 @@ from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
 from model.utils.layer_config import count_layer_channels, get_layer_info
-from model.utils.checkpoint import load_checkpoint, check_existing_paths, print_existing_paths_summary
+from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.utils.validate import run_validation_sampling
-from model.utils.jacobian_sensitivity import load_sensitivity_predictor, SensitivityPredictor
+from model.utils.jacobian_sensitivity import load_sensitivity_predictor
 from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
