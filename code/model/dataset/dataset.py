@@ -513,8 +513,14 @@ class UrbanInpaintingDataset(Dataset):
         # Use existing path if specified and valid, otherwise use default
         if existing_latent_path and existing_latent_path != 'None' and existing_latent_path != '' and existing_latent_path is not None:
             if os.path.exists(existing_latent_path):
-                print(f"Using existing latents path for group '{group_name}': {existing_latent_path}")
-                latent_path = Path(existing_latent_path)
+                if self.split == 'train':
+                    print(f"Using existing latents path for group '{group_name}': {existing_latent_path}")
+                    latent_path = Path(existing_latent_path)
+                else:
+                    if group_name in existing_latent_path:
+                        latent_path = Path(existing_latent_path)
+                    else:
+                        latent_path = Path(existing_latent_path).parent / f"{latents_dir}_val"
             else:
                 print(f"⚠ Existing latents path specified but not found: {existing_latent_path}")
                 print(f"  Falling back to default path...")
