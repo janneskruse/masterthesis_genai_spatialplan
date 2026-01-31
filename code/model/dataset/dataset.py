@@ -640,6 +640,24 @@ class UrbanInpaintingDataset(Dataset):
         Args:
             max_patches: Maximum number of patches to cache (None = all patches)
         """
+        # Check for existing patches path (skip caching if exists)
+        existing_paths = self.config.get('train_params', {}).get('existing_paths', {})
+        existing_patches_path = existing_paths.get('patches', None)
+        
+        if existing_patches_path and existing_patches_path != 'None' and existing_patches_path is not None:
+            # Check if path exists
+            if os.path.exists(existing_patches_path):
+                print(f"\n{'='*60}")
+                print(f"SKIPPING PATCH CACHING: Using existing patches")
+                print(f"{'='*60}")
+                print(f"  Existing path: {existing_patches_path}")
+                print(f"{'='*60}\n")
+                return
+            else:
+                print(f"\n⚠ Warning: existing_paths.patches specified but path not found:")
+                print(f"    {existing_patches_path}")
+                print(f"  Proceeding with patch caching...\n")
+        
         if not hasattr(self, 'datasets') or not self.datasets:
             raise RuntimeError("Cannot cache patches: Xarray datasets not loaded. Set use_cached_patches=False first.")
         

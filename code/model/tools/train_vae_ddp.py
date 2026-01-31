@@ -30,7 +30,7 @@ from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.vae_utils import save_vae_reconstruction_samples, PosWeightEMA, compute_reconstruction_loss
 from model.utils.layer_config import count_layer_channels, get_layer_info
-from model.utils.checkpoint import load_checkpoint
+from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.utils.jacobian_sensitivity import compute_and_save_sensitivity
 from helpers.load_configs import load_configs, add_config_arguments
 
@@ -217,6 +217,31 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
               Must match a key in config['vae_groups']
         load_checkpoint_path: Optional path to checkpoint file to resume training from
     """
+    # ========= load config files ==========
+    config = load_configs()
+    data_config = config['data_config']
+    train_config_global = config['train_params']
+    
+    # ========== Check for existing paths (skip training if artifacts already exist) ==========
+    existing_paths_result = check_existing_paths(
+        train_config=train_config_global,
+        mode=mode,
+        type='vae'
+    )
+    
+    # Early exit if VAE checkpoint already exists (before DDP setup)
+    if existing_paths_result.skip_training:
+        print(f"\n{'='*60}")
+        print(f"SKIPPING VAE TRAINING: Using existing checkpoint")
+        print(f"{'='*60}")
+        print(f"  Mode: {mode}")
+        print(f"  Existing path: {existing_paths_result.vae_checkpoint}")
+        print(f"{'='*60}\n")
+        return
+    
+    existing_patches_path = existing_paths_result.patches_path
+    
+    
     # Record training start time
     training_start_time = time.time()
     
@@ -226,9 +251,6 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
     is_main = (rank == 0)
     
     ###### setup config variables #######
-    config = load_configs()
-    data_config = config['data_config']
-    
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
     if is_main:
@@ -244,8 +266,6 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
         print(f"{'='*50}")
         print(yaml.dump(config, default_flow_style=False))
     
-    # dataset_config = config['dataset_params']
-    train_config_global = config['train_params']
     
     # Validate VAE group exists
     vae_groups = config.get('vae_groups', {})
@@ -345,7 +365,10 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
     if world_size > 1:
         dist.barrier()
     
-    cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
+    if existing_patches_path is not None:
+        cache_dir = existing_patches_path
+    else:
+        cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     ########## Load Dataset #############

@@ -39,7 +39,7 @@ from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
 from model.utils.layer_config import count_layer_channels, get_layer_info
-from model.utils.checkpoint import load_checkpoint
+from model.utils.checkpoint import load_checkpoint, check_existing_paths, print_existing_paths_summary
 from model.utils.validate import run_validation_sampling
 from model.utils.jacobian_sensitivity import load_sensitivity_predictor, SensitivityPredictor
 from helpers.load_configs import load_configs, add_config_arguments
@@ -57,6 +57,40 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
               Must match a key in config['diffusion_stages']
         load_checkpoint_path: Path to checkpoint to resume from (None = train from scratch)
     """
+    
+    # ========= load config files ==========
+    config = load_configs()
+    data_config = config['data_config']
+    diffusion_config = config['diffusion_params']
+    train_config_global = config['train_params']
+    
+    # ========== Check for existing paths (skip training if artifacts already exist) ==========
+    existing_paths_result = check_existing_paths(
+        train_config=train_config_global,
+        mode=mode,
+        type='diffusion'
+    )
+    
+    # Early exit if diffusion checkpoint already exists (before DDP setup)
+    if existing_paths_result.skip_training:
+        print(f"\n{'='*60}")
+        print(f"SKIPPING DIFFUSION TRAINING: Using existing checkpoint")
+        print(f"{'='*60}")
+        print(f"  Mode: {mode}")
+        print(f"  Existing path: {existing_paths_result.diffusion_checkpoint}")
+        print(f"{'='*60}\n")
+        return
+    
+    # Extract resolved paths for later use
+    existing_latents_path = existing_paths_result.latents_path
+    existing_vae_paths = existing_paths_result.vae_checkpoints
+    existing_patches_path = existing_paths_result.patches_path
+    
+    big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
+    
+    
+    # ========== Setup training environment and start actual training ===========
+    
     # Record training start time
     training_start_time = time.time()
     
@@ -64,12 +98,6 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     rank, local_rank, world_size = setup_distributed()
     device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
     is_main = (rank == 0)
-    
-    ###### setup config variables #######
-    config = load_configs()
-    data_config = config['dataset_params']
-
-    big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
     if is_main:
         print(f"\n{'='*60}")
@@ -84,8 +112,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f"{'='*50}")
         print(yaml.dump(config, default_flow_style=False))
     
-    diffusion_config = config['diffusion_params']
-    train_config_global = config['train_params']
+
     
     # Validate diffusion stage exists
     diffusion_stages = config.get('diffusion_stages', {})
@@ -158,14 +185,25 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     diffusion_training_config = train_config_global.get('diffusion_training', {})
     train_config = diffusion_training_config.get(mode, {})
     
-    # Path to prediction VAE latents
-    latent_dir_name = prediction_vae_config.get('latents_dir', f'{prediction_group}_latents')
+    # Path to prediction VAE latents (use existing_paths if specified, else default)
     task_name = train_config_global.get('task_name', 'urban_inpainting')
     out_dir = f"{big_data_storage_path}/results/{task_name}"
-    latent_path = f'{out_dir}/{latent_dir_name}'
+    
+    if existing_latents_path is not None:
+        # Use the existing latents path from config
+        latent_path = existing_latents_path
+    else:
+        # Default: compute from config
+        latent_dir_name = prediction_vae_config.get('latents_dir', f'{prediction_group}_latents')
+        latent_path = f'{out_dir}/{latent_dir_name}'
+    
     use_existing_latents = os.path.exists(latent_path) and len(os.listdir(latent_path)) > 0
     
-    cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
+    # Patches path (use existing_paths if specified, else default)
+    if existing_patches_path is not None:
+        cache_dir = existing_patches_path
+    else:
+        cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
     use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     # checkpoint path
@@ -343,12 +381,19 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         # Use VAERegistry for cleaner management
         vae_registry = VAERegistry(config, device)
         
+        # Determine prediction VAE checkpoint path (use existing_paths if available)
+        if prediction_group in existing_vae_paths:
+            prediction_vae_ckpt_path = existing_vae_paths[prediction_group]
+        else:
+            default_ckpt_name = prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')
+            prediction_vae_ckpt_path = os.path.join(out_dir, default_ckpt_name)
+        
         # Load prediction VAE
         if is_main:
             print(f"  - {prediction_group.upper()} (prediction group)")
         vae_registry.load_vae(
             group_name=prediction_group,
-            checkpoint_path=os.path.join(out_dir, prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')),
+            checkpoint_path=prediction_vae_ckpt_path,
             autoencoder_config=prediction_vae_config
         )
         vae = vae_registry.get_vae(prediction_group)
@@ -363,9 +408,17 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 if is_main:
                     print(f"  - {cond_group.upper()} (conditioning group)")
                 cond_vae_config = vae_groups[cond_group]
+                
+                # Determine conditioning VAE checkpoint path (use existing_paths if available)
+                if cond_group in existing_vae_paths:
+                    cond_vae_ckpt_path = existing_vae_paths[cond_group]
+                else:
+                    default_cond_ckpt_name = cond_vae_config.get('checkpoint_name', f'{cond_group}_vae_ckpt.pth')
+                    cond_vae_ckpt_path = os.path.join(out_dir, default_cond_ckpt_name)
+                
                 vae_registry.load_vae(
                     group_name=cond_group,
-                    checkpoint_path=os.path.join(out_dir, cond_vae_config.get('checkpoint_name', f'{cond_group}_vae_ckpt.pth')),
+                    checkpoint_path=cond_vae_ckpt_path,
                     autoencoder_config=cond_vae_config
                 )
                 vae_registry.freeze(cond_group)
@@ -384,11 +437,12 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         layer_weights_dict = latent_weights_config.get('layer_weights', {})
         
         if method and layer_weights_dict:
-            # Get VAE checkpoint path for loading sensitivity
-            vae_checkpoint_path = os.path.join(
-                out_dir, 
-                prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')
-            )
+            # Get VAE checkpoint path for loading sensitivity (use existing_paths if available)
+            if prediction_group in existing_vae_paths:
+                vae_checkpoint_path = existing_vae_paths[prediction_group]
+            else:
+                default_ckpt_name = prediction_vae_config.get('checkpoint_name', f'{prediction_group}_vae_ckpt.pth')
+                vae_checkpoint_path = os.path.join(out_dir, default_ckpt_name)
             
             try:
                 # Determine predictor mode

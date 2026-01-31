@@ -504,7 +504,23 @@ diffusion_stages:
 train_params:
   seed: 45
   task_name: 'two_stage_7'
-  
+
+  existing_paths: # to use parts from previous experiments
+    # if specified, the respective training/creation will be skipped
+    patches: None 
+    latents:
+      satellite: None
+      semantic: None
+      environmental: None
+    vae_checkpoints: 
+      satellite: None
+      semantic: None
+      environmental: None
+    diffusion_checkpoints:
+      semantic: None
+      satellite: None
+      environmental: None
+
   # Data augmentation for training (spatial transformations only)
   augmentation:
     enabled: True  # Toggle on/off (only applies to train split)

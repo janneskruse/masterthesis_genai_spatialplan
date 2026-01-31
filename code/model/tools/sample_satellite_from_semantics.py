@@ -23,7 +23,7 @@ from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.vae_registry import VAERegistry
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
-from model.utils.checkpoint import load_checkpoint
+from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.utils.diffusion_utils import (
     mask_conditioning_latents,
     apply_seam_mode,
@@ -73,7 +73,8 @@ def render_satellite_from_semantics(
     dataset,
     guidance_scale=7.5,
     num_samples=None,
-    overwrite_samples=False
+    overwrite_samples=False,
+    existing_vae_paths=None
 ):
     """
     Render satellite imagery from semantic layouts using Stage 2 diffusion model.
@@ -95,11 +96,16 @@ def render_satellite_from_semantics(
         guidance_scale: Classifier-free guidance scale
         num_samples: Number of samples to render (None = all)
         overwrite_samples: Whether to overwrite existing samples
+        existing_vae_paths: Dict of group_name -> checkpoint_path overrides
         
     Returns:
         Generated satellite images [N, 3, H, W]
     """
     model.eval()
+    
+    # Initialize existing paths if not provided
+    if existing_vae_paths is None:
+        existing_vae_paths = {}
     
     # get repo directory
     repo_dir = config.get('repo_dir', '.')
@@ -155,13 +161,17 @@ def render_satellite_from_semantics(
     print(f"Sample mask groups (sampling-time): {sample_mask_groups}")
     print(f"Seam mode: {seam_mode if seam_mode else 'None'}")
     
-    # Load prediction VAE (satellite)
+    # Load prediction VAE (satellite) - use existing_vae_paths if available
     big_data_storage_path = dataset_config.get('big_data_storage_path', '/work/zt75vipu-thesis/data')
     task_name = train_config.get('task_name', 'urban_inpainting')
     data_dir = f"{big_data_storage_path}/results/{task_name}"
     
-    vae_checkpoint = pred_vae_config.get('checkpoint_name', f'{pred_group}_vae_ckpt.pth')
-    vae_path = os.path.join(data_dir, vae_checkpoint)
+    if pred_group in existing_vae_paths:
+        vae_path = existing_vae_paths[pred_group]
+        print(f"✓ Using existing VAE path for {pred_group}: {vae_path}")
+    else:
+        vae_checkpoint = pred_vae_config.get('checkpoint_name', f'{pred_group}_vae_ckpt.pth')
+        vae_path = os.path.join(data_dir, vae_checkpoint)
     vae_registry.load_vae(
         group_name=pred_group,
         checkpoint_path=vae_path,
@@ -169,13 +179,19 @@ def render_satellite_from_semantics(
     )
     pred_vae = vae_registry.get_vae(pred_group)
     
-    # Load conditioning VAEs (semantic, environmental)
+    # Load conditioning VAEs (semantic, environmental) - use existing_vae_paths if available
     latent_cond_groups = conditioning_config.get('latent_space', [])
     for cond_spec in latent_cond_groups:
         cond_group = cond_spec['group']
         cond_vae_config = vae_groups[cond_group]
-        cond_checkpoint = cond_vae_config.get('checkpoint_name', f'{cond_group}_vae_ckpt.pth')
-        cond_vae_path = os.path.join(data_dir, cond_checkpoint)
+        
+        if cond_group in existing_vae_paths:
+            cond_vae_path = existing_vae_paths[cond_group]
+            print(f"✓ Using existing VAE path for {cond_group}: {cond_vae_path}")
+        else:
+            cond_checkpoint = cond_vae_config.get('checkpoint_name', f'{cond_group}_vae_ckpt.pth')
+            cond_vae_path = os.path.join(data_dir, cond_checkpoint)
+        
         vae_registry.load_vae(
             group_name=cond_group,
             checkpoint_path=cond_vae_path,
@@ -573,6 +589,45 @@ def infer(args, config):
     vae_config = vae_groups[pred_group]
     unet_config = stage_config.get('unet_config', {})
     
+    # ========== Check for existing paths (use override paths from config) ==========
+    # Check diffusion paths for satellite mode
+    existing_diffusion = check_existing_paths(
+        train_config=train_config,
+        mode=mode,
+        type='diffusion'
+    )
+    
+    # Check VAE paths for prediction group (satellite)
+    existing_vae_satellite = check_existing_paths(
+        train_config=train_config,
+        mode=pred_group,
+        type='vae'
+    )
+    
+    # Also check VAE paths for conditioning groups (semantic, environmental)
+    conditioning_config = stage_config.get('conditioning', {})
+    latent_cond_groups = conditioning_config.get('latent_space', [])
+    
+    existing_vae_paths = existing_vae_satellite.vae_checkpoints.copy()
+    for cond_spec in latent_cond_groups:
+        cond_group = cond_spec.get('group')
+        if cond_group:
+            cond_vae_result = check_existing_paths(
+                train_config=train_config,
+                mode=cond_group,
+                type='vae'
+            )
+            existing_vae_paths.update(cond_vae_result.vae_checkpoints)
+    
+    # Print any warnings
+    all_warnings = existing_diffusion.warnings + existing_vae_satellite.warnings
+    for warning in all_warnings:
+        print(f"⚠ {warning}")
+    
+    # Get resolved paths
+    existing_diffusion_path = existing_diffusion.diffusion_checkpoint
+    existing_patches_path = existing_diffusion.patches_path or existing_vae_satellite.patches_path
+    
     print(f"\n{'='*60}")
     print(f"Satellite Rendering from Semantics")
     print(f"{'='*60}")
@@ -613,9 +668,14 @@ def infer(args, config):
     task_name = train_config.get('task_name', 'urban_inpainting')
     data_dir = f"{big_data_storage_path}/results/{task_name}"
     
-    diffusion_train_config = train_config.get('diffusion_training', {}).get(mode, {})
-    ldm_checkpoint = diffusion_train_config.get('checkpoint_name', f'{mode}_diffusion_ckpt.pth')
-    ldm_path = os.path.join(data_dir, ldm_checkpoint)
+    # Get diffusion checkpoint path (use existing_paths if available)
+    if existing_diffusion_path is not None:
+        ldm_path = existing_diffusion_path
+        print(f"✓ Using existing diffusion checkpoint from config: {ldm_path}")
+    else:
+        diffusion_train_config = train_config.get('diffusion_training', {}).get(mode, {})
+        ldm_checkpoint = diffusion_train_config.get('checkpoint_name', f'{mode}_diffusion_ckpt.pth')
+        ldm_path = os.path.join(data_dir, ldm_checkpoint)
     
     if os.path.exists(ldm_path):
         _, _ = load_checkpoint(
@@ -698,7 +758,8 @@ def infer(args, config):
         dataset=dataset,
         guidance_scale=args.guidance_scale,
         num_samples=args.num_samples,
-        overwrite_samples=args.overwrite_samples
+        overwrite_samples=args.overwrite_samples,
+        existing_vae_paths=existing_vae_paths
     )
     
     print(f"\n{'='*60}")

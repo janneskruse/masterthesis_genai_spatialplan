@@ -23,7 +23,7 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
 from model.utils.layer_config import count_layer_channels
 from model.utils.vae_registry import VAERegistry
-from model.utils.checkpoint import load_checkpoint
+from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.utils.diffusion_utils import make_uncond_input_keep_mask
 from model.utils.data_utils import normalize_scalar_like_layer
 from model.utils.scalar_controls import parse_scalar_controls_config
@@ -207,7 +207,9 @@ def sample_semantics(
     guidance_scale=7.5,
     lst_guidance_scale=1.0,
     use_lst_guidance=False,
-    overwrite_samples=False
+    overwrite_samples=False,
+    existing_vae_paths=None,
+    existing_patches_path=None
 ):
     """
     Sample semantic layouts using inpainting diffusion model with optional LST guidance.
@@ -232,11 +234,17 @@ def sample_semantics(
         lst_guidance_scale: LST guidance scale
         use_lst_guidance: Whether to use LST guidance
         overwrite_samples: Whether to overwrite existing samples
+        existing_vae_paths: Dict of group_name -> checkpoint_path overrides
+        existing_patches_path: Path to cached patches override
         
     Returns:
         Generated semantic samples
     """
     model.eval()
+    
+    # Initialize existing paths if not provided
+    if existing_vae_paths is None:
+        existing_vae_paths = {}
     
     # Validate prediction group
     if pred_group not in vae_groups:
@@ -305,10 +313,14 @@ def sample_semantics(
     # Dataset in diffusion mode returns (pred_latent, cond_dict)
     pred_latent, cond_input = dataset[sample_idx]
     
-    # Get prediction VAE from registry
+    # Get prediction VAE from registry (use existing_vae_paths if available)
     vae_config = vae_groups[pred_group]
-    vae_checkpoint = vae_config.get('checkpoint_name', f'{pred_group}_vae_ckpt.pth')
-    vae_path = os.path.join(data_dir, vae_checkpoint)
+    if pred_group in existing_vae_paths:
+        vae_path = existing_vae_paths[pred_group]
+        print(f"✓ Using existing VAE path for {pred_group}: {vae_path}")
+    else:
+        vae_checkpoint = vae_config.get('checkpoint_name', f'{pred_group}_vae_ckpt.pth')
+        vae_path = os.path.join(data_dir, vae_checkpoint)
     vae_registry.load_vae(
         group_name=pred_group,
         checkpoint_path=vae_path,
@@ -918,6 +930,30 @@ def infer(args, config):
     vae_config = vae_groups[pred_group]
     unet_config = stage_config.get('unet_config', {})
     
+    # ========== Check for existing paths (use override paths from config) ==========
+    # Check diffusion paths for this mode
+    existing_diffusion = check_existing_paths(
+        train_config=train_config,
+        mode=mode,
+        type='diffusion'
+    )
+    
+    # Check VAE paths for prediction group
+    existing_vae = check_existing_paths(
+        train_config=train_config,
+        mode=pred_group,
+        type='vae'
+    )
+    
+    # Print any warnings
+    for warning in existing_diffusion.warnings + existing_vae.warnings:
+        print(f"⚠ {warning}")
+    
+    # Get resolved paths
+    existing_diffusion_path = existing_diffusion.diffusion_checkpoint
+    existing_vae_paths = existing_vae.vae_checkpoints
+    existing_patches_path = existing_diffusion.patches_path or existing_vae.patches_path
+    
     ########## Create Scheduler #############
     # Sampling can use DDPM or DDIM
     # DDIM is recommended (20x faster with similar quality)
@@ -937,7 +973,7 @@ def infer(args, config):
     # Initialize VAE Registry with full config (needs vae_groups and layers)
     vae_registry = VAERegistry(config, device)
     
-    # Load VAE for prediction group
+    # Default data directory
     data_dir = f"{big_data_storage_path}/results/{train_config['task_name']}"
     
     # Build condition_config for U-Net (same as training)
@@ -959,10 +995,14 @@ def infer(args, config):
         model.enable_gradient_checkpointing()
         print("✓ Enabled gradient checkpointing for memory efficiency")
     
-    # Get diffusion checkpoint from training config
-    diffusion_train_config = train_config.get('diffusion_training', {}).get(mode, {})
-    ldm_checkpoint = diffusion_train_config.get('checkpoint_name', f'{mode}_diffusion_ckpt.pth')
-    ldm_path = os.path.join(data_dir, ldm_checkpoint)
+    # Get diffusion checkpoint path (use existing_paths if available)
+    if existing_diffusion_path is not None:
+        ldm_path = existing_diffusion_path
+        print(f"✓ Using existing diffusion checkpoint from config: {ldm_path}")
+    else:
+        diffusion_train_config = train_config.get('diffusion_training', {}).get(mode, {})
+        ldm_checkpoint = diffusion_train_config.get('checkpoint_name', f'{mode}_diffusion_ckpt.pth')
+        ldm_path = os.path.join(data_dir, ldm_checkpoint)
     
     if os.path.exists(ldm_path):
         # Use checkpoint loader (handles both formats and provides logging)
@@ -1007,7 +1047,9 @@ def infer(args, config):
         guidance_scale=args.guidance_scale,
         lst_guidance_scale=args.lst_guidance_scale,
         use_lst_guidance=args.use_lst_guidance,
-        overwrite_samples=args.overwrite_samples
+        overwrite_samples=args.overwrite_samples,
+        existing_vae_paths=existing_vae_paths,
+        existing_patches_path=existing_patches_path
     )
     
     return samples
