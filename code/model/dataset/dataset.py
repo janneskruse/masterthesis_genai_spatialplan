@@ -523,7 +523,7 @@ class UrbanInpaintingDataset(Dataset):
                     print(f"Using existing latents path for group '{group_name}': {existing_latent_path}")
                     latent_path = Path(existing_latent_path)
                 else:
-                    if group_name in existing_latent_path:
+                    if self.split in existing_latent_path:
                         latent_path = Path(existing_latent_path)
                     else:
                         latent_path = Path(existing_latent_path).parent / f"{latents_dir}_val"
