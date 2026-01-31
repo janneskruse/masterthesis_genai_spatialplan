@@ -505,9 +505,26 @@ class UrbanInpaintingDataset(Dataset):
         latents_dir = group_config.get('latents_dir', f'{group_name}_latents')
         stats_dir = group_config.get('stats_dir', f'{group_name}_stats')
         
-        # Build full path to latents directory
-        results_dir = Path(self.big_data_storage_path) / "results" / self.config['train_params']['task_name']
-        latent_path = results_dir / f"{latents_dir}{'_' + self.split if self.split == 'val' else ''}"
+        # Check for existing latents path first
+        existing_paths = self.config.get('train_params', {}).get('existing_paths', {})
+        existing_latents = existing_paths.get('latents', {})
+        existing_latent_path = existing_latents.get(group_name, None)
+        
+        # Use existing path if specified and valid, otherwise use default
+        if existing_latent_path and existing_latent_path != 'None' and existing_latent_path != '' and existing_latent_path is not None:
+            if os.path.exists(existing_latent_path):
+                print(f"Using existing latents path for group '{group_name}': {existing_latent_path}")
+                latent_path = Path(existing_latent_path)
+            else:
+                print(f"⚠ Existing latents path specified but not found: {existing_latent_path}")
+                print(f"  Falling back to default path...")
+                # Fall back to default
+                results_dir = Path(self.big_data_storage_path) / "results" / self.config['train_params']['task_name']
+                latent_path = results_dir / f"{latents_dir}{'_' + self.split if self.split == 'val' else ''}"
+        else:
+            # Build default path to latents directory
+            results_dir = Path(self.big_data_storage_path) / "results" / self.config['train_params']['task_name']
+            latent_path = results_dir / f"{latents_dir}{'_' + self.split if self.split == 'val' else ''}"
         
         if not latent_path.exists():
             print(f"⚠ Latents directory does not exist: {latent_path}")
@@ -596,11 +613,12 @@ class UrbanInpaintingDataset(Dataset):
         print(f"\nPrediction group: '{pred_group}'")
         pred_latents = self._load_group_latents(pred_group, reconcile=True)
         
-        if pred_latents is None and self.split == 'train':
-            raise RuntimeError(
-                f"Failed to load prediction latents for group '{pred_group}'. "
-                f"Run VAE training for this group first."
-            )
+        # Note: RuntimeError commented out - training can fall back to encoding full-res images
+        # if pred_latents is None and self.split == 'train':
+        #     raise RuntimeError(
+        #         f"Failed to load prediction latents for group '{pred_group}'. "
+        #         f"Run VAE training for this group first."
+        #     )
         
         self.group_latents[pred_group] = pred_latents
         
@@ -616,11 +634,12 @@ class UrbanInpaintingDataset(Dataset):
                 
                 cond_latents = self._load_group_latents(cond_group, reconcile=True)
                 
-                if cond_latents is None and self.split == 'train':
-                    raise RuntimeError(
-                        f"Failed to load conditioning latents for group '{cond_group}'. "
-                        f"Run VAE training for this group first."
-                    )
+                # Note: RuntimeError commented out - training can fall back to encoding full-res images
+                # if cond_latents is None and self.split == 'train':
+                #     raise RuntimeError(
+                #         f"Failed to load conditioning latents for group '{cond_group}'. "
+                #         f"Run VAE training for this group first."
+                #     )
                 
                 self.group_latents[cond_group] = cond_latents
         
