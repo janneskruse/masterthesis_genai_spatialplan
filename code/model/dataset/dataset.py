@@ -221,7 +221,7 @@ class UrbanInpaintingDataset(Dataset):
         
         self.cache_dir = Path(cache_dir)
         if not hasattr(self, 'stats_dir'):
-            self.stats_dir = cache_dir.parent / "stats"
+            self.stats_dir = self.cache_dir.parent / "stats"
             
         self.stats_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
