@@ -503,19 +503,19 @@ diffusion_stages:
 
 train_params:
   seed: 45
-  task_name: 'two_stage_7'
+  task_name: 'two_stage_8'
 
   existing_paths: # to use parts from previous experiments
     # if specified, the respective training/creation will be skipped
-    patches: None 
+    patches: /work/zt75vipu-thesis/data/processed/two_stage_7/patches/ 
     latents:
       satellite: None
-      semantic: None
-      environmental: None
+      semantic: /work/zt75vipu-thesis/data/results/two_stage_7/semantic_latents/
+      environmental: /work/zt75vipu-thesis/data/results/two_stage_7/environmental_latents/
     vae_checkpoints: 
       satellite: None
-      semantic: None
-      environmental: None
+      semantic: /work/zt75vipu-thesis/data/results/two_stage_7/semantic_vae_ckpt.pth
+      environmental: /work/zt75vipu-thesis/data/results/two_stage_7/environmental_vae_ckpt.pth
     diffusion_checkpoints:
       semantic: None
       satellite: None
