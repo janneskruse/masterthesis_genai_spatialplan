@@ -217,8 +217,15 @@ class UrbanInpaintingDataset(Dataset):
         if cache_dir is None:
             task_name = config['train_params']['task_name']
             cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
-            
+        
+        
         self.cache_dir = Path(cache_dir)
+        if not hasattr(self, 'stats_dir'):
+            self.stats_dir = cache_dir.parent / "stats"
+            
+        self.stats_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
         self.use_cached_patches = use_cached_patches
         
         # Initialize data loading strategy
@@ -290,8 +297,7 @@ class UrbanInpaintingDataset(Dataset):
         print("Global layer statistics for normalization...")
         print(f"{'='*60}")
         
-        stats_dir = Path(self.big_data_storage_path) / "processed" / self.config['train_params']['task_name'] / "stats"
-        stats_path = stats_dir / f"layer_statistics_stats_{self.split}.csv"
+        stats_path = self.stats_dir / f"layer_statistics_stats_{self.split}.csv"
         
         if stats_path.exists() and not self.recompute_layer_stats:
             print(f"\n{'='*60}")
@@ -429,7 +435,7 @@ class UrbanInpaintingDataset(Dataset):
         stats_df['layer_name'] = stats_df.index
         stats_df = stats_df.reset_index(drop=True)
         self.stats['layer_statistics'] = stats_df.to_dict('records')
-        self.save_stats(stats_dir)
+        self.save_stats()
         
     
     def _load_cached_patches(self) -> bool:
@@ -733,7 +739,7 @@ class UrbanInpaintingDataset(Dataset):
         metadata_df.to_csv(metadata_path, index=False)
         
         # save stats for inpainting masks etc.
-        self.save_stats(self.cache_dir)
+        self.save_stats()
         
         print(f"\n✓ Successfully cached {len(metadata_records)} patches")
         print(f"✓ Metadata saved to: {metadata_path}")
@@ -1433,10 +1439,14 @@ class UrbanInpaintingDataset(Dataset):
             print(f"\nCache directory: {self.cache_dir}")
         print(f"{'='*60}\n")
     
-    def save_stats(self, save_path):
+    def save_stats(self, save_path = None):
         """
         Save dataset statistics to CSV files
         """
+        
+        if not save_path:
+            save_path = self.stats_dir
+        
         for stat_name, records in self.stats.items():
             file_path = f"{save_path}/{stat_name}_stats_{self.split}.csv"
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
