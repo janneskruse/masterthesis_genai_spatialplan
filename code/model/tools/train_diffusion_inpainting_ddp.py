@@ -42,6 +42,7 @@ from model.utils.layer_config import count_layer_channels, get_layer_info
 from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.utils.validate import run_validation_sampling
 from model.utils.jacobian_sensitivity import load_sensitivity_predictor
+from model.utils.perceptual_loss import create_perceptual_loss
 from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
@@ -499,6 +500,32 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             if is_main and method:
                 print(f"\n⚠ Warning: class_balancing.latent_weights enabled but layer_weights not configured.")
     
+    ########## Initialize Perceptual Loss #############
+    perceptual_loss_fn = None
+    perceptual_weight = 0.0
+    ground_truth_loss_config = class_balancing_config.get('ground_truth_loss', {})
+    
+    if ground_truth_loss_config.get('enabled', False) and ground_truth_loss_config.get('use_perceptual', False):
+        try:
+            perceptual_loss_fn = create_perceptual_loss(vae, ground_truth_loss_config)
+            perceptual_weight = ground_truth_loss_config.get('perceptual_weight', 0.2)
+            
+            if is_main and perceptual_loss_fn is not None:
+                print(f"\n{'='*50}")
+                print("Perceptual Loss: VAE-based Feature Matching")
+                print(f"{'='*50}")
+                print(f"  Enabled: True")
+                print(f"  Weight: {perceptual_weight}")
+                print(f"  Feature layers: {ground_truth_loss_config.get('perceptual_layers', [0, 1, 2])}")
+                print(f"  Layer weights: {ground_truth_loss_config.get('perceptual_feature_weights', 'Equal')}")
+                print(f"  VAE encoder: {prediction_group}")
+                print(f"{'='*50}\n")
+        except Exception as e:
+            if is_main:
+                print(f"\n⚠ Warning: Could not initialize perceptual loss: {e}")
+                print("  Continuing without perceptual loss.")
+            perceptual_loss_fn = None
+    
     ########## Training Setup #############
     num_epochs = train_config.get('epochs', 300)
     
@@ -888,15 +915,49 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 )  # Returns [B] weights
                 loss_per_sample = loss_per_sample * loss_weights
             
-            # Final reduction to scalar
-            loss = loss_per_sample.mean()
+            # Final reduction to scalar (noise prediction loss)
+            noise_loss = loss_per_sample.mean()
+            
+            # Add perceptual loss if enabled (VAE-based feature matching)
+            total_loss = noise_loss
+            perc_loss = None
+            
+            if perceptual_loss_fn is not None and perceptual_weight > 0:
+                # Predict x0 from noisy latent (reverse the noising equation)
+                # x_0 = (x_t - √(1-ᾱ_t) · ε) / √ᾱ_t
+                sqrt_alpha_t = scheduler.sqrt_alphas_cumprod[t].view(-1, 1, 1, 1)
+                sqrt_one_minus_alpha_t = scheduler.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1, 1)
+                
+                if prediction_type == 'v_prediction':
+                    # Convert velocity prediction to x0: x_0 = √ᾱ_t · x_t - √(1-ᾱ_t) · v
+                    x0_pred = sqrt_alpha_t * noisy_im - sqrt_one_minus_alpha_t * model_output
+                else:  # epsilon prediction
+                    # x_0 = (x_t - √(1-ᾱ_t) · ε) / √ᾱ_t
+                    x0_pred = (noisy_im - sqrt_one_minus_alpha_t * model_output) / sqrt_alpha_t
+                
+                # Decode both predicted and ground truth latents to pixel space
+                with torch.no_grad():
+                    # Clamp predicted latent to reasonable range (prevent decoder explosion)
+                    x0_pred_clamped = torch.clamp(x0_pred, -10, 10)
+                
+                # Decode with gradients enabled (perceptual loss needs gradients through decoder)
+                pred_decoded = vae.decode(x0_pred_clamped)
+                target_decoded = vae.decode(im_latent)  # Can cache this if memory is tight
+                
+                # Compute perceptual loss in pixel space
+                perc_loss = perceptual_loss_fn(pred_decoded, target_decoded)
+                total_loss = noise_loss + perceptual_weight * perc_loss
             
             # Scale loss by accumulation steps to maintain same average gradient
-            scaled_loss = loss / gradient_accumulation_steps
+            scaled_loss = total_loss / gradient_accumulation_steps
             scaled_loss.backward()
             
-            # Track unscaled loss for logging
-            losses.append(loss.item())
+            # Track unscaled losses for logging
+            losses.append(noise_loss.item())
+            if perc_loss is not None:
+                if not hasattr(train, 'perc_losses'):
+                    train.perc_losses = []
+                train.perc_losses.append(perc_loss.item())
             accumulation_counter += 1
             
             # Only update optimizer/scheduler/EMA after accumulating enough gradients
@@ -920,10 +981,14 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             
             # Update progress bar
             if is_main:
-                progress_bar.set_postfix({
-                    'loss': f'{loss.item():.4f}',
+                postfix = {
+                    'noise': f'{noise_loss.item():.4f}',
                     'accum': f'{accumulation_counter}/{gradient_accumulation_steps}'
-                })
+                }
+                if perc_loss is not None:
+                    postfix['perc'] = f'{perc_loss.item():.4f}'
+                    postfix['total'] = f'{total_loss.item():.4f}'
+                progress_bar.set_postfix(postfix)
             
             # Save sample predictions periodically
             if is_main and global_step % img_save_steps == 0:
@@ -1028,7 +1093,16 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         # Epoch summary
         if is_main:
             epoch_loss = np.mean(losses)
-            print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f}')
+            log_str = f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Noise Loss: {epoch_loss:.4f}'
+            
+            # Add perceptual loss if tracked
+            if hasattr(train, 'perc_losses') and len(train.perc_losses) > 0:
+                epoch_perc_loss = np.mean(train.perc_losses)
+                epoch_total_loss = epoch_loss + perceptual_weight * epoch_perc_loss
+                log_str += f' | Perc Loss: {epoch_perc_loss:.4f} | Total: {epoch_total_loss:.4f}'
+                train.perc_losses = []  # Reset for next epoch
+            
+            print(log_str)
         
         # Synchronize before validation (all ranks pause)
         if world_size > 1 and validate_enabled and val_sample_epochs > 0 and (epoch_idx + 1) % val_sample_epochs == 0:
