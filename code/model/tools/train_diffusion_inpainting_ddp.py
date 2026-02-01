@@ -722,6 +722,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             
             # Extract inpainting mask from conditioning (already in latent space)
             mask_latent = None
+            mask_source = "fallback"  # Track where mask came from for debugging
             if 'image' in cond_input and 'meta' in cond_input:
                 # Access pixel_space_names from metadata (first item, same across batch)
                 pixel_space_names = cond_input['meta'][0].get('pixel_space_names', [])
@@ -730,12 +731,31 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     try:
                         mask_idx = pixel_space_names.index('inpainting_mask')
                         mask_latent = cond_input['image'][:, mask_idx:mask_idx+1, :, :]
-                    except (ValueError, IndexError):
-                        pass
+                        mask_source = f"pixel_space[{mask_idx}]"
+                    except ValueError:
+                        mask_source = f"fallback (inpainting_mask not in {pixel_space_names})"
+                    except IndexError as e:
+                        mask_source = f"fallback (IndexError: {e})"
+                else:
+                    mask_source = "fallback (pixel_space_names empty)"
+            else:
+                missing = []
+                if 'image' not in cond_input:
+                    missing.append('image')
+                if 'meta' not in cond_input:
+                    missing.append('meta')
+                mask_source = f"fallback (missing: {missing})"
             
             # Fallback: create full mask if not provided
             if mask_latent is None:
                 mask_latent = torch.ones_like(im_latent[:, :1, :, :])
+            
+            # Log mask info on first batch (rank 0 only)
+            if is_main and global_step == 0:
+                print(f"\n[DEBUG] Mask source: {mask_source}")
+                print(f"[DEBUG] Mask shape: {mask_latent.shape}")
+                print(f"[DEBUG] Mask stats: min={mask_latent.min().item():.4f}, max={mask_latent.max().item():.4f}, mean={mask_latent.mean().item():.4f}")
+                print(f"[DEBUG] Mask fraction of 1s: {(mask_latent > 0.5).float().mean().item():.4f}")
             
             # Sample timestep
             t = torch.randint(0, scheduler.num_timesteps, (im_latent.shape[0],), device=device)
