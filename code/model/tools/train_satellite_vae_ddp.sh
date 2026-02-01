@@ -92,11 +92,11 @@ echo "Training exit code: $EXIT_CODE"
 echo "=================================================="
 
 
-Only submit next job if training succeeded
-if [ $EXIT_CODE -eq 0 ]; then
-    echo "Training completed successfully. Submitting diffusion training..."
-    sbatch train_satellite_diffusion_inpainting_ddp.sh --config $CONFIG_PATH
-else
-    echo "Training failed with exit code $EXIT_CODE. Skipping diffusion training."
-    exit $EXIT_CODE
-fi
+# Only submit next job if training succeeded
+# if [ $EXIT_CODE -eq 0 ]; then
+#     echo "Training completed successfully. Submitting diffusion training..."
+#     sbatch train_satellite_diffusion_inpainting_ddp.sh --config $CONFIG_PATH
+# else
+#     echo "Training failed with exit code $EXIT_CODE. Skipping diffusion training."
+#     exit $EXIT_CODE
+# fi

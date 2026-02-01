@@ -94,11 +94,11 @@ echo "Training exit code: $EXIT_CODE"
 echo "=================================================="
 
 
-# Only submit next job if training succeeded
-if [ $EXIT_CODE -eq 0 ]; then
-    echo "Training completed successfully. Submitting LST predictor training..."
-    sbatch train_lst_predictor_ddp.sh --config $CONFIG_PATH
-else
-    echo "Training failed with exit code $EXIT_CODE. Skipping LST predictor training."
-    exit $EXIT_CODE
-fi
+# # Only submit next job if training succeeded
+# if [ $EXIT_CODE -eq 0 ]; then
+#     echo "Training completed successfully. Submitting LST predictor training..."
+#     sbatch train_lst_predictor_ddp.sh --config $CONFIG_PATH
+# else
+#     echo "Training failed with exit code $EXIT_CODE. Skipping LST predictor training."
+#     exit $EXIT_CODE
+# fi
