@@ -468,11 +468,22 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         layer_weights=layer_weights_tensor
                     ).to(device)
                 
+                # Validate layer order matches between predictor and training
+                predictor_layer_names = sensitivity_predictor.layer_names
+                if predictor_layer_names is not None and predictor_layer_names != layer_names:
+                    raise ValueError(
+                        f"Layer order mismatch!\n"
+                        f"  Sensitivity predictor: {predictor_layer_names}\n"
+                        f"  Current training:      {layer_names}\n"
+                        f"This will cause incorrect weight mapping. Retrain VAE with correct layer order."
+                    )
+                
                 if is_main:
                     print(f"\n{'='*50}")
                     print("Class Balancing: Latent Weighting Enabled")
                     print(f"{'='*50}")
                     print(f"  Method: {method}")
+                    print(f"  Layer order: {layer_names}, sensitivity predictor order: {predictor_layer_names}")
                     print(f"  Layer weights: {layer_weights_dict}")
                     if latent_channel_weights is not None:
                         print(f"  Computed latent weights: {latent_channel_weights.cpu().numpy()}")
