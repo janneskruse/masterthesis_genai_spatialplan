@@ -443,12 +443,13 @@ class SensitivityPredictor:
             z.amax(dim=[2, 3]),   # [B, C]
         ], dim=1)  # [B, C * 4]
     
-    def predict(self, z: torch.Tensor) -> torch.Tensor:
+    def predict(self, z: torch.Tensor = None, device: torch.device = None) -> torch.Tensor:
         """
         Predict sensitivity matrix for given latent.
         
         Args:
-            z: Latent tensor [B, C, H', W']
+            z: Latent tensor [B, C, H', W'] (optional for linear mode)
+            device: Device for output tensor (used when z is None in linear mode)
             
         Returns:
             S: Sensitivity matrix:
@@ -456,7 +457,13 @@ class SensitivityPredictor:
                - Polynomial mode: [B, n_layers, n_latent] (per-sample)
         """
         if self.mode == 'linear':
-            return self.S_fixed.to(z.device)
+            # For linear mode, z is optional - just return fixed S
+            if z is not None:
+                return self.S_fixed.to(z.device)
+            elif device is not None:
+                return self.S_fixed.to(device)
+            else:
+                return self.S_fixed
         
         elif self.mode == 'polynomial':
             batch_size = z.shape[0]
@@ -491,8 +498,9 @@ class SensitivityPredictor:
     
     def compute_latent_weights(
         self,
-        z: torch.Tensor,
-        layer_weights: torch.Tensor,
+        z: torch.Tensor = None,
+        layer_weights: torch.Tensor = None,
+        device: torch.device = None,
     ) -> torch.Tensor:
         """
         Compute latent channel weights from desired layer weights.
@@ -500,15 +508,25 @@ class SensitivityPredictor:
         Uses the formula: latent_weights = S.T @ layer_weights
         
         Args:
-            z: Latent tensor [B, C, H', W']
+            z: Latent tensor [B, C, H', W'] (optional for linear mode)
             layer_weights: Desired layer weights [n_layers]
+            device: Device for output tensor (used when z is None in linear mode)
             
         Returns:
             latent_weights:
                - Linear mode: [n_latent] (same for all samples)
                - Polynomial mode: [B, n_latent] (per-sample)
         """
-        S = self.predict(z)  # [n_layers, n_latent] or [B, n_layers, n_latent]
+        # Determine device: from z if provided, else from layer_weights, else from device param
+        output_device = None
+        if z is not None:
+            output_device = z.device
+        elif layer_weights is not None and hasattr(layer_weights, 'device'):
+            output_device = layer_weights.device
+        elif device is not None:
+            output_device = device
+        
+        S = self.predict(z, device=output_device)  # [n_layers, n_latent] or [B, n_layers, n_latent]
         
         if self.mode == 'linear':
             # S: [n_layers, n_latent], layer_weights: [n_layers]
