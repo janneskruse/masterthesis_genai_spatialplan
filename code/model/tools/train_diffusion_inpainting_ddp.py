@@ -643,7 +643,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f"✓ Loss type: {loss_type}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
         print(f"✓ Outside weight: {outside_weight}")
-        print(f"✓ Seam mode: {seam_mode if seam_mode else 'None'}")
+        print(f"✓ Seam mode training: {seam_mode_training if seam_mode_training else 'None'}")
+        print(f"✓ Seam mode sampling: {seam_mode_sampling if seam_mode_sampling else 'None'}")
         if use_boundary_ring:
             print(f"  - Ring width: {ring_width_px}px")
             print(f"  - Ring weight: {ring_weight}")
