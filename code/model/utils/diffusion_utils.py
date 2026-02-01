@@ -404,9 +404,21 @@ def compute_boundary_aware_loss(
         per_pixel_loss = F.mse_loss(noise_pred * mask_latent, noise * mask_latent, reduction='none')
         # Apply boundary ring weighting within masked region for better seams
         if use_boundary_ring:
-            ring = create_boundary_ring(mask_latent, ring_width_px)
-            # Weight: ring gets extra emphasis, remaining mask region gets base weight
-            w = ring_weight * ring + 1.0 * (mask_latent - ring)
+            # Create inner boundary ring (erode mask and subtract from original)
+            kernel_size = 2 * ring_width_px + 1
+            # Erode: use min pooling (inverse of dilation's max pooling)
+            mask_eroded = -F.max_pool2d(
+                -mask_latent,
+                kernel_size=kernel_size,
+                stride=1,
+                padding=ring_width_px
+            )
+            inner_ring = torch.clamp(mask_latent - mask_eroded, 0, 1)
+            
+            # Weight: inner ring gets extra emphasis, interior of mask gets base weight
+            # inner_ring: 1 at mask boundary (inside), 0 elsewhere
+            # mask_latent - inner_ring: 1 in mask interior, 0 at boundary and outside
+            w = ring_weight * inner_ring + 1.0 * (mask_latent - inner_ring)
             per_pixel_loss = per_pixel_loss * w
     else:
         # Weighted loss (learns full distribution)
