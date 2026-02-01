@@ -448,26 +448,10 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 # Determine predictor mode
                 predictor_mode = 'linear' if method == 'linear_jacobian' else 'polynomial'
                 
-                if is_main:
-                    print(f"\n[DEBUG] Loading sensitivity predictor...")
-                    print(f"[DEBUG]   VAE checkpoint path: {vae_checkpoint_path}")
-                    print(f"[DEBUG]   Checkpoint exists: {os.path.exists(vae_checkpoint_path)}")
-                    print(f"[DEBUG]   Predictor mode: {predictor_mode}")
-                
                 sensitivity_predictor = load_sensitivity_predictor(
                     checkpoint_path=vae_checkpoint_path,
                     mode=predictor_mode
                 )
-                
-                if is_main:
-                    print(f"[DEBUG]   Sensitivity predictor loaded: {sensitivity_predictor}")
-                    print(f"[DEBUG]   Predictor type: {type(sensitivity_predictor)}")
-                    if sensitivity_predictor is not None:
-                        print(f"[DEBUG]   Predictor has J_mean: {hasattr(sensitivity_predictor, 'J_mean')}")
-                        if hasattr(sensitivity_predictor, 'J_mean'):
-                            print(f"[DEBUG]   J_mean is None: {sensitivity_predictor.J_mean is None}")
-                            if sensitivity_predictor.J_mean is not None:
-                                print(f"[DEBUG]   J_mean shape: {sensitivity_predictor.J_mean.shape}")
                 
                 # Build layer weights tensor in correct order
                 layer_weights_list = []
@@ -475,26 +459,14 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     weight = layer_weights_dict.get(layer_name, 1.0)
                     layer_weights_list.append(weight)
                 
-                if is_main:
-                    print(f"[DEBUG]   Layer names: {layer_names}")
-                    print(f"[DEBUG]   Layer weights list: {layer_weights_list}")
-                
                 layer_weights_tensor = torch.tensor(layer_weights_list, dtype=torch.float32, device=device)
-                
-                if is_main:
-                    print(f"[DEBUG]   Layer weights tensor: {layer_weights_tensor}")
-                    print(f"[DEBUG]   Layer weights tensor device: {layer_weights_tensor.device}")
                 
                 # For linear mode, compute fixed latent weights once
                 if predictor_mode == 'linear':
-                    if is_main:
-                        print(f"[DEBUG]   Computing latent weights (linear mode)...")
                     latent_channel_weights = sensitivity_predictor.compute_latent_weights(
                         z=None,  # Not needed for linear
                         layer_weights=layer_weights_tensor
                     ).to(device)
-                    if is_main:
-                        print(f"[DEBUG]   Latent channel weights computed: {latent_channel_weights}")
                 
                 if is_main:
                     print(f"\n{'='*50}")
@@ -507,11 +479,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     print(f"{'='*50}\n")
                     
             except Exception as e:
-                import traceback
                 if is_main:
                     print(f"\n⚠ Warning: Could not load sensitivity predictor: {e}")
-                    print(f"[DEBUG] Full traceback:")
-                    traceback.print_exc()
                     print("  Continuing without class balancing.")
                 sensitivity_predictor = None
                 latent_channel_weights = None
