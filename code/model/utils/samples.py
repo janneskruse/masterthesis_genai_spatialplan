@@ -114,7 +114,8 @@ def save_comparison_visualization(
     n_samples: int = 8,
     normalize: bool = False,
     apply_colormap: bool = False,
-    colormap_name: Optional[str] = None
+    colormap_name: Optional[str] = None,
+    mask: Optional[torch.Tensor] = None
 ) -> None:
     """
     Save input vs reconstruction comparison for a single channel.
@@ -126,7 +127,8 @@ def save_comparison_visualization(
         n_samples: Number of samples to show in grid
         normalize: Whether to apply additional normalization
         apply_colormap: Whether to apply colormap
-        colormap_name: Name of colormap to use
+        colormap_name: Name of colormap to use,
+        mask: Optional mask tensor [B, 1, H, W] to overlay red border
     """
     n_samples = min(n_samples, input_channel.shape[0])
     
@@ -136,6 +138,41 @@ def save_comparison_visualization(
     # Apply colormap if requested
     if apply_colormap and colormap_name:
         comparison = apply_colormap_to_tensor(comparison, colormap_name)
+        
+    # Overlay red border if mask is provided
+    if mask is not None:
+        # Upsample mask to match channel resolution
+        mask_upsampled = F.interpolate(
+            mask[:n_samples],
+            size=(comparison.shape[2], comparison.shape[3]),
+            mode='nearest'
+        )
+        
+        # Convert grayscale to RGB for red border overlay
+        if comparison.shape[1] == 1:
+            comparison = comparison.repeat(1, 3, 1, 1)  # [B, 3, H, W]
+        
+        # Compute mask boundary (edge detection)
+        mask_tensor = mask_upsampled.float()  # [B, 1, H, W]
+        
+        # Create erosion kernel (3x3 all ones) on same device as mask
+        kernel = torch.ones(1, 1, 3, 3, device=mask_tensor.device)
+        
+        # Erode the mask (shrink it inward)
+        mask_eroded = F.conv2d(mask_tensor, kernel, padding=1)
+        mask_eroded = (mask_eroded == 9).float()  # Only keep pixels where all 9 neighbors were 1
+        
+        # Boundary = original mask - eroded mask (pixels on the edge)
+        mask_boundary = mask_tensor - mask_eroded
+        mask_boundary = (mask_boundary > 0).float()
+        
+        # Ensure mask_boundary is on same device as comparison
+        mask_boundary = mask_boundary.to(comparison.device)
+        
+        # Apply red border (set R=1, G=0, B=0 where boundary)
+        comparison[:, 0:1, :, :] = torch.where(mask_boundary > 0, torch.ones_like(comparison[:, 0:1, :, :]), comparison[:, 0:1, :, :])
+        comparison[:, 1:2, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(comparison[:, 1:2, :, :]), comparison[:, 1:2, :, :])
+        comparison[:, 2:3, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(comparison[:, 2:3, :, :]), comparison[:, 2:3, :, :])
     
     # Create grid (n_samples columns, 2 rows: input on top, recon on bottom)
     grid = make_grid(comparison, nrow=n_samples, normalize=normalize, padding=2, pad_value=1.0)
@@ -259,7 +296,8 @@ def save_layerwise_comparisons(
     save_dir: str,
     filename_prefix: str,
     n_samples: int = 8,
-    use_colormaps: bool = True
+    use_colormaps: bool = True,
+    mask: Optional[torch.Tensor] = None
 ) -> None:
     """
     Save input vs reconstruction comparisons for each layer.
@@ -276,7 +314,9 @@ def save_layerwise_comparisons(
         filename_prefix: Prefix for filenames (e.g., 'recon_step_1000')
         n_samples: Number of samples to visualize
         use_colormaps: Whether to apply colormaps to continuous layers
+        mask: Optional mask tensor to overlay on visualizations
     """
+    
     n_samples = min(n_samples, input_tensor.shape[0])
     
     for ch_idx, (channel_name, layer_name) in enumerate(zip(channel_names, layer_names)):
@@ -314,7 +354,8 @@ def save_layerwise_comparisons(
             n_samples=n_samples,
             normalize=False,  # Already normalized
             apply_colormap=apply_cmap,
-            colormap_name=cmap_name
+            colormap_name=cmap_name,
+            mask=mask
         )
 
 

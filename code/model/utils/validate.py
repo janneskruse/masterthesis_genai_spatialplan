@@ -229,7 +229,8 @@ def run_validation_sampling(
             save_dir=val_save_dir,
             filename_prefix='validation_comparison',
             n_samples=val_num_samples,
-            use_colormaps=True
+            use_colormaps=True,
+            mask=val_mask_vis
         )
         
         # Also save predictions alone for reference
