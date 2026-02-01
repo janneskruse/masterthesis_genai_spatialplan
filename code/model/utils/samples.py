@@ -166,6 +166,9 @@ def save_comparison_visualization(
         mask_boundary = mask_tensor - mask_eroded
         mask_boundary = (mask_boundary > 0).float()
         
+        # Repeat boundary for both input and reconstruction samples (comparison has 2*n_samples batch size)
+        mask_boundary = mask_boundary.repeat(2, 1, 1, 1)
+        
         # Ensure mask_boundary is on same device as comparison
         mask_boundary = mask_boundary.to(comparison.device)
         
