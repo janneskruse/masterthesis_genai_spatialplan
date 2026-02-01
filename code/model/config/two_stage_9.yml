@@ -424,7 +424,7 @@ diffusion_stages:
         
         # Perceptual loss using semantic VAE encoder
         use_perceptual: true
-        perceptual_weight: 0.2    # 0.1-0.5 recommended (start conservative)
+        perceptual_weight: 0.001
         perceptual_layers: [0, 1, 2]  # Extract features from first 3 encoder layers
         
         # Per-layer weights (null = use global layer_dice_config from VAE training)
