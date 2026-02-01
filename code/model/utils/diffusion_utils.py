@@ -402,8 +402,14 @@ def compute_boundary_aware_loss(
     # Compute per-pixel MSE [B, C, H, W]
     if loss_type == "masked":
         per_pixel_loss = F.mse_loss(noise_pred * mask_latent, noise * mask_latent, reduction='none')
+        # Apply boundary ring weighting within masked region for better seams
+        if use_boundary_ring:
+            ring = create_boundary_ring(mask_latent, ring_width_px)
+            # Weight: ring gets extra emphasis, remaining mask region gets base weight
+            w = ring_weight * ring + 1.0 * (mask_latent - ring)
+            per_pixel_loss = per_pixel_loss * w
     else:
-        # Weighted loss
+        # Weighted loss (learns full distribution)
         per_pixel_loss = F.mse_loss(noise_pred, noise, reduction='none')
         
         # Apply spatial weighting (boundary ring if enabled)

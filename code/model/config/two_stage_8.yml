@@ -377,13 +377,16 @@ diffusion_stages:
           friction: 15.0       # γ: Friction for stability (10-20)
           early_stop: 1        # Stop iterations before final N steps
       
-      # Seam improvement strategy (optional)
-      # Options: None (default), 'dilate' (boundary ring loss), 'feather' (mask blurring)
-      seam: dilate
-      seam_config:
-        ring_width_px: 1      # For 'dilate' mode: boundary ring width
-        ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
-        blur_radius: 3        # For 'feather' mode: mask blur radius
+      # Seam improvement strategy (optional, separate for training and sampling)
+      seam:
+        training: dilate       # Training: 'dilate' (boundary ring loss) | None
+        sampling: None    # Sampling: 'feather' (mask blurring) | 'dilate' | None
+        config:
+          ring_width_px: 1      # For 'dilate' mode: boundary ring width
+          ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
+          blur_radius: 2        # For 'feather' mode: mask blur radius (smaller for satellite to preserve detail)
+          resample_steps: 10    # For 'repaint' mode: resample interval
+          jump_length: 3        # For 'repaint' mode: timesteps to jump back
       
       cfg:
         drop_prob: 0.2  # Higher for stronger CFG effect
@@ -484,13 +487,16 @@ diffusion_stages:
           friction: 15.0       # γ: Friction for stability
           early_stop: 1        # Stop iterations before final N steps
       
-      # Seam improvement strategy (optional)
-      # 'feather' recommended for satellite to blend generated content smoothly
-      seam: 'feather'
-      seam_config:
-        ring_width_px: 1      # For 'dilate' mode: boundary ring width
-        ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
-        blur_radius: 2        # For 'feather' mode: mask blur radius (smaller for satellite to preserve detail)
+      # Seam improvement strategy (optional, separate for training and sampling)
+      seam:
+        training: dilate       # Training: 'dilate' (boundary ring loss) | None
+        sampling: feather     # Sampling: 'feather' (mask blurring) | 'dilate' | None
+        config:
+          ring_width_px: 1      # For 'dilate' mode: boundary ring width
+          ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
+          blur_radius: 2        # For 'feather' mode: mask blur radius (smaller for satellite to preserve detail)
+          resample_steps: 10    # For 'repaint' mode: resample interval
+          jump_length: 3        # For 'repaint' mode: timesteps to jump back
       
       cfg:
         drop_prob: 0.15  # Higher for stronger CFG effect

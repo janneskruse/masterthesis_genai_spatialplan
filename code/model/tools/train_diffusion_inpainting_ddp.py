@@ -594,12 +594,14 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         if is_main and len(scalar_uncond) > 0:
             print(f"✓ Scalar controls unconditional values: {scalar_uncond}")
     
-    # Seam improvement configuration
-    seam_mode = inpainting_config.get('seam', None)
-    seam_config = inpainting_config.get('seam_config', {})
-    use_boundary_ring = (seam_mode == 'dilate')
-    ring_width_px = seam_config.get('ring_width_px', 1)
-    ring_weight = seam_config.get('ring_weight', 2.0)
+    # Seam improvement configuration (training-specific)
+    seam_config = inpainting_config.get('seam', {})
+    seam_mode_training = seam_config.get('training', None) if isinstance(seam_config, dict) else None
+    seam_mode_sampling = seam_config.get('sampling', None) if isinstance(seam_config, dict) else None
+    seam_settings = seam_config.get('config', {})
+    use_boundary_ring = (seam_mode_training == 'dilate')
+    ring_width_px = seam_settings.get('ring_width_px', 1)
+    ring_weight = seam_settings.get('ring_weight', 2.0)
     
     # Image save frequency
     img_save_steps = train_config_global.get('img_save_steps', 1000)
@@ -1017,7 +1019,9 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 prediction_type=prediction_type,
                 device=device,
                 val_guidance_scale=val_guidance_scale,
-                ema_model=ema_model
+                ema_model=ema_model,
+                seam_mode_sampling=seam_mode_sampling,
+                seam_config=seam_settings
             )
         
         # Synchronize after validation (ensure rank 0 finishes before all continue)

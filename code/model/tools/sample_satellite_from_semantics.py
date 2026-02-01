@@ -137,8 +137,10 @@ def render_satellite_from_semantics(
     sample_mask_groups = cfg_config.get('sample_mask_groups', [])
     
     # Seam improvement configuration
-    seam_mode = inpainting_cfg.get('seam', None)
-    seam_config = inpainting_cfg.get('seam_config', {})
+    seam_config = inpainting_cfg.get('seam', {})
+    seam_mode_sampling = seam_config.get('sampling', None) if isinstance(seam_config, dict) else None
+    seam_settings = seam_config.get('config', {}) if isinstance(seam_config, dict) else {}
+    blur_radius = seam_settings.get('blur_radius', 3)
     
     # Initialize inpainting sampler (RePaint/LanPaint) if configured
     sampler_cfg = inpainting_cfg.get('sampler', {'type': 'standard'})
@@ -159,7 +161,7 @@ def render_satellite_from_semantics(
     print(f"Guidance scale (CFG): {guidance_scale}")
     print(f"Inpainting mode: {inpainting_mode}")
     print(f"Sample mask groups (sampling-time): {sample_mask_groups}")
-    print(f"Seam mode: {seam_mode if seam_mode else 'None'}")
+    print(f"Seam mode (sampling): {seam_mode_sampling if seam_mode_sampling else 'None'}")
     
     # Load prediction VAE (satellite) - use existing_vae_paths if available
     big_data_storage_path = dataset_config.get('big_data_storage_path', '/work/zt75vipu-thesis/data')
@@ -492,9 +494,7 @@ def render_satellite_from_semantics(
             rgb_render = torch.clamp(rgb_render, 0., 1.)
         
         # Apply seam mode: feathering for smooth compositing
-        if seam_mode == 'feather' and rgb_context_image is not None:
-            blur_radius = seam_config.get('blur_radius', 3)
-            
+        if seam_mode_sampling == 'feather' and rgb_context_image is not None:
             # Upsample mask to image resolution
             mask_pixel = F.interpolate(mask, size=rgb_render.shape[-2:], mode='nearest')
             

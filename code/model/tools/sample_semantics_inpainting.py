@@ -24,7 +24,7 @@ from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_
 from model.utils.layer_config import count_layer_channels
 from model.utils.vae_registry import VAERegistry
 from model.utils.checkpoint import load_checkpoint, check_existing_paths
-from model.utils.diffusion_utils import make_uncond_input_keep_mask
+from model.utils.diffusion_utils import make_uncond_input_keep_mask, feather_mask
 from model.utils.data_utils import normalize_scalar_like_layer
 from model.utils.scalar_controls import parse_scalar_controls_config
 from model.utils.building_metrics import aggregate_metrics_batch, print_metrics_summary
@@ -544,6 +544,12 @@ def sample_semantics(
     inpainting_cfg = stage_config.get('inpainting', {})
     inpainting_mode = inpainting_cfg.get('mode', 'hard')
     
+    # Get seam configuration for sampling
+    seam_config = inpainting_cfg.get('seam', {})
+    seam_mode_sampling = seam_config.get('sampling', None) if isinstance(seam_config, dict) else None
+    seam_settings = seam_config.get('config', {}) if isinstance(seam_config, dict) else {}
+    blur_radius = seam_settings.get('blur_radius', 3)
+    
     # Get inpainting sampler configuration
     sampler_cfg = inpainting_cfg.get('sampler', {'type': 'standard'})
     inpainting_sampler_type = sampler_cfg.get('type', 'standard')
@@ -566,6 +572,7 @@ def sample_semantics(
     
     print(f"\n✓ Inpainting mode: {inpainting_mode}")
     print(f"✓ Inpainting sampler: {inpainting_sampler_type}")
+    print(f"✓ Seam mode (sampling): {seam_mode_sampling if seam_mode_sampling else 'None'}")
     
     # Print initial GPU memory
     print("\nInitial GPU memory:")
@@ -723,6 +730,28 @@ def sample_semantics(
         
         # Clamp semantic values
         semantic_sample = torch.clamp(semantic_sample, 0, 1)
+        
+        # Apply seam mode (feathering) if enabled for sampling
+        if seam_mode_sampling == 'feather' and x_context is not None and mask_latent is not None:
+            # Decode the context (ground truth) for compositing
+            with torch.no_grad():
+                semantic_context = pred_vae.decode(x_context)
+                semantic_context = torch.clamp(semantic_context, 0, 1)
+            
+            # Upsample mask to match semantic resolution
+            mask_upsampled = F.interpolate(
+                mask_latent,
+                size=semantic_sample.shape[-2:],
+                mode='nearest'
+            )
+            
+            # Apply feathering to create smooth boundary
+            mask_feathered = feather_mask(mask_upsampled, blur_radius=blur_radius)
+            
+            # Composite: generated (inside mask) + context (outside mask) with smooth transition
+            semantic_sample = mask_feathered * semantic_sample + (1 - mask_feathered) * semantic_context
+            
+            print(f"  ✓ Applied feathering with blur_radius={blur_radius}")
         
         # Save individual sample tensor immediately
         sample_pt_path = os.path.join(samples_dir, f'sample_{sample_idx}.pt')

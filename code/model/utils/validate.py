@@ -19,6 +19,7 @@ from model.utils.samples import (
     save_rgb_composite, 
     save_layerwise_comparisons
 )
+from model.utils.diffusion_utils import feather_mask
 
 def run_validation_sampling(
     model: torch.nn.Module,
@@ -38,7 +39,9 @@ def run_validation_sampling(
     prediction_type: str,
     device: torch.device,
     val_guidance_scale: Optional[float] = None,
-    ema_model: Optional[Any] = None
+    ema_model: Optional[Any] = None,
+    seam_mode_sampling: Optional[str] = None,
+    seam_config: Optional[Dict[str, Any]] = None
 ) -> None:
     """
     Generate validation samples during training.
@@ -62,10 +65,17 @@ def run_validation_sampling(
         device: Torch device
         val_guidance_scale: CFG guidance scale (None = no CFG)
         ema_model: Optional EMA model wrapper
+        seam_mode_sampling: Seam mode for sampling ('feather' | 'dilate' | None)
+        seam_config: Seam configuration dict with 'blur_radius', 'ring_width_px', 'ring_weight'
     """
     print(f"\n{'='*50}")
     print(f"Generating Validation Samples (Epoch {epoch_idx + 1})")
     print(f"{'='*50}")
+    
+    # Parse seam config with defaults
+    if seam_config is None:
+        seam_config = {}
+    blur_radius = seam_config.get('blur_radius', 3)
     
     with torch.no_grad():
         # Use EMA weights for validation if available
@@ -210,11 +220,16 @@ def run_validation_sampling(
         val_save_dir = os.path.join(out_dir, validation_dir_name, f'epoch_{epoch_idx + 1:04d}')
         os.makedirs(val_save_dir, exist_ok=True)
         
+        # Apply seam mode to mask if specified (feather for smooth compositing)
+        val_mask_for_vis = val_mask_latent
+        if seam_mode_sampling == 'feather' and val_mask_latent is not None:
+            val_mask_for_vis = feather_mask(val_mask_latent, blur_radius=blur_radius)
+        
         # Upsample mask to match decoded resolution for visualization
         val_mask_vis = None
-        if val_mask_latent is not None:
+        if val_mask_for_vis is not None:
             val_mask_vis = F.interpolate(
-                val_mask_latent,
+                val_mask_for_vis,
                 size=(val_decoded.shape[2], val_decoded.shape[3]),
                 mode='nearest'
             )
