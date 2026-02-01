@@ -14,8 +14,11 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 # Local imports
-from model.utils.samples import save_layerwise_samples, save_rgb_composite
-
+from model.utils.samples import (
+    save_layerwise_samples, 
+    save_rgb_composite, 
+    save_layerwise_comparisons
+)
 
 def run_validation_sampling(
     model: torch.nn.Module,
@@ -198,8 +201,10 @@ def run_validation_sampling(
         # Decode to pixel space
         if vae is not None:
             val_decoded = vae.decode(x_val)
+            val_decoded_gt = vae.decode(val_im_latent)
         else:
             val_decoded = x_val
+            val_decoded_gt = val_im_latent
         
         # Save validation samples
         val_save_dir = os.path.join(out_dir, validation_dir_name, f'epoch_{epoch_idx + 1:04d}')
@@ -214,12 +219,26 @@ def run_validation_sampling(
                 mode='nearest'
             )
         
+        # Save comparison: ground truth vs predictions (top: GT, bottom: predictions)
+        save_layerwise_comparisons(
+            input_tensor=val_decoded_gt,
+            recon_tensor=val_decoded,
+            channel_names=[f'channel_{i}' for i in range(len(prediction_layers))],
+            layer_names=prediction_layers,
+            layers_registry=layers_registry,
+            save_dir=val_save_dir,
+            filename_prefix='validation_comparison',
+            n_samples=val_num_samples,
+            use_colormaps=True
+        )
+        
+        # Also save predictions alone for reference
         save_layerwise_samples(
             tensor=val_decoded,
             layer_names=prediction_layers,
             layers_registry=layers_registry,
             save_dir=val_save_dir,
-            filename_prefix='validation',
+            filename_prefix='validation_prediction',
             n_samples=val_num_samples,
             is_reconstruction=True,
             use_colormaps=True,
@@ -227,7 +246,7 @@ def run_validation_sampling(
         )
         
         if 'rgb' in [l.lower() for l in prediction_layers]:
-            rgb_val_path = os.path.join(val_save_dir, 'validation_RGB_composite.png')
+            rgb_val_path = os.path.join(val_save_dir, 'validation_RGB_composite_prediction.png')
             save_rgb_composite(
                 tensor=val_decoded,
                 layer_names=prediction_layers,
