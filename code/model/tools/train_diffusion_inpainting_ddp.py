@@ -101,7 +101,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     if is_main:
         print(f"\n{'='*60}")
-        print(f"Diffusion Training: {mode.upper()}")
+        print(f"Diffusion Training: {mode.upper()} at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
         print(f"{'='*60}")
         print(f"✓ World size: {world_size}")
         print(f"✓ Rank: {rank}")
