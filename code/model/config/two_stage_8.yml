@@ -260,7 +260,7 @@ vae_groups:
   # Land-use/urban layout VAE
   semantic:
     layers: ['buildings', 'streets', 'buildings_heights','vegetation'] # 'buildings_heights'
-    z_channels: 3  # Tight bottleneck for clean binary representations
+    z_channels: 4  # Tight bottleneck for clean binary representations
     down_channels: [32, 64, 128, 128]
     mid_channels: [128, 128]
     down_sample: [True, True, False]  # Only 2× downsample → 64×64 latent (was 3× → 32×32)
