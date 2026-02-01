@@ -409,9 +409,10 @@ diffusion_stages:
         # Desired layer weights (what we want to emphasize)
         # Higher = more emphasis on that layer in loss
         layer_weights:
-          buildings: 3.0      # Boost buildings (sparse class)
-          streets: 0.3        # Reduce streets (over-represented)
-          vegetation: 1.0     # Neutral
+          buildings: 10.0         # Much higher - buildings are hardest to generate spatially
+          buildings_heights: 8.0  # Also boost heights (correlated with buildings)
+          streets: 0.3            # Keep low (streets are easy - just lines)
+          vegetation: 1.5         # Slight boost (harder than streets, easier than buildings)
       
       # Ground truth loss - decode to pixel space and apply reconstruction loss
       # Similar to VAE training loss (BCE + Dice for binary, MSE/L1 for continuous)
