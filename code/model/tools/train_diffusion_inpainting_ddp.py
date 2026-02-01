@@ -603,6 +603,9 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     ring_width_px = seam_settings.get('ring_width_px', 1)
     ring_weight = seam_settings.get('ring_weight', 2.0)
     
+    # Post-processing configuration (for validation sampling)
+    post_process_config = stage_config.get('post_process', {})
+    
     # Image save frequency
     img_save_steps = train_config_global.get('img_save_steps', 1000)
     
@@ -1042,7 +1045,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 val_guidance_scale=val_guidance_scale,
                 ema_model=ema_model,
                 seam_mode_sampling=seam_mode_sampling,
-                seam_config=seam_settings
+                seam_config=seam_settings,
+                post_process_config=post_process_config
             )
         
         # Synchronize after validation (ensure rank 0 finishes before all continue)

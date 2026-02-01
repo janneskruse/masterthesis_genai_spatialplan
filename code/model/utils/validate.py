@@ -20,6 +20,7 @@ from model.utils.samples import (
     save_layerwise_comparisons
 )
 from model.utils.diffusion_utils import feather_mask
+from model.utils.post_process import apply_post_processing
 
 def run_validation_sampling(
     model: torch.nn.Module,
@@ -41,7 +42,8 @@ def run_validation_sampling(
     val_guidance_scale: Optional[float] = None,
     ema_model: Optional[Any] = None,
     seam_mode_sampling: Optional[str] = None,
-    seam_config: Optional[Dict[str, Any]] = None
+    seam_config: Optional[Dict[str, Any]] = None,
+    post_process_config: Optional[Dict[str, Any]] = None
 ) -> None:
     """
     Generate validation samples during training.
@@ -67,6 +69,7 @@ def run_validation_sampling(
         ema_model: Optional EMA model wrapper
         seam_mode_sampling: Seam mode for sampling ('feather' | 'dilate' | None)
         seam_config: Seam configuration dict with 'blur_radius', 'ring_width_px', 'ring_weight'
+        post_process_config: Post-processing config with 'sharpen_binary', 'threshold'
     """
     print(f"\n{'='*50}")
     print(f"Generating Validation Samples (Epoch {epoch_idx + 1})")
@@ -215,6 +218,18 @@ def run_validation_sampling(
         else:
             val_decoded = x_val
             val_decoded_gt = val_im_latent
+        
+        # Apply post-processing (e.g., binary sharpening) if configured
+        if post_process_config is not None:
+            val_decoded = apply_post_processing(
+                tensor=val_decoded,
+                layer_names=prediction_layers,
+                layers_registry=layers_registry,
+                post_process_config=post_process_config,
+                inplace=False
+            )
+            if post_process_config.get('sharpen_binary', False):
+                print(f"✓ Applied binary sharpening to {len([l for l in prediction_layers if layers_registry.get(l, {}).get('type') == 'binary'])} channels")
         
         # Save validation samples
         val_save_dir = os.path.join(out_dir, validation_dir_name, f'epoch_{epoch_idx + 1:04d}')

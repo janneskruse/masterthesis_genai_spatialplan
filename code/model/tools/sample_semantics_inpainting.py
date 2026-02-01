@@ -28,6 +28,7 @@ from model.utils.diffusion_utils import make_uncond_input_keep_mask, feather_mas
 from model.utils.data_utils import normalize_scalar_like_layer
 from model.utils.scalar_controls import parse_scalar_controls_config
 from model.utils.building_metrics import aggregate_metrics_batch, print_metrics_summary
+from model.utils.post_process import apply_post_processing
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 from model.lst_predictor.predictor import LSTPredictor
@@ -550,6 +551,10 @@ def sample_semantics(
     seam_settings = seam_config.get('config', {}) if isinstance(seam_config, dict) else {}
     blur_radius = seam_settings.get('blur_radius', 3)
     
+    # Get post-processing configuration from stage config
+    post_process_config = stage_config.get('post_process', {})
+    sharpen_binary = post_process_config.get('sharpen_binary', False)
+    
     # Get inpainting sampler configuration
     sampler_cfg = inpainting_cfg.get('sampler', {'type': 'standard'})
     inpainting_sampler_type = sampler_cfg.get('type', 'standard')
@@ -573,6 +578,7 @@ def sample_semantics(
     print(f"\n✓ Inpainting mode: {inpainting_mode}")
     print(f"✓ Inpainting sampler: {inpainting_sampler_type}")
     print(f"✓ Seam mode (sampling): {seam_mode_sampling if seam_mode_sampling else 'None'}")
+    print(f"✓ Post-process sharpen_binary: {sharpen_binary}")
     
     # Print initial GPU memory
     print("\nInitial GPU memory:")
@@ -752,6 +758,17 @@ def sample_semantics(
             semantic_sample = mask_feathered * semantic_sample + (1 - mask_feathered) * semantic_context
             
             print(f"  ✓ Applied feathering with blur_radius={blur_radius}")
+        
+        # Apply post-processing (binary sharpening) if enabled
+        if sharpen_binary:
+            semantic_sample = apply_post_processing(
+                tensor=semantic_sample,
+                layer_names=semantic_layers,
+                layers_registry=layers_registry,
+                post_process_config=post_process_config,
+                inplace=False
+            )
+            print(f"  ✓ Applied binary sharpening to binary channels")
         
         # Save individual sample tensor immediately
         sample_pt_path = os.path.join(samples_dir, f'sample_{sample_idx}.pt')

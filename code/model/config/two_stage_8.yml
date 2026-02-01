@@ -430,6 +430,9 @@ diffusion_stages:
         
         # Loss type for continuous layers
         continuous_loss_type: 'mse'  # 'mse' | 'l1' | 'smooth_l1'
+
+    post_process:
+      sharpen_binary: False
   
   # Stage 2: Render satellite RGB from semantic layout
   satellite:
