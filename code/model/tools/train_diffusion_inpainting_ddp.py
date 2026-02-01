@@ -925,8 +925,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             if perceptual_loss_fn is not None and perceptual_weight > 0:
                 # Predict x0 from noisy latent (reverse the noising equation)
                 # x_0 = (x_t - √(1-ᾱ_t) · ε) / √ᾱ_t
-                sqrt_alpha_t = scheduler.sqrt_alphas_cumprod[t].view(-1, 1, 1, 1)
-                sqrt_one_minus_alpha_t = scheduler.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1, 1)
+                sqrt_alpha_t = scheduler.sqrt_alpha_cum_prod[t].view(-1, 1, 1, 1)
+                sqrt_one_minus_alpha_t = scheduler.sqrt_one_minus_alpha_cum_prod[t].view(-1, 1, 1, 1)
                 
                 if prediction_type == 'v_prediction':
                     # Convert velocity prediction to x0: x_0 = √ᾱ_t · x_t - √(1-ᾱ_t) · v
