@@ -7,6 +7,10 @@
     "RePaint Docs": {
       "type": "sse",
       "url": "https://gitmcp.io/andreas128/RePaint"
+    },
+    "ControlCity Docs": {
+      "type": "sse",
+      "url": "https://gitmcp.io/fangshuoz/ControlCity"
     }
   }
 }
