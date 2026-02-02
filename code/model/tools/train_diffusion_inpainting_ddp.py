@@ -349,7 +349,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             model,
             device_ids=[local_rank],
             output_device=local_rank,
-            find_unused_parameters=True
+            find_unused_parameters=False  # All parameters used in forward pass
         )
         if is_main:
             print("✓ Wrapped model in DistributedDataParallel")
