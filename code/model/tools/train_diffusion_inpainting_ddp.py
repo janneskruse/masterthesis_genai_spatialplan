@@ -486,8 +486,20 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     print(f"  Method: {method}")
                     print(f"  Layer order: {layer_names}, sensitivity predictor order: {predictor_layer_names}")
                     print(f"  Layer weights: {layer_weights_dict}")
+                    
+                    # Show sensitivity matrix (Jacobian mapping)
+                    if sensitivity_predictor is not None and hasattr(sensitivity_predictor, 'sensitivity_matrix'):
+                        S = sensitivity_predictor.sensitivity_matrix.cpu().numpy()
+                        print(f"\n  Sensitivity Matrix S (how layers map to latents):")
+                        print(f"  Shape: {S.shape} (layers × latents)")
+                        print(f"  Rows = layers: {layer_names}")
+                        print(f"  Cols = latent channels: [0, 1, 2, 3]")
+                        for i, layer_name in enumerate(layer_names):
+                            print(f"    {layer_name:20s} → latents: {S[i, :]}")
+                    
                     if latent_channel_weights is not None:
-                        print(f"  Computed latent weights: {latent_channel_weights.cpu().numpy()}")
+                        print(f"\n  Computed latent weights: {latent_channel_weights.cpu().numpy()}")
+                        print(f"  Formula: latent_weights = S^T @ layer_weights")
                     print(f"{'='*50}\n")
                     
             except Exception as e:
