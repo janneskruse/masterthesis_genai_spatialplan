@@ -752,7 +752,11 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         losses = []
         
         if is_main:
-            progress_bar = tqdm(data_loader, desc=f'Epoch {epoch_idx + 1}/{num_epochs}')
+            progress_bar = tqdm(
+                data_loader, 
+                desc=f'Epoch {epoch_idx + 1}/{num_epochs}',
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_noinv_fmt}]"
+            )
         else:
             progress_bar = data_loader
         
