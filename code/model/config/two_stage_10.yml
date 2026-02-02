@@ -400,7 +400,7 @@ diffusion_stages:
       # Latent-space weighting (derived from Jacobian sensitivity)
       latent_weights:
         enabled: true
-        method: 'nonlinear_jacobian'  # 'linear_jacobian' | 'non_linear_jacobian' | null
+        method: 'non_linear_jacobian'  # 'linear_jacobian' | 'non_linear_jacobian' | null
         
         # For non_linear_jacobian only
         non_linear_predictor: 'polynomial'  # Only 'polynomial' supported for now
