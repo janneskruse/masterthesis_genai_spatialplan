@@ -291,6 +291,10 @@ def validate_dataset(
             print(f"  Main tensor shape: {im.shape}")
             print(f"  Main tensor range: [{im.min():.3f}, {im.max():.3f}]")
             
+            # Get mode type
+            mode_parts = mode.split(':')
+            mode_type = mode_parts[0] if mode_parts else 'default'
+            
             # Extract per-layer statistics
             meta = cond_dict.get('meta', {})
             image_meta = cond_dict.get('image_meta', {})
@@ -311,10 +315,6 @@ def validate_dataset(
             cond_channel_names = meta.get('channel_names', [])
             
             if main_layer_names and main_channel_names:
-                # Check if we're in diffusion mode (latent space) - layer names don't apply
-                mode_parts = mode.split(':')
-                mode_type = mode_parts[0] if mode_parts else 'default'
-                
                 if mode_type == 'diffusion':
                     # In diffusion mode, main tensor is latent space - show per-channel stats instead
                     print(f"\n  Per-channel statistics (Latent space):")
@@ -361,7 +361,16 @@ def validate_dataset(
                         else:
                             print(f"    {layer_name:20s} [{num_channels}ch]: [empty tensor]")
             
-            if 'image' in cond_dict and cond_dict['image'] is not None:
+            if mode_type == 'diffusion':
+                # Print latent-space conditioning stats (diffusion mode)
+                for key, value in cond_dict.items():
+                    if key not in ['meta', 'image', 'image_meta', 'pixel_space_names'] and isinstance(value, torch.Tensor):
+                        if value.ndim >= 2:
+                            print(f"\n  Latent conditioning '{key}':")
+                            print(f"    Shape: {value.shape}")
+                            print(f"    Range: [{value.min():.3f}, {value.max():.3f}]")
+                            print(f"    Mean: {value.mean():.3f}, Std: {value.std():.3f}")
+            elif 'image' in cond_dict and cond_dict['image'] is not None:
                 cond_image = cond_dict['image']
                 print(f"\n  Conditioning tensor shape: {cond_image.shape}")
                 print(f"  Conditioning range: [{cond_image.min():.3f}, {cond_image.max():.3f}]")
@@ -402,15 +411,6 @@ def validate_dataset(
                                   f"mean={mean_val:7.3f}, std={std_val:6.3f}")
                         else:
                             print(f"    {layer_name:20s} [{num_channels}ch]: [empty tensor]")
-            
-            # Print latent-space conditioning stats (diffusion mode)
-            for key, value in cond_dict.items():
-                if key not in ['meta', 'image', 'image_meta', 'pixel_space_names'] and isinstance(value, torch.Tensor):
-                    if value.ndim >= 2:
-                        print(f"\n  Latent conditioning '{key}':")
-                        print(f"    Shape: {value.shape}")
-                        print(f"    Range: [{value.min():.3f}, {value.max():.3f}]")
-                        print(f"    Mean: {value.mean():.3f}, Std: {value.std():.3f}")
             
             # Visualize
             if plot_samples:
