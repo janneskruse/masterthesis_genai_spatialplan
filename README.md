@@ -102,13 +102,13 @@ The HPC cluster of the University of Leipzig can be used to run the training and
 - ssh login using: `ssh <username>@login01.sc.uni-leipzig.de`
 - check available modules: `module avail`
 - load required modules: `module load <module_name>`
-- request interactive shell for running scripts: `srun --pty -p paula --gpus=a30:4 --ntasks=1 --cpus-per-task=8 --mem=32G --time=01:00:00 bash`
+- request interactive shell for running scripts: `srun --pty -p paula --gpus=a30:4 --ntasks=1 --cpus-per-task=8 --mem=64G --time=01:00:00 bash`
 
 e.g. to run the diffusion script with 4 GPUs:
 
 ```bash
 # 1. Request interactive session (ntasks=1 for bash, but reserve 4 GPUs)
-srun --pty -p paula --gpus=a30:4 --ntasks=1 --cpus-per-task=8 --mem=32G --time=01:00:00 bash
+srun --pty -p paula --gpus=a30:4 --ntasks=1 --cpus-per-task=8 --mem=64G --time=01:00:00 bash
 
 # 2. Activate environment
 conda activate genaiSpatialplan
