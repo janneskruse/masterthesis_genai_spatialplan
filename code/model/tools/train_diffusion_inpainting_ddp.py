@@ -520,6 +520,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     perceptual_loss_fn = None
     perceptual_weight = 0.0
     perceptual_start_epoch = 0
+    perceptual_warmup_epochs = 0
+    perceptual_relative_weight = False
     perceptual_apply_every_n = 1
     perceptual_apply_below_t = 1000
     
@@ -536,6 +538,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             perceptual_weight = gt_weight * perc_weight  # Combined weight
             
             perceptual_start_epoch = perceptual_config.get('start_epoch', 0)
+            perceptual_warmup_epochs = perceptual_config.get('warmup_epochs', 0)
+            perceptual_relative_weight = perceptual_config.get('relative_weight', False)
             perceptual_apply_every_n = perceptual_config.get('apply_every_n_steps', 1)
             perceptual_apply_below_t = perceptual_config.get('apply_below_timestep', 1000)
             
@@ -544,9 +548,12 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 print("Perceptual Loss: VAE-based Feature Matching")
                 print(f"{'='*50}")
                 print(f"  Enabled: True")
-                print(f"  Weight: {perceptual_weight:.6f} (gt_weight={gt_weight} × perc_weight={perc_weight})")
+                weight_mode = "relative (fraction of noise loss)" if perceptual_relative_weight else "absolute"
+                print(f"  Weight: {perceptual_weight:.6f} ({weight_mode})")
                 print(f"  Normalize features: {perceptual_config.get('normalize_features', False)}")
                 print(f"  Start epoch: {perceptual_start_epoch}")
+                if perceptual_warmup_epochs > 0:
+                    print(f"  Warmup epochs: {perceptual_warmup_epochs}")
                 print(f"  Apply every N steps: {perceptual_apply_every_n}")
                 print(f"  Apply below timestep: {perceptual_apply_below_t}")
                 print(f"  Feature layers: {perceptual_config.get('layers', [0, 1, 2])}")
@@ -1001,7 +1008,29 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     
                     # Compute perceptual loss in pixel space
                     perc_loss = perceptual_loss_fn(pred_decoded, target_decoded)
-                    total_loss = noise_loss + perceptual_weight * perc_loss
+                    
+                    # Compute effective perceptual weight
+                    effective_perc_weight = perceptual_weight
+                    
+                    # Apply warmup if configured (gradual ramp-up after start_epoch)
+                    if perceptual_warmup_epochs > 0:
+                        epochs_since_start = epoch_idx - perceptual_start_epoch
+                        warmup_progress = min(1.0, epochs_since_start / perceptual_warmup_epochs)
+                        effective_perc_weight = perceptual_weight * warmup_progress
+                    
+                    # Relative weighting: weight means "fraction of noise loss"
+                    # This makes perceptual contribution scale-invariant to Jacobian weighting
+                    if perceptual_relative_weight:
+                        # perc_contribution = weight * noise_loss (but keep gradient direction from perc_loss)
+                        # Formula: weight * noise_loss.detach() * (perc_loss / perc_loss.detach())
+                        # This normalizes perc_loss to unit scale, then scales by target fraction of noise
+                        perc_loss_detached = perc_loss.detach() + 1e-8  # Prevent division by zero
+                        scaled_perc_loss = effective_perc_weight * noise_loss.detach() * (perc_loss / perc_loss_detached)
+                    else:
+                        # Absolute weighting: weight is direct multiplier
+                        scaled_perc_loss = effective_perc_weight * perc_loss
+                    
+                    total_loss = noise_loss + scaled_perc_loss
             
             # Scale loss by accumulation steps to maintain same average gradient
             scaled_loss = total_loss / gradient_accumulation_steps
@@ -1052,13 +1081,22 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         # Epoch summary
         if is_main:
             epoch_loss = np.mean(losses)
-            log_str = f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Noise Loss: {epoch_loss:.4f}'
+            log_str = f'\\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Noise Loss: {epoch_loss:.4f}'
             
             # Add perceptual loss if tracked
             if hasattr(train, 'perc_losses') and len(train.perc_losses) > 0:
                 epoch_perc_loss = np.mean(train.perc_losses)
-                epoch_total_loss = epoch_loss + perceptual_weight * epoch_perc_loss
-                log_str += f' | Perc Loss: {epoch_perc_loss:.4f} | Total: {epoch_total_loss:.4f}'
+                
+                # Compute effective contribution for logging
+                if perceptual_relative_weight:
+                    # Relative: contribution = weight * noise_loss
+                    effective_contrib = perceptual_weight * epoch_loss
+                    log_str += f' | Perc: {epoch_perc_loss:.4f} (contrib: {effective_contrib:.4f}, {perceptual_weight*100:.1f}% of noise)'
+                else:
+                    # Absolute: contribution = weight * perc_loss
+                    effective_contrib = perceptual_weight * epoch_perc_loss
+                    log_str += f' | Perc: {epoch_perc_loss:.4f} (contrib: {effective_contrib:.6f})'
+                
                 train.perc_losses = []  # Reset for next epoch
             
             print(log_str)
