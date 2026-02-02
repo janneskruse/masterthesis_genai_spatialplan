@@ -984,10 +984,14 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     with torch.no_grad():
                         # Clamp predicted latent to reasonable range (prevent decoder explosion)
                         x0_pred_clamped = torch.clamp(x0_pred, -10, 10)
+                        
+
+                    # decode with no grad to save gradient memory
+                    with torch.no_grad():
+                        target_decoded = vae.decode(im_latent)  
                     
                     # Decode with gradients enabled (perceptual loss needs gradients through decoder)
                     pred_decoded = vae.decode(x0_pred_clamped)
-                    target_decoded = vae.decode(im_latent)  # Can cache this if memory is tight
                     
                     # Compute perceptual loss in pixel space
                     perc_loss = perceptual_loss_fn(pred_decoded, target_decoded)
