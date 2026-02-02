@@ -630,8 +630,9 @@ train_params:
       loss_type: 'min_snr'  # Options: 'simple', 'snr', 'min_snr', 'v_loss'
       min_snr_gamma: 5.0  # Clamp SNR to reduce loss from very noisy timesteps
       
-      # Clamp latents for numerical stability
-      clamp_range: [-10.0, 10.0]  
+      # Clamp x0 latents for numerical stability in sampling
+      # Observed semantic latent range: [-11.85, +14.47], std ~2.4-3.5
+      clamp_range: [-20.0, 20.0]  
 
       # DDPM sampling
       sample_epochs: 5  # Sample every N epochs during training
@@ -663,7 +664,7 @@ train_params:
       loss_type: 'min_snr'
       min_snr_gamma: 5.0
 
-      # Clamp latents for numerical stability
+      # Clamp x0 latents for numerical stability in sampling
       clamp_range: [-6.0, 6.0]  
 
       # full DDPM sampling
