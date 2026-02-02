@@ -36,7 +36,7 @@ def visualize_sample(sample_data, mode='default', save_path=None):
         save_path: Optional path to save visualization
     """
     # All modes return (tensor, dict)
-    im, output_dict = sample_data
+    im, cond_dict = sample_data
     
     # Parse mode to determine what we're visualizing
     if mode != 'default':
@@ -52,10 +52,10 @@ def visualize_sample(sample_data, mode='default', save_path=None):
     im_np = im.numpy()
     
     # Extract metadata and conditioning
-    meta = output_dict.get('meta', {})
+    meta = cond_dict.get('meta', {})
     layer_names = meta.get('layer_names', [])
     channel_names = meta.get('channel_names', [])
-    cond_image = output_dict.get('image', None)
+    cond_image = cond_dict.get('image', None)
     
     # Determine what to visualize
     num_main_channels = im_np.shape[0]
@@ -124,9 +124,9 @@ def visualize_sample(sample_data, mode='default', save_path=None):
         cond_np = cond_image.numpy()
         # Get conditioning channel names from metadata
         # The dataset already provides the correct channel_names in the metadata
-        if 'pixel_space_names' in output_dict:
+        if 'pixel_space_names' in cond_dict:
             # Diffusion mode: explicit pixel space conditioning names
-            cond_channel_names = output_dict['pixel_space_names']
+            cond_channel_names = cond_dict['pixel_space_names']
         else:
             # Default/VAE mode: channel_names in meta already filtered for conditioning
             cond_channel_names = channel_names
@@ -143,7 +143,7 @@ def visualize_sample(sample_data, mode='default', save_path=None):
     
     # Visualize latent-space conditioning (diffusion mode)
     if mode_type == 'diffusion':
-        for key, value in output_dict.items():
+        for key, value in cond_dict.items():
             if key not in ['meta', 'image', 'pixel_space_names'] and isinstance(value, torch.Tensor):
                 if idx >= len(axes):
                     break
@@ -257,14 +257,51 @@ def validate_dataset(
         
         try:
             sample = dataset[i]
-            im, output_dict = sample
+            im, cond_dict = sample
             
             print(f"  Main tensor shape: {im.shape}")
             print(f"  Main tensor range: [{im.min():.3f}, {im.max():.3f}]")
             
-            if 'image' in output_dict and output_dict['image'] is not None:
-                print(f"  Conditioning shape: {output_dict['image'].shape}")
-                print(f"  Conditioning range: [{output_dict['image'].min():.3f}, {output_dict['image'].max():.3f}]")
+            # Extract per-layer statistics
+            meta = cond_dict.get('meta', {})
+            layer_names = meta.get('layer_names', [])
+            channel_names = meta.get('channel_names', [])
+            
+            if layer_names and channel_names:
+                print(f"\n  Per-layer statistics:")
+                # Group channels by layer
+                layer_groups = {}
+                for ch_idx, (layer_name, channel_name) in enumerate(zip(layer_names, channel_names)):
+                    if layer_name not in layer_groups:
+                        layer_groups[layer_name] = []
+                    layer_groups[layer_name].append(ch_idx)
+                
+                # Print stats for each layer
+                for layer_name, channel_indices in layer_groups.items():
+                    layer_data = im[channel_indices]
+                    num_channels = len(channel_indices)
+                    min_val = layer_data.min().item()
+                    max_val = layer_data.max().item()
+                    mean_val = layer_data.mean().item()
+                    std_val = layer_data.std().item()
+                    
+                    print(f"    {layer_name:20s} [{num_channels}ch]: shape={layer_data.shape}, "
+                          f"range=[{min_val:7.3f}, {max_val:7.3f}], "
+                          f"mean={mean_val:7.3f}, std={std_val:6.3f}")
+            
+            if 'image' in cond_dict and cond_dict['image'] is not None:
+                cond_image = cond_dict['image']
+                print(f"\n  Conditioning shape: {cond_image.shape}")
+                print(f"  Conditioning range: [{cond_image.min():.3f}, {cond_image.max():.3f}]")
+                
+                # Per-layer stats for conditioning if available
+                if 'pixel_space_names' in cond_dict:
+                    cond_names = cond_dict['pixel_space_names']
+                    print(f"  Conditioning layers:")
+                    for cond_idx, cond_name in enumerate(cond_names):
+                        cond_layer = cond_image[cond_idx]
+                        print(f"    {cond_name:20s}: shape={cond_layer.shape}, "
+                              f"range=[{cond_layer.min():.3f}, {cond_layer.max():.3f}]")
             
             # Visualize
             if plot_samples:
