@@ -628,7 +628,7 @@ train_params:
       min_snr_gamma: 5.0  # Clamp SNR to reduce loss from very noisy timesteps
       
       # Validation sampling during training
-      val_sample_epochs: 10  # Sample every N epochs (0 to disable)
+      val_sample_epochs: 2  # Sample every N epochs (0 to disable)
       val_num_samples: 4  # Number of validation samples per epoch
       val_sample_steps: 50  # DDIM steps for fast validation (20x faster than 1000 DDPM steps)
       val_ddim_eta: 0.5  # DDIM stochasticity: 0.0=deterministic, 1.0=DDPM-like noise
