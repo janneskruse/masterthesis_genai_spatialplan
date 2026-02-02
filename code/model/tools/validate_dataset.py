@@ -341,8 +341,39 @@ def validate_dataset(
                 print(f"\n  Conditioning tensor shape: {cond_image.shape}")
                 print(f"  Conditioning range: [{cond_image.min():.3f}, {cond_image.max():.3f}]")
                 
-                # Print per-layer stats for conditioning layers
-                if cond_layer_names and cond_channel_names:
+                # For diffusion mode, use pixel_space_names if available
+                if 'pixel_space_names' in cond_dict:
+                    pixel_space_names = cond_dict['pixel_space_names']
+                    print(f"  Per-layer statistics (Conditioning - pixel space):")
+                    
+                    # Group channels by layer name
+                    layer_groups = {}
+                    for ch_idx, name in enumerate(pixel_space_names):
+                        # Extract layer name (before any suffix like _ch0)
+                        layer_name = name.split('_ch')[0] if '_ch' in name else name
+                        if layer_name not in layer_groups:
+                            layer_groups[layer_name] = []
+                        layer_groups[layer_name].append(ch_idx)
+                    
+                    for layer_name, channel_indices in layer_groups.items():
+                        num_channels = len(channel_indices)
+                        # Use actual indices, not sequential
+                        layer_data = cond_image[channel_indices]
+                        
+                        if layer_data.numel() > 0:
+                            min_val = layer_data.min().item()
+                            max_val = layer_data.max().item()
+                            mean_val = layer_data.mean().item()
+                            std_val = layer_data.std().item()
+                            
+                            print(f"    {layer_name:20s} [{num_channels}ch]: shape={layer_data.shape}, "
+                                  f"range=[{min_val:7.3f}, {max_val:7.3f}], "
+                                  f"mean={mean_val:7.3f}, std={std_val:6.3f}")
+                        else:
+                            print(f"    {layer_name:20s} [{num_channels}ch]: [empty tensor]")
+                
+                # Print per-layer stats for conditioning layers (non-diffusion modes)
+                elif cond_layer_names and cond_channel_names:
                     print(f"  Per-layer statistics (Conditioning):")
                     
                     # Group channels by layer
@@ -358,16 +389,33 @@ def validate_dataset(
                         start_idx = channel_indices[0]
                         end_idx = channel_indices[-1] + 1
                         
+                        # Bounds check
+                        if end_idx > cond_image.shape[0]:
+                            print(f"    {layer_name:20s} [{num_channels}ch]: [skipped - indices {start_idx}:{end_idx} out of bounds for shape {cond_image.shape}]")
+                            continue
+                        
                         layer_data = cond_image[start_idx:end_idx]
                         
-                        min_val = layer_data.min().item()
-                        max_val = layer_data.max().item()
-                        mean_val = layer_data.mean().item()
-                        std_val = layer_data.std().item()
-                        
-                        print(f"    {layer_name:20s} [{num_channels}ch]: shape={layer_data.shape}, "
-                              f"range=[{min_val:7.3f}, {max_val:7.3f}], "
-                              f"mean={mean_val:7.3f}, std={std_val:6.3f}")
+                        if layer_data.numel() > 0:
+                            min_val = layer_data.min().item()
+                            max_val = layer_data.max().item()
+                            mean_val = layer_data.mean().item()
+                            std_val = layer_data.std().item()
+                            
+                            print(f"    {layer_name:20s} [{num_channels}ch]: shape={layer_data.shape}, "
+                                  f"range=[{min_val:7.3f}, {max_val:7.3f}], "
+                                  f"mean={mean_val:7.3f}, std={std_val:6.3f}")
+                        else:
+                            print(f"    {layer_name:20s} [{num_channels}ch]: [empty tensor]")
+            
+            # Print latent-space conditioning stats (diffusion mode)
+            for key, value in cond_dict.items():
+                if key not in ['meta', 'image', 'image_meta', 'pixel_space_names'] and isinstance(value, torch.Tensor):
+                    if value.ndim >= 2:
+                        print(f"\n  Latent conditioning '{key}':")
+                        print(f"    Shape: {value.shape}")
+                        print(f"    Range: [{value.min():.3f}, {value.max():.3f}]")
+                        print(f"    Mean: {value.mean():.3f}, Std: {value.std():.3f}")
             
             # Visualize
             if plot_samples:
