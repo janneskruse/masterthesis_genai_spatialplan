@@ -628,6 +628,8 @@ train_params:
       val_sample_epochs: 10  # Sample every N epochs (0 to disable)
       val_num_samples: 4  # Number of validation samples per epoch
       val_sample_steps: 50  # DDIM steps for fast validation (20x faster than 1000 DDPM steps)
+      val_ddim_eta: 0.5  # DDIM stochasticity: 0.0=deterministic, 1.0=DDPM-like noise
+                         # Higher eta can help explore diverse modes and reduce class collapse
       val_guidance_scale: 7.5  # CFG scale for validation (None to disable CFG)
       
       checkpoint_name: 'semantic_diffusion_ckpt.pth'
@@ -652,6 +654,7 @@ train_params:
       val_sample_epochs: 15  # Sample every N epochs (less frequent due to longer training)
       val_num_samples: 4
       val_sample_steps: 50  # DDIM steps for fast validation
+      val_ddim_eta: 0.0  # Deterministic for satellite (photorealistic consistency)
       val_guidance_scale: 7.5
       
       checkpoint_name: 'satellite_diffusion_ckpt.pth'
