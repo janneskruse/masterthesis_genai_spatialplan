@@ -177,23 +177,25 @@ def create_perceptual_loss(
     Args:
         vae: Trained VAE model
         config: Config dict with keys:
-                - use_perceptual: bool
-                - perceptual_layers: List[int]
-                - perceptual_feature_weights: Optional[List[float]]
+                - enabled: bool
+                - layers: List[int]
+                - normalize_features: bool (optional)
+                - feature_weights: Optional[List[float]] (optional)
     
     Returns:
         VAEPerceptualLoss instance or None if disabled
     """
     
-    if not config.get('use_perceptual', False):
+    if not config.get('enabled', False):
         return None
     
-    feature_layers = config.get('perceptual_layers', [0, 1, 2])
-    feature_weights = config.get('perceptual_feature_weights', None)
+    feature_layers = config.get('layers', [0, 1, 2])
+    feature_weights = config.get('feature_weights', None)
+    normalize_features = config.get('normalize_features', False)
     
     return VAEPerceptualLoss(
         vae=vae,
         feature_layers=feature_layers,
         feature_weights=feature_weights,
-        normalize_features=False  # Can add to config if needed
+        normalize_features=normalize_features
     )

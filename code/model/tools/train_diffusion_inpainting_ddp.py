@@ -503,21 +503,38 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     ########## Initialize Perceptual Loss #############
     perceptual_loss_fn = None
     perceptual_weight = 0.0
-    ground_truth_loss_config = class_balancing_config.get('ground_truth_loss', {})
+    perceptual_start_epoch = 0
+    perceptual_apply_every_n = 1
+    perceptual_apply_below_t = 1000
     
-    if ground_truth_loss_config.get('enabled', False) and ground_truth_loss_config.get('use_perceptual', False):
+    ground_truth_loss_config = class_balancing_config.get('ground_truth_loss', {})
+    perceptual_config = ground_truth_loss_config.get('perceptual', {})
+    
+    if perceptual_config.get('enabled', False):
         try:
-            perceptual_loss_fn = create_perceptual_loss(vae, ground_truth_loss_config)
-            perceptual_weight = ground_truth_loss_config.get('perceptual_weight', 0.2)
+            perceptual_loss_fn = create_perceptual_loss(vae, perceptual_config)
+            
+            # Extract perceptual loss parameters
+            gt_weight = ground_truth_loss_config.get('weight', 1.0)
+            perc_weight = perceptual_config.get('weight', 0.0001)
+            perceptual_weight = gt_weight * perc_weight  # Combined weight
+            
+            perceptual_start_epoch = perceptual_config.get('start_epoch', 0)
+            perceptual_apply_every_n = perceptual_config.get('apply_every_n_steps', 1)
+            perceptual_apply_below_t = perceptual_config.get('apply_below_timestep', 1000)
             
             if is_main and perceptual_loss_fn is not None:
                 print(f"\n{'='*50}")
                 print("Perceptual Loss: VAE-based Feature Matching")
                 print(f"{'='*50}")
                 print(f"  Enabled: True")
-                print(f"  Weight: {perceptual_weight}")
-                print(f"  Feature layers: {ground_truth_loss_config.get('perceptual_layers', [0, 1, 2])}")
-                print(f"  Layer weights: {ground_truth_loss_config.get('perceptual_feature_weights', 'Equal')}")
+                print(f"  Weight: {perceptual_weight:.6f} (gt_weight={gt_weight} × perc_weight={perc_weight})")
+                print(f"  Normalize features: {perceptual_config.get('normalize_features', False)}")
+                print(f"  Start epoch: {perceptual_start_epoch}")
+                print(f"  Apply every N steps: {perceptual_apply_every_n}")
+                print(f"  Apply below timestep: {perceptual_apply_below_t}")
+                print(f"  Feature layers: {perceptual_config.get('layers', [0, 1, 2])}")
+                print(f"  Layer weights: {perceptual_config.get('feature_weights', 'Equal')}")
                 print(f"  VAE encoder: {prediction_group}")
                 print(f"{'='*50}\n")
         except Exception as e:
@@ -922,31 +939,44 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             total_loss = noise_loss
             perc_loss = None
             
-            if perceptual_loss_fn is not None and perceptual_weight > 0:
-                # Predict x0 from noisy latent (reverse the noising equation)
-                # x_0 = (x_t - √(1-ᾱ_t) · ε) / √ᾱ_t
-                sqrt_alpha_t = scheduler.sqrt_alpha_cum_prod[t.cpu()].to(device).view(-1, 1, 1, 1)
-                sqrt_one_minus_alpha_t = scheduler.sqrt_one_minus_alpha_cum_prod[t.cpu()].to(device).view(-1, 1, 1, 1)
+            # Check if perceptual loss should be applied this step
+            apply_perceptual = (
+                perceptual_loss_fn is not None 
+                and perceptual_weight > 0
+                and epoch_idx >= perceptual_start_epoch  # Start epoch check
+                and global_step % perceptual_apply_every_n == 0  # Apply frequency
+            )
+            
+            if apply_perceptual:
+                # Additionally check timestep threshold (only apply at low noise)
+                # Get max timestep in batch to decide whether to compute perceptual loss
+                max_t = t.max().item()
                 
-                if prediction_type == 'v_prediction':
-                    # Convert velocity prediction to x0: x_0 = √ᾱ_t · x_t - √(1-ᾱ_t) · v
-                    x0_pred = sqrt_alpha_t * noisy_im - sqrt_one_minus_alpha_t * model_output
-                else:  # epsilon prediction
+                if max_t < perceptual_apply_below_t:
+                    # Predict x0 from noisy latent (reverse the noising equation)
                     # x_0 = (x_t - √(1-ᾱ_t) · ε) / √ᾱ_t
-                    x0_pred = (noisy_im - sqrt_one_minus_alpha_t * model_output) / sqrt_alpha_t
-                
-                # Decode both predicted and ground truth latents to pixel space
-                with torch.no_grad():
-                    # Clamp predicted latent to reasonable range (prevent decoder explosion)
-                    x0_pred_clamped = torch.clamp(x0_pred, -10, 10)
-                
-                # Decode with gradients enabled (perceptual loss needs gradients through decoder)
-                pred_decoded = vae.decode(x0_pred_clamped)
-                target_decoded = vae.decode(im_latent)  # Can cache this if memory is tight
-                
-                # Compute perceptual loss in pixel space
-                perc_loss = perceptual_loss_fn(pred_decoded, target_decoded)
-                total_loss = noise_loss + perceptual_weight * perc_loss
+                    sqrt_alpha_t = scheduler.sqrt_alpha_cum_prod[t.cpu()].to(device).view(-1, 1, 1, 1)
+                    sqrt_one_minus_alpha_t = scheduler.sqrt_one_minus_alpha_cum_prod[t.cpu()].to(device).view(-1, 1, 1, 1)
+                    
+                    if prediction_type == 'v_prediction':
+                        # Convert velocity prediction to x0: x_0 = √ᾱ_t · x_t - √(1-ᾱ_t) · v
+                        x0_pred = sqrt_alpha_t * noisy_im - sqrt_one_minus_alpha_t * model_output
+                    else:  # epsilon prediction
+                        # x_0 = (x_t - √(1-ᾱ_t) · ε) / √ᾱ_t
+                        x0_pred = (noisy_im - sqrt_one_minus_alpha_t * model_output) / sqrt_alpha_t
+                    
+                    # Decode both predicted and ground truth latents to pixel space
+                    with torch.no_grad():
+                        # Clamp predicted latent to reasonable range (prevent decoder explosion)
+                        x0_pred_clamped = torch.clamp(x0_pred, -10, 10)
+                    
+                    # Decode with gradients enabled (perceptual loss needs gradients through decoder)
+                    pred_decoded = vae.decode(x0_pred_clamped)
+                    target_decoded = vae.decode(im_latent)  # Can cache this if memory is tight
+                    
+                    # Compute perceptual loss in pixel space
+                    perc_loss = perceptual_loss_fn(pred_decoded, target_decoded)
+                    total_loss = noise_loss + perceptual_weight * perc_loss
             
             # Scale loss by accumulation steps to maintain same average gradient
             scaled_loss = total_loss / gradient_accumulation_steps

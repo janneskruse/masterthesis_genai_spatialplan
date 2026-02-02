@@ -327,14 +327,14 @@ diffusion_stages:
     
     # U-Net architecture
     unet_config:
-      down_channels: [32, 64, 128, 256]
-      mid_channels: [256, 256, 128]
+      down_channels: [64, 96, 192, 384]  # Increased capacity: 50% more params (~24M)
+      mid_channels: [384, 384, 192]      # Match new architecture
       down_sample: [True, True, False]
-      attn_down: [True, True, False]
+      attn_down: [True, True, False]     # Attention at all resolution levels
       time_emb_dim: 128
       norm_channels: 32
-      num_heads: 4
-      conv_out_channels: 128
+      num_heads: 8                       # Doubled: more diverse attention patterns
+      conv_out_channels: 192             # Match increased capacity
       num_down_layers: 2
       num_mid_layers: 2
       num_up_layers: 2
@@ -409,9 +409,9 @@ diffusion_stages:
         # Desired layer weights (what we want to emphasize)
         # Higher = more emphasis on that layer in loss
         layer_weights:
-          buildings: 10.0         # Much higher - buildings are hardest to generate spatially
-          buildings_heights: 8.0  # Also boost heights (correlated with buildings)
-          streets: 0.3            # Keep low (streets are easy - just lines)
+          buildings: 20.0         # Much higher - buildings are hardest to generate spatially
+          buildings_heights: 16.0  # Also boost heights (correlated with buildings)
+          streets: 0.2            # Keep low (streets are easy - just lines)
           vegetation: 1.5         # Slight boost (harder than streets, easier than buildings)
       
       # Ground truth losses - auxiliary losses for improved training
@@ -422,7 +422,7 @@ diffusion_stages:
         # Perceptual loss using VAE encoder features
         # Compares predicted vs target in semantic feature space
         perceptual:
-          enabled: false
+          enabled: true
           weight: 0.0001               # Loss weight (applied after ground_truth_loss.weight)
           normalize_features: true     # L2-normalize features before MSE (reduces magnitude ~10-100x)
           start_epoch: 0               # Start applying after N epochs (0=from start)
@@ -520,7 +520,7 @@ diffusion_stages:
 
 train_params:
   seed: 45
-  task_name: 'two_stage_8'
+  task_name: 'two_stage_10'
 
   existing_paths: # to use parts from previous experiments
     # if specified, the respective training/creation will be skipped
@@ -620,7 +620,7 @@ train_params:
       use_ema: True
       ema_decay: 0.9999  # Slow decay for better averaging
       
-      # Loss improvements
+      # Loss improvements (timestep-dependent loss)
       loss_type: 'min_snr'  # Options: 'simple', 'snr', 'min_snr', 'v_loss'
       min_snr_gamma: 5.0  # Clamp SNR to reduce loss from very noisy timesteps
       

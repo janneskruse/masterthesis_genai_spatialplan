@@ -414,28 +414,30 @@ diffusion_stages:
           streets: 0.3            # Keep low (streets are easy - just lines)
           vegetation: 1.5         # Slight boost (harder than streets, easier than buildings)
       
-      # Ground truth loss - decode to pixel space and apply reconstruction loss
-      # Similar to VAE training loss (BCE + Dice for binary, MSE/L1 for continuous)
+      # Ground truth losses - auxiliary losses for improved training
+      # Provides additional supervision beyond noise prediction loss
       ground_truth_loss:
-        enabled: true             # Enable perceptual loss
-        weight: 1.0               # Integrated directly in training loop
-        apply_every_n_steps: 1    # Apply every step (perceptual is cheap)
-        apply_below_timestep: 1000  # Apply at all timesteps
+        weight: 1.0  # Global multiplier for all ground truth losses
         
-        # Perceptual loss using semantic VAE encoder
-        use_perceptual: true
-        perceptual_weight: 0.001
-        perceptual_layers: [0, 1, 2]  # Extract features from first 3 encoder layers
+        # Perceptual loss using VAE encoder features
+        # Compares predicted vs target in semantic feature space
+        perceptual:
+          enabled: true
+          weight: 0.001               # Loss weight (applied after ground_truth_loss.weight)
+          normalize_features: false     # L2-normalize features before MSE (reduces magnitude ~10-100x)
+          start_epoch: 0               # Start applying after N epochs (0=from start)
+          layers: [0, 1, 2]            # VAE encoder layers for feature extraction
+          apply_every_n_steps: 1       # Apply every N training steps
+          apply_below_timestep: 1000   # Only apply when t < threshold (999=all timesteps)
         
-        # Per-layer weights (null = use global layer_dice_config from VAE training)
-        layer_weights: null   # Or override: {buildings: 2.0, streets: 0.5, ...}
-        
-        # Dice loss settings
-        use_dice: false
-        dice_weight: 0.5
-        
-        # Loss type for continuous layers - only if use_perceptual=false
-        continuous_loss_type: 'mse'  # 'mse' | 'l1' | 'smooth_l1'
+        # TODO: Additional ground truth losses for future implementation
+        # - Pixel-space reconstruction: Decode x0_pred and apply VAE-style losses
+        #   * BCE + Dice for binary layers (buildings, streets, vegetation)
+        #   * MSE/L1 for continuous layers (buildings_heights)
+        #   * Per-layer weights from layer_dice_config
+        # - Feature matching: Compare intermediate U-Net features (discriminator-style)
+        # - Adversarial loss: Add discriminator for sharper semantic boundaries
+        # - Topology loss: Penalize disconnected buildings/streets (morphological) 
 
     post_process:
       sharpen_binary: False
