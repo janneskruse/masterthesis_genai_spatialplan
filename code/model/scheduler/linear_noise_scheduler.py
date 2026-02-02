@@ -22,18 +22,21 @@ class LinearNoiseScheduler:
         arXiv:2102.09672. https://arxiv.org/abs/2102.09672
     """
     
-    def __init__(self, num_timesteps, beta_start, beta_end, beta_schedule='linear'):
+    def __init__(self, num_timesteps, beta_start, beta_end, beta_schedule='linear', clamp_range=(-10.0, 10.0)):
         """
         Args:
             num_timesteps: Total diffusion timesteps (typically 1000)
             beta_start: Starting beta value (e.g., 0.0001)
             beta_end: Ending beta value (e.g., 0.02)
             beta_schedule: Schedule type - 'linear' (default) or 'cosine'
+            clamp_range: (min, max) range for clamping x0 predictions during sampling
+                        Prevents numerical instability while preserving latent detail
         """
         self.num_timesteps = num_timesteps
         self.beta_start = beta_start
         self.beta_end = beta_end
         self.beta_schedule = beta_schedule
+        self.clamp_min, self.clamp_max = clamp_range
         
         # Compute beta schedule based on type
         if beta_schedule == 'cosine':
@@ -191,8 +194,8 @@ class LinearNoiseScheduler:
         """
         x0 = ((xt - (self.sqrt_one_minus_alpha_cum_prod.to(xt.device)[t] * noise_pred)) /
               torch.sqrt(self.alpha_cum_prod.to(xt.device)[t]))
-        # Widen clamp range to avoid artifacts (latents may not be in [-1,1])
-        x0 = torch.clamp(x0, -3., 3.)
+        # Clamp x0 prediction for stability (configurable for different latent ranges)
+        x0 = torch.clamp(x0, self.clamp_min, self.clamp_max)
         
         mean = xt - ((self.betas.to(xt.device)[t]) * noise_pred) / (self.sqrt_one_minus_alpha_cum_prod.to(xt.device)[t])
         mean = mean / torch.sqrt(self.alphas.to(xt.device)[t])

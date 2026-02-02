@@ -229,16 +229,19 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     beta_schedule = diffusion_config.get('beta_schedule', 'linear')
     prediction_type = diffusion_config.get('prediction_type', 'epsilon')
     
+    # Get clamp range for this stage (important for VAE latent ranges)
+    clamp_range = train_config.get('clamp_range', [-10.0, 10.0])
+    
     scheduler = LinearNoiseScheduler(
         num_timesteps=diffusion_config['num_timesteps'],
         beta_start=diffusion_config['beta_start'],
         beta_end=diffusion_config['beta_end'],
-        beta_schedule=beta_schedule
+        beta_schedule=beta_schedule,
+        clamp_range=tuple(clamp_range)  # Use same clamp range as DDIM
     )
     
     # Create separate DDIM scheduler for fast validation sampling
     val_ddim_eta = train_config.get('val_ddim_eta', 0.0)  # 0.0=deterministic, 1.0=DDPM-like
-    val_ddim_clamp_range = train_config.get('val_ddim_clamp_range', [-10.0, 10.0])  # Default for semantic
     val_scheduler = DDIMScheduler(
         num_timesteps=diffusion_config['num_timesteps'],
         beta_start=diffusion_config['beta_start'],
@@ -246,7 +249,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         beta_schedule=beta_schedule,
         ddim_steps=train_config.get('val_sample_steps', 50),
         ddim_eta=val_ddim_eta,
-        clamp_range=tuple(val_ddim_clamp_range)
+        clamp_range=tuple(clamp_range)
     )
     
     if is_main:
