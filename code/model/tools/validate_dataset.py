@@ -53,8 +53,23 @@ def visualize_sample(sample_data, mode='default', save_path=None):
     
     # Extract metadata and conditioning
     meta = cond_dict.get('meta', {})
-    layer_names = meta.get('layer_names', [])
-    channel_names = meta.get('channel_names', [])
+    image_meta = cond_dict.get('image_meta', {})
+    
+    # For default mode: image_meta has main tensor info (layer_names, channel_names), meta has conditioning info
+    # For VAE mode: image_meta has main tensor info (target_layer_names, target_channel_names)
+    # For other modes: meta has everything
+    if image_meta:
+        # VAE or default mode - check which keys are present
+        main_layer_names = image_meta.get('target_layer_names', image_meta.get('layer_names', []))
+        main_channel_names = image_meta.get('target_channel_names', image_meta.get('channel_names', []))
+    else:
+        # Fallback to meta
+        main_layer_names = meta.get('layer_names', [])
+        main_channel_names = meta.get('channel_names', [])
+    
+    cond_layer_names = meta.get('layer_names', [])
+    cond_channel_names = meta.get('channel_names', [])
+    
     cond_image = cond_dict.get('image', None)
     
     # Determine what to visualize
@@ -111,7 +126,7 @@ def visualize_sample(sample_data, mode='default', save_path=None):
         for i in range(num_main_channels):
             if idx >= len(axes):
                 break
-            channel_name = channel_names[i] if i < len(channel_names) else f'Channel {i}'
+            channel_name = main_channel_names[i] if i < len(main_channel_names) else f'Channel {i}'
             cmap = get_colormap_for_layer(channel_name)
             axes[idx].imshow(im_np[i], cmap=cmap)
             axes[idx].set_title(f'{channel_name}', fontsize=10)
@@ -128,8 +143,12 @@ def visualize_sample(sample_data, mode='default', save_path=None):
             # Diffusion mode: explicit pixel space conditioning names
             cond_channel_names = cond_dict['pixel_space_names']
         else:
-            # Default/VAE mode: channel_names in meta already filtered for conditioning
-            cond_channel_names = channel_names
+            # Default/VAE mode: use main_channel_names for conditioning display
+            # (image_meta has main tensor names, meta has conditioning names)
+            if image_meta:
+                cond_channel_names = cond_channel_names  # From meta
+            else:
+                cond_channel_names = main_channel_names  # Fallback
         
         for i in range(cond_np.shape[0]):
             if idx >= len(axes):
@@ -165,12 +184,22 @@ def visualize_sample(sample_data, mode='default', save_path=None):
     for key, value in meta.items():
         if key not in ['layer_names', 'channel_names']:
             print(f"  {key}: {value}")
-    if channel_names:
-        print(f"\n  Channels ({len(channel_names)}):")
-        for i, (layer, channel) in enumerate(zip(layer_names[:10], channel_names[:10])):
+    
+    # Print main tensor channels
+    if main_channel_names:
+        print(f"\n  Main Tensor Channels ({len(main_channel_names)}):")
+        for i, (layer, channel) in enumerate(zip(main_layer_names[:10], main_channel_names[:10])):
             print(f"    [{i}] {layer}: {channel}")
-        if len(channel_names) > 10:
-            print(f"    ... and {len(channel_names) - 10} more")
+        if len(main_channel_names) > 10:
+            print(f"    ... and {len(main_channel_names) - 10} more")
+    
+    # Print conditioning channels if different from main
+    if cond_channel_names and cond_channel_names != main_channel_names:
+        print(f"\n  Conditioning Channels ({len(cond_channel_names)}):")
+        for i, (layer, channel) in enumerate(zip(cond_layer_names[:10], cond_channel_names[:10])):
+            print(f"    [{i}] {layer}: {channel}")
+        if len(cond_channel_names) > 10:
+            print(f"    ... and {len(cond_channel_names) - 10} more")
     
     plt.tight_layout()
     
@@ -264,28 +293,40 @@ def validate_dataset(
             
             # Extract per-layer statistics
             meta = cond_dict.get('meta', {})
-            layer_names = meta.get('layer_names', [])
-            channel_names = meta.get('channel_names', [])
+            image_meta = cond_dict.get('image_meta', {})
             
-            if layer_names and channel_names:
-                print(f"\n  Per-layer statistics:")
+            # For default mode: image_meta has main tensor info (layer_names, channel_names), meta has conditioning info
+            # For VAE mode: image_meta has main tensor info (target_layer_names, target_channel_names)
+            # For other modes: meta has everything
+            if image_meta:
+                # VAE or default mode - check which keys are present
+                main_layer_names = image_meta.get('target_layer_names', image_meta.get('layer_names', []))
+                main_channel_names = image_meta.get('target_channel_names', image_meta.get('channel_names', []))
+            else:
+                # Fallback to meta
+                main_layer_names = meta.get('layer_names', [])
+                main_channel_names = meta.get('channel_names', [])
+            
+            cond_layer_names = meta.get('layer_names', [])
+            cond_channel_names = meta.get('channel_names', [])
+            
+            if main_layer_names and main_channel_names:
+                print(f"\n  Per-layer statistics (Main tensor):")
                 # Group channels by layer
                 layer_groups = {}
-                for ch_idx, (layer_name, channel_name) in enumerate(zip(layer_names, channel_names)):
+                for ch_idx, (layer_name, channel_name) in enumerate(zip(main_layer_names, main_channel_names)):
                     if layer_name not in layer_groups:
                         layer_groups[layer_name] = []
                     layer_groups[layer_name].append(ch_idx)
                 
-                # Print stats for each layer (only if indices are valid)
-                num_available_channels = im.shape[0]
+                # Extract statistics for each layer in main tensor
                 for layer_name, channel_indices in layer_groups.items():
-                    # Check if all indices are valid
-                    if max(channel_indices) >= num_available_channels:
-                        print(f"    {layer_name:20s} [skipped - not in returned tensor]")
-                        continue
-                    
-                    layer_data = im[channel_indices]
                     num_channels = len(channel_indices)
+                    start_idx = channel_indices[0]
+                    end_idx = channel_indices[-1] + 1
+                    
+                    layer_data = im[start_idx:end_idx]
+                    
                     min_val = layer_data.min().item()
                     max_val = layer_data.max().item()
                     mean_val = layer_data.mean().item()
@@ -297,17 +338,36 @@ def validate_dataset(
             
             if 'image' in cond_dict and cond_dict['image'] is not None:
                 cond_image = cond_dict['image']
-                print(f"\n  Conditioning shape: {cond_image.shape}")
+                print(f"\n  Conditioning tensor shape: {cond_image.shape}")
                 print(f"  Conditioning range: [{cond_image.min():.3f}, {cond_image.max():.3f}]")
                 
-                # Per-layer stats for conditioning if available
-                if 'pixel_space_names' in cond_dict:
-                    cond_names = cond_dict['pixel_space_names']
-                    print(f"  Conditioning layers:")
-                    for cond_idx, cond_name in enumerate(cond_names):
-                        cond_layer = cond_image[cond_idx]
-                        print(f"    {cond_name:20s}: shape={cond_layer.shape}, "
-                              f"range=[{cond_layer.min():.3f}, {cond_layer.max():.3f}]")
+                # Print per-layer stats for conditioning layers
+                if cond_layer_names and cond_channel_names:
+                    print(f"  Per-layer statistics (Conditioning):")
+                    
+                    # Group channels by layer
+                    layer_groups = {}
+                    for ch_idx, (layer_name, channel_name) in enumerate(zip(cond_layer_names, cond_channel_names)):
+                        if layer_name not in layer_groups:
+                            layer_groups[layer_name] = []
+                        layer_groups[layer_name].append(ch_idx)
+                    
+                    # Extract statistics for each layer in conditioning tensor
+                    for layer_name, channel_indices in layer_groups.items():
+                        num_channels = len(channel_indices)
+                        start_idx = channel_indices[0]
+                        end_idx = channel_indices[-1] + 1
+                        
+                        layer_data = cond_image[start_idx:end_idx]
+                        
+                        min_val = layer_data.min().item()
+                        max_val = layer_data.max().item()
+                        mean_val = layer_data.mean().item()
+                        std_val = layer_data.std().item()
+                        
+                        print(f"    {layer_name:20s} [{num_channels}ch]: shape={layer_data.shape}, "
+                              f"range=[{min_val:7.3f}, {max_val:7.3f}], "
+                              f"mean={mean_val:7.3f}, std={std_val:6.3f}")
             
             # Visualize
             if plot_samples:

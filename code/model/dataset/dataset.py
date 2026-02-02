@@ -1098,16 +1098,23 @@ class UrbanInpaintingDataset(Dataset):
             # Extract conditioning
             if len(cond_indices) > 0:
                 conditioning = unified_image[cond_indices]  # [C_cond, H, W]
+                
+                # Create separate metadata for image and conditioning
+                image_meta = patch_data['meta'].copy()
+                image_meta['layer_names'] = rgb_layer_names
+                image_meta['channel_names'] = rgb_channel_names
+                
                 cond_meta = patch_data['meta'].copy()
                 cond_meta['layer_names'] = cond_layer_names
                 cond_meta['channel_names'] = cond_channel_names
-                return image, {'image': conditioning, 'meta': cond_meta}
+                
+                return image, {'image': conditioning, 'image_meta': image_meta, 'meta': cond_meta}
             else:
                 # No conditioning channels
                 image_meta = patch_data['meta'].copy()
                 image_meta['layer_names'] = rgb_layer_names
                 image_meta['channel_names'] = rgb_channel_names
-                return image, {'image': None, 'meta': image_meta}
+                return image, {'image': None, 'image_meta': image_meta}
         
         elif self.mode_type == 'vae':
             vae_config = self.vae_groups[self.mode_target]
