@@ -238,19 +238,21 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     # Create separate DDIM scheduler for fast validation sampling
     val_ddim_eta = train_config.get('val_ddim_eta', 0.0)  # 0.0=deterministic, 1.0=DDPM-like
+    val_ddim_clamp_range = train_config.get('val_ddim_clamp_range', [-10.0, 10.0])  # Default for semantic
     val_scheduler = DDIMScheduler(
         num_timesteps=diffusion_config['num_timesteps'],
         beta_start=diffusion_config['beta_start'],
         beta_end=diffusion_config['beta_end'],
         beta_schedule=beta_schedule,
         ddim_steps=train_config.get('val_sample_steps', 50),
-        ddim_eta=val_ddim_eta
+        ddim_eta=val_ddim_eta,
+        clamp_range=tuple(val_ddim_clamp_range)
     )
     
     if is_main:
         print(f"\n✓ Created DDPM training scheduler ({scheduler.num_timesteps} timesteps, {beta_schedule} schedule)")
         print(f"✓ Prediction type: {prediction_type}")
-        print(f"✓ Created DDIM validation scheduler ({val_scheduler.ddim_steps} steps, eta={val_ddim_eta:.2f})")
+        print(f"✓ Created DDIM validation scheduler ({val_scheduler.ddim_steps} steps, eta={val_ddim_eta:.2f}, clamp=[{val_ddim_clamp_range[0]}, {val_ddim_clamp_range[1]}])")
     
     ########## Load Dataset #############
     if is_main:

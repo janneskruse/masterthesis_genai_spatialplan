@@ -63,7 +63,8 @@ class DDIMScheduler:
         beta_end: float = 0.02,
         beta_schedule: str = 'linear',
         ddim_steps: int = 50,
-        ddim_eta: float = 0.0
+        ddim_eta: float = 0.0,
+        clamp_range: tuple = (-10.0, 10.0)
     ):
         """
         Initialize DDIM scheduler.
@@ -75,6 +76,8 @@ class DDIMScheduler:
             beta_schedule: Schedule type - 'linear' (default) or 'cosine'
             ddim_steps: Number of sampling steps (< num_timesteps)
             ddim_eta: Stochasticity (0=deterministic, 1=DDPM-like)
+            clamp_range: (min, max) range for clamping x0 predictions during sampling
+                        Prevents numerical instability while preserving latent detail
         """
         self.num_timesteps = num_timesteps
         self.beta_start = beta_start
@@ -82,6 +85,7 @@ class DDIMScheduler:
         self.beta_schedule = beta_schedule
         self.ddim_steps = ddim_steps
         self.ddim_eta = ddim_eta
+        self.clamp_min, self.clamp_max = clamp_range
         
         # Create beta schedule (same options as LinearNoiseScheduler)
         if beta_schedule == 'cosine':
@@ -269,7 +273,7 @@ class DDIMScheduler:
         x0_pred = (xt - sqrt_one_minus_alpha_t * noise_pred) / sqrt_alpha_t
         
         # Clamp x0 prediction for stability (but not too aggressive - VAE latents can be larger)
-        x0_pred = torch.clamp(x0_pred, -10.0, 10.0)
+        x0_pred = torch.clamp(x0_pred, self.clamp_min, self.clamp_max)
         
         # Last step: return clean prediction
         if ddim_step == 0:

@@ -67,13 +67,15 @@ def get_scheduler(diffusion_config: dict):
     
     if sampler_type == 'ddim':
         # DDIM: Fast deterministic sampling
+        clamp_range = diffusion_config.get('clamp_range', [-10.0, 10.0])  # Default for semantic
         scheduler = DDIMScheduler(
             num_timesteps=diffusion_config['num_timesteps'],
             beta_start=diffusion_config['beta_start'],
             beta_end=diffusion_config['beta_end'],
             beta_schedule=beta_schedule,
             ddim_steps=diffusion_config.get('ddim_steps', 50),
-            ddim_eta=diffusion_config.get('ddim_eta', 0.0)
+            ddim_eta=diffusion_config.get('ddim_eta', 0.0),
+            clamp_range=tuple(clamp_range)
         )
         return scheduler
         
