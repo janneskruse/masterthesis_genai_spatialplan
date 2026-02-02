@@ -276,8 +276,14 @@ def validate_dataset(
                         layer_groups[layer_name] = []
                     layer_groups[layer_name].append(ch_idx)
                 
-                # Print stats for each layer
+                # Print stats for each layer (only if indices are valid)
+                num_available_channels = im.shape[0]
                 for layer_name, channel_indices in layer_groups.items():
+                    # Check if all indices are valid
+                    if max(channel_indices) >= num_available_channels:
+                        print(f"    {layer_name:20s} [skipped - not in returned tensor]")
+                        continue
+                    
                     layer_data = im[channel_indices]
                     num_channels = len(channel_indices)
                     min_val = layer_data.min().item()
