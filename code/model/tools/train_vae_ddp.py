@@ -842,9 +842,6 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
         print(f"✓ {mode.capitalize()} VAE Training Complete at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}!")
         print(f"✓ Total Training Time: {hours}h {minutes}m {seconds}s ({training_time:.2f} seconds)")
         print(f"{'='*60}")
-    
-    # Cleanup
-    cleanup_distributed()
 
 if __name__ == '__main__':
     
@@ -860,4 +857,17 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    train_vae(mode=args.mode, load_checkpoint_path=args.load_checkpoint)
+    try:
+        train_vae(mode=args.mode, load_checkpoint_path=args.load_checkpoint)
+    except KeyboardInterrupt:
+        print("\n" + "="*50)
+        print("⚠ Training interrupted by user (Ctrl+C)")
+        print("="*50)
+    except Exception as e:
+        print("\n" + "="*50)
+        print(f"❌ Training failed with error: {e}")
+        print("="*50)
+        raise  # Re-raise to show full traceback
+    finally:
+        # Always cleanup distributed resources
+        cleanup_distributed()

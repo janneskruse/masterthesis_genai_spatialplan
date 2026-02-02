@@ -1159,9 +1159,6 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f'✓ {mode.upper()} Diffusion Training Complete!')
         print(f'✓ Total training time: {training_time/3600:.2f} hours')
         print("="*50)
-    
-    # Cleanup
-    cleanup_distributed()
 
 
 if __name__ == '__main__':
@@ -1177,4 +1174,17 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    train(mode=args.mode, load_checkpoint_path=args.load_checkpoint)
+    try:
+        train(mode=args.mode, load_checkpoint_path=args.load_checkpoint)
+    except KeyboardInterrupt:
+        print("\n" + "="*50)
+        print("⚠ Training interrupted by user (Ctrl+C)")
+        print("="*50)
+    except Exception as e:
+        print("\n" + "="*50)
+        print(f"❌ Training failed with error: {e}")
+        print("="*50)
+        raise  # Re-raise to show full traceback
+    finally:
+        # Always cleanup distributed resources
+        cleanup_distributed()
