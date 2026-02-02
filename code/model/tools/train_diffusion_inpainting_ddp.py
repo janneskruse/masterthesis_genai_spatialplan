@@ -1099,12 +1099,27 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         sample_decoded = x_sample
                         gt_decoded = im_latent[:num_samples]
                     
-                    # Upsample mask to match decoded resolution (needed for post-processing)
+                    # Upsample mask to match decoded resolution (needed for post-processing and debug)
                     mask_vis = torchF.interpolate(
                         mask_latent[:num_samples],
                         size=(sample_decoded.shape[2], sample_decoded.shape[3]),
                         mode='nearest'
                     )
+                    
+                    # DEBUG: Check if context was preserved correctly
+                    # In hard mode, outside mask should match ground truth exactly
+                    if inpainting_mode == "hard":
+                        context_mask = (1 - mask_latent[:num_samples])  # 1 = context region
+                        latent_context_diff = ((x_sample - im_latent[:num_samples]) * context_mask).abs()
+                        print(f"\n[DEBUG SAMPLING] Step {global_step}")
+                        print(f"  Timesteps: first={timesteps[0]}, last={timesteps[-1]}, total={len(timesteps)}")
+                        print(f"  Context preservation check (should be ~0):")
+                        print(f"    Latent diff (context region): max={latent_context_diff.max().item():.6f}, mean={latent_context_diff.mean().item():.6f}")
+                        print(f"  Mask stats: min={mask_latent[:num_samples].min():.2f}, max={mask_latent[:num_samples].max():.2f}, mean={mask_latent[:num_samples].mean():.2f}")
+                        
+                        # Also check decoded space
+                        decoded_context_diff = ((sample_decoded - gt_decoded) * (1 - mask_vis)).abs()
+                        print(f"    Decoded diff (context region): max={decoded_context_diff.max().item():.6f}, mean={decoded_context_diff.mean().item():.6f}")
                     
                     # Apply post-processing for cleaner visualization:
                     # 1. normalize_mask_region: normalize generated region to [0,1], keep context unchanged
