@@ -10,7 +10,9 @@ import torch
 import torch.distributed as dist
 
 def setup_distributed():
-    """Initialize distributed training with SLURM environment variables"""
+    """Initialize distributed training with SLURM or torchrun environment variables"""
+    
+    # Check for SLURM environment variables (batch jobs)
     if 'SLURM_PROCID' in os.environ:
         rank = int(os.environ['SLURM_PROCID'])
         world_size = int(os.environ['SLURM_NTASKS'])
@@ -28,8 +30,8 @@ def setup_distributed():
             raise ValueError(f"MASTER_ADDR must be IPv4 format, got: {master_addr}")
         
         if rank == 0:
-            print(f"✓ Master node: {master_addr}:{master_port} (IPv4)")
-            print(f"✓ World size: {world_size}, Rank: {rank}, Local rank: {local_rank}")
+            print(f"✓ [SLURM] Master node: {master_addr}:{master_port} (IPv4)")
+            print(f"✓ [SLURM] World size: {world_size}, Rank: {rank}, Local rank: {local_rank}")
         
         # Force IPv4 socket family
         os.environ['NCCL_SOCKET_FAMILY'] = 'AF_INET'
@@ -41,12 +43,39 @@ def setup_distributed():
         
         # Verify initialization
         if rank == 0:
-            print(f"✓ Distributed initialization successful")
+            print(f"✓ Distributed initialization successful (SLURM)")
             print(f"✓ Backend: {dist.get_backend()}")
             print(f"✓ World size from DDP: {dist.get_world_size()}")
             print(f"✓ Rank from DDP: {dist.get_rank()}")
+    
+    # Check for torchrun environment variables  (for interactive runs)
+    elif 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        local_rank = int(os.environ.get('LOCAL_RANK', rank % torch.cuda.device_count()))
         
+        # Set device BEFORE any distributed operations
+        torch.cuda.set_device(local_rank)
+        
+        master_addr = os.environ.get('MASTER_ADDR', 'localhost')
+        master_port = os.environ.get('MASTER_PORT', '29500')
+        
+        if rank == 0:
+            print(f"✓ [torchrun] Master node: {master_addr}:{master_port}")
+            print(f"✓ [torchrun] World size: {world_size}, Rank: {rank}, Local rank: {local_rank}")
+        
+        # Force IPv4 socket family
+        os.environ['NCCL_SOCKET_FAMILY'] = 'AF_INET'
+        
+        # init (torchrun already sets up the rendezvous, just call init)
+        dist.init_process_group('nccl', device_id=local_rank)
+        
+        if rank == 0:
+            print(f"✓ Distributed initialization successful (torchrun)")
+            print(f"✓ Backend: {dist.get_backend()}")
+            print(f"✓ World size from DDP: {dist.get_world_size()}")
     else:
+        # Single GPU mode
         rank = 0
         local_rank = 0
         world_size = 1
