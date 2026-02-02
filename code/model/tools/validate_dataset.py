@@ -311,54 +311,43 @@ def validate_dataset(
             cond_channel_names = meta.get('channel_names', [])
             
             if main_layer_names and main_channel_names:
-                print(f"\n  Per-layer statistics (Main tensor):")
-                # Group channels by layer
-                layer_groups = {}
-                for ch_idx, (layer_name, channel_name) in enumerate(zip(main_layer_names, main_channel_names)):
-                    if layer_name not in layer_groups:
-                        layer_groups[layer_name] = []
-                    layer_groups[layer_name].append(ch_idx)
+                # Check if we're in diffusion mode (latent space) - layer names don't apply
+                mode_parts = mode.split(':')
+                mode_type = mode_parts[0] if mode_parts else 'default'
                 
-                # Extract statistics for each layer in main tensor
-                for layer_name, channel_indices in layer_groups.items():
-                    num_channels = len(channel_indices)
-                    start_idx = channel_indices[0]
-                    end_idx = channel_indices[-1] + 1
-                    
-                    layer_data = im[start_idx:end_idx]
-                    
-                    min_val = layer_data.min().item()
-                    max_val = layer_data.max().item()
-                    mean_val = layer_data.mean().item()
-                    std_val = layer_data.std().item()
-                    
-                    print(f"    {layer_name:20s} [{num_channels}ch]: shape={layer_data.shape}, "
-                          f"range=[{min_val:7.3f}, {max_val:7.3f}], "
-                          f"mean={mean_val:7.3f}, std={std_val:6.3f}")
-            
-            if 'image' in cond_dict and cond_dict['image'] is not None:
-                cond_image = cond_dict['image']
-                print(f"\n  Conditioning tensor shape: {cond_image.shape}")
-                print(f"  Conditioning range: [{cond_image.min():.3f}, {cond_image.max():.3f}]")
-                
-                # For diffusion mode, use pixel_space_names if available
-                if 'pixel_space_names' in cond_dict:
-                    pixel_space_names = cond_dict['pixel_space_names']
-                    print(f"  Per-layer statistics (Conditioning - pixel space):")
-                    
-                    # Group channels by layer name
+                if mode_type == 'diffusion':
+                    # In diffusion mode, main tensor is latent space - show per-channel stats instead
+                    print(f"\n  Per-channel statistics (Latent space):")
+                    for ch_idx in range(im.shape[0]):
+                        ch_data = im[ch_idx]
+                        min_val = ch_data.min().item()
+                        max_val = ch_data.max().item()
+                        mean_val = ch_data.mean().item()
+                        std_val = ch_data.std().item()
+                        print(f"    Latent ch {ch_idx:2d}        [1ch]: shape={ch_data.shape}, "
+                              f"range=[{min_val:7.3f}, {max_val:7.3f}], "
+                              f"mean={mean_val:7.3f}, std={std_val:6.3f}")
+                else:
+                    print(f"\n  Per-layer statistics (Main tensor):")
+                    # Group channels by layer
                     layer_groups = {}
-                    for ch_idx, name in enumerate(pixel_space_names):
-                        # Extract layer name (before any suffix like _ch0)
-                        layer_name = name.split('_ch')[0] if '_ch' in name else name
+                    for ch_idx, (layer_name, channel_name) in enumerate(zip(main_layer_names, main_channel_names)):
                         if layer_name not in layer_groups:
                             layer_groups[layer_name] = []
                         layer_groups[layer_name].append(ch_idx)
                     
+                    # Extract statistics for each layer in main tensor
                     for layer_name, channel_indices in layer_groups.items():
                         num_channels = len(channel_indices)
-                        # Use actual indices, not sequential
-                        layer_data = cond_image[channel_indices]
+                        start_idx = channel_indices[0]
+                        end_idx = channel_indices[-1] + 1
+                        
+                        # Bounds check
+                        if end_idx > im.shape[0]:
+                            print(f"    {layer_name:20s} [{num_channels}ch]: [skipped - indices {start_idx}:{end_idx} out of bounds for shape {im.shape}]")
+                            continue
+                        
+                        layer_data = im[start_idx:end_idx]
                         
                         if layer_data.numel() > 0:
                             min_val = layer_data.min().item()
@@ -371,9 +360,15 @@ def validate_dataset(
                                   f"mean={mean_val:7.3f}, std={std_val:6.3f}")
                         else:
                             print(f"    {layer_name:20s} [{num_channels}ch]: [empty tensor]")
+            
+            if 'image' in cond_dict and cond_dict['image'] is not None:
+                cond_image = cond_dict['image']
+                print(f"\n  Conditioning tensor shape: {cond_image.shape}")
+                print(f"  Conditioning range: [{cond_image.min():.3f}, {cond_image.max():.3f}]")
+                
                 
                 # Print per-layer stats for conditioning layers (non-diffusion modes)
-                elif cond_layer_names and cond_channel_names:
+                if cond_layer_names and cond_channel_names:
                     print(f"  Per-layer statistics (Conditioning):")
                     
                     # Group channels by layer
