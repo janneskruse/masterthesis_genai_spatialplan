@@ -167,14 +167,14 @@ class DDIMScheduler:
         Returns:
             Timestep indices [ddim_steps] ranging from 0 to num_timesteps-1
         """
-        # Create evenly spaced indices
+        # Create evenly spaced indices that include the highest timestep
         # Example: num_timesteps=1000, ddim_steps=50
-        # → [0, 20, 40, 60, ..., 960, 980]
+        # → [19, 39, 59, ..., 959, 979, 999] (always ends at num_timesteps-1)
         step_ratio = self.num_timesteps // self.ddim_steps
-        ddim_timesteps = (np.arange(0, self.ddim_steps) * step_ratio).astype(np.int64)
+        ddim_timesteps = (np.arange(0, self.ddim_steps) * step_ratio + step_ratio - 1).astype(np.int64)
         
-        # Add 1 to start from timestep 1 instead of 0 (common practice)
-        ddim_timesteps = ddim_timesteps + 1
+        # Clamp last timestep to num_timesteps-1 (e.g., 999 for 1000 timesteps)
+        ddim_timesteps[-1] = min(ddim_timesteps[-1], self.num_timesteps - 1)
         
         return torch.from_numpy(ddim_timesteps).long()
     
