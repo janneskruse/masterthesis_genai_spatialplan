@@ -294,3 +294,189 @@ def run_validation_sampling(
             ema_model.restore(model_for_ema)  # Restore original weights
         
         model.train()
+
+
+def run_ddpm_sampling(
+    model: torch.nn.Module,
+    scheduler: Any,
+    im_latent: torch.Tensor,
+    mask_latent: torch.Tensor,
+    cond_input: Dict[str, Any],
+    vae: torch.nn.Module,
+    prediction_layers: list,
+    layers_registry: Dict[str, Any],
+    out_dir: str,
+    samples_dir_name: str,
+    epoch_idx: int,
+    global_step: int,
+    sample_steps: int,
+    inpainting_mode: str,
+    prediction_type: str,
+    device: torch.device,
+    post_process_config: Optional[Dict[str, Any]] = None,
+    num_samples: int = 4
+) -> None:
+    """
+    Generate DDPM samples during training (slower, higher quality).
+    
+    Args:
+        model: Diffusion U-Net model
+        scheduler: DDPM scheduler for training-quality sampling
+        im_latent: Ground truth latent tensor [B, C, H, W]
+        mask_latent: Inpainting mask in latent space [B, 1, H, W]
+        cond_input: Conditioning inputs dict
+        vae: VAE model for decoding
+        prediction_layers: List of layer names being predicted
+        layers_registry: Layer configuration registry
+        out_dir: Output directory for results
+        samples_dir_name: Subdirectory name for DDPM samples
+        epoch_idx: Current epoch index
+        global_step: Current global training step
+        sample_steps: Number of DDPM denoising steps
+        inpainting_mode: Inpainting mode ('hard' | 'sdlike')
+        prediction_type: Prediction type ('epsilon' | 'v_prediction')
+        device: Torch device
+        post_process_config: Post-processing configuration
+        num_samples: Number of samples to generate (default: 4)
+    """
+    print(f"\n{'='*50}")
+    print(f"Generating DDPM Samples (Epoch {epoch_idx + 1}, Step {global_step})")
+    print(f"{'='*50}")
+    
+    with torch.no_grad():
+        model.eval()
+        
+        # Limit to num_samples
+        num_samples = min(num_samples, im_latent.shape[0])
+        
+        # Decode ground truth context ONCE before sampling
+        if vae is not None:
+            gt_decoded_original = vae.decode(im_latent[:num_samples])
+        else:
+            gt_decoded_original = im_latent[:num_samples]
+        
+        # Upsample mask to decoded resolution (needed for context compositing)
+        mask_decoded = F.interpolate(
+            mask_latent[:num_samples],
+            size=(gt_decoded_original.shape[2], gt_decoded_original.shape[3]),
+            mode='nearest'
+        )
+        
+        # Start from pure noise in masked region
+        x_sample = im_latent[:num_samples].clone()
+        
+        # Fixed noise_context for hard mode
+        sample_noise_context = None
+        
+        if inpainting_mode == "hard":
+            x_sample = mask_latent[:num_samples] * torch.randn_like(x_sample) + (1 - mask_latent[:num_samples]) * x_sample
+            # Create fixed noise_context for temporal consistency
+            sample_noise_context = torch.randn_like(x_sample)
+        else:
+            x_sample = torch.randn_like(x_sample)
+        
+        # DDPM sampling with specified steps
+        current_sample_steps = min(sample_steps, scheduler.num_timesteps)
+        
+        # Create timestep schedule: evenly spaced from T to 0
+        import numpy as np
+        timesteps = np.linspace(scheduler.num_timesteps - 1, 0, current_sample_steps).astype(int)
+        
+        # Prepare conditioning for sampling (slice all keys to num_samples)
+        sample_cond = {}
+        for key in cond_input:
+            if isinstance(cond_input[key], torch.Tensor):
+                sample_cond[key] = cond_input[key][:num_samples]
+            elif isinstance(cond_input[key], list):
+                sample_cond[key] = cond_input[key][:num_samples]
+            else:
+                sample_cond[key] = cond_input[key]
+        
+        for t_idx in tqdm(range(len(timesteps)), desc=f"DDPM sampling ({current_sample_steps} steps)"):
+            t = timesteps[t_idx]
+            t_tensor = torch.full((num_samples,), t, device=device, dtype=torch.long)
+            
+            # Get model prediction
+            model_output = model(x_sample, t_tensor, cond_input=sample_cond)
+            
+            # Convert to epsilon if using v-prediction
+            if prediction_type == 'v_prediction':
+                noise_pred = scheduler.velocity_to_epsilon(model_output, x_sample, t)
+            else:
+                noise_pred = model_output
+            
+            if inpainting_mode == "hard":
+                # Use inpainting scheduler with fixed noise_context
+                x_sample, _ = scheduler.sample_prev_timestep_inpainting(
+                    x_sample, noise_pred, t,
+                    im_latent[:num_samples],
+                    mask_latent[:num_samples],
+                    noise_context=sample_noise_context
+                )
+            else:
+                x_sample, _ = scheduler.sample_prev_timestep(x_sample, noise_pred, t)
+        
+        # Decode generated latent to pixel space
+        if vae is not None:
+            sample_decoded_raw = vae.decode(x_sample)
+        else:
+            sample_decoded_raw = x_sample
+        
+        # Composite with original decoded context (ensures perfect context preservation)
+        sample_decoded = mask_decoded * sample_decoded_raw + (1 - mask_decoded) * gt_decoded_original
+        
+        # Use original ground truth for comparison (not re-decoded)
+        gt_decoded = gt_decoded_original
+        
+        # Apply post-processing for cleaner visualization
+        if post_process_config is not None:
+            sample_decoded = apply_post_processing(
+                tensor=sample_decoded,
+                layer_names=prediction_layers,
+                layers_registry=layers_registry,
+                post_process_config=post_process_config,
+                inplace=False,
+                mask=mask_decoded
+            )
+        
+        # Save comparison: ground truth vs predictions
+        save_layerwise_comparisons(
+            input_tensor=gt_decoded,
+            recon_tensor=sample_decoded,
+            channel_names=[f'channel_{i}' for i in range(len(prediction_layers))],
+            layer_names=prediction_layers,
+            layers_registry=layers_registry,
+            save_dir=os.path.join(out_dir, samples_dir_name),
+            filename_prefix=f'sample_epoch_{epoch_idx + 1:04d}_comparison',
+            n_samples=num_samples,
+            use_colormaps=True,
+            mask=mask_decoded
+        )
+        
+        # Also save predictions alone
+        save_layerwise_samples(
+            tensor=sample_decoded,
+            layer_names=prediction_layers,
+            layers_registry=layers_registry,
+            save_dir=os.path.join(out_dir, samples_dir_name),
+            filename_prefix=f'sample_epoch_{epoch_idx + 1:04d}',
+            n_samples=num_samples,
+            is_reconstruction=True,
+            use_colormaps=True,
+            mask=mask_decoded
+        )
+        
+        # Save RGB composite if available
+        if 'rgb' in [l.lower() for l in prediction_layers]:
+            rgb_save_path = os.path.join(out_dir, samples_dir_name, f'sample_epoch_{epoch_idx + 1:04d}_RGB_composite.png')
+            save_rgb_composite(
+                tensor=sample_decoded,
+                layer_names=prediction_layers,
+                save_path=rgb_save_path,
+                n_samples=num_samples,
+                normalize_per_channel=True
+            )
+        
+        print(f"✓ Saved DDPM samples to {os.path.join(out_dir, samples_dir_name)}")
+        
+        model.train()

@@ -41,7 +41,7 @@ from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
 from model.utils.layer_config import count_layer_channels, get_layer_info
 from model.utils.checkpoint import load_checkpoint, check_existing_paths
-from model.utils.validate import run_validation_sampling
+from model.utils.validate import run_validation_sampling, run_ddpm_sampling
 from model.utils.jacobian_sensitivity import load_sensitivity_predictor
 from model.utils.perceptual_loss import create_perceptual_loss
 from helpers.load_configs import load_configs, add_config_arguments
@@ -1056,137 +1056,30 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         # Synchronize before validation (all ranks pause)
         if world_size > 1 and validate_enabled and val_sample_epochs > 0 and (epoch_idx + 1) % val_sample_epochs == 0:
             dist.barrier()
-            
-        # Save sample predictions periodically
+        
+        # DDPM sampling: Generate high-quality samples periodically (after epoch completes)
         if is_main and (epoch_idx + 1) % sample_epochs == 0:
-            with torch.no_grad():
-                model.eval()
-                
-                # Generate a few samples
-                num_samples = min(4, im_latent.shape[0])
-                
-                # Decode ground truth context ONCE before sampling
-                if vae is not None:
-                    gt_decoded_original = vae.decode(im_latent[:num_samples])
-                else:
-                    gt_decoded_original = im_latent[:num_samples]
-                
-                # Upsample mask to decoded resolution (needed for context compositing)
-                mask_decoded = torchF.interpolate(
-                    mask_latent[:num_samples],
-                    size=(gt_decoded_original.shape[2], gt_decoded_original.shape[3]),
-                    mode='nearest'
-                )
-                
-                # Start from pure noise in masked region
-                x_sample = im_latent[:num_samples].clone()
-                
-                # Fixed noise_context for hard mode
-                sample_noise_context = None
-                
-                if inpainting_mode == "hard":
-                    x_sample = mask_latent[:num_samples] * torch.randn_like(x_sample) + (1 - mask_latent[:num_samples]) * x_sample
-                    # Create fixed noise_context for temporal consistency
-                    sample_noise_context = torch.randn_like(x_sample)
-                else:
-                    x_sample = torch.randn_like(x_sample)
-                
-                # Quick sampling using sample steps defined by config
-                current_sample_steps = min(sample_steps, scheduler.num_timesteps)
-                
-                # Create timestep schedule: evenly spaced from T to 0
-                timesteps = np.linspace(scheduler.num_timesteps - 1, 0, current_sample_steps).astype(int)
-                
-                # Prepare conditioning for sampling (slice all keys to num_samples)
-                sample_cond = {}
-                for key in cond_input:
-                    sample_cond[key] = cond_input[key][:num_samples]
-                
-                for t_idx in range(len(timesteps)):
-                    t = timesteps[t_idx]
-                    t_tensor = torch.full((num_samples,), t, device=device, dtype=torch.long)
-                    
-                    # Get model prediction
-                    model_output = model(x_sample, t_tensor, cond_input=sample_cond)
-                    
-                    # Convert to epsilon if using v-prediction
-                    if prediction_type == 'v_prediction':
-                        noise_pred = scheduler.velocity_to_epsilon(model_output, x_sample, t)
-                    else:
-                        noise_pred = model_output
-                    
-                    if inpainting_mode == "hard":
-                        # Use inpainting scheduler with fixed noise_context
-                        x_sample, _ = scheduler.sample_prev_timestep_inpainting(
-                            x_sample, noise_pred, t,
-                            im_latent[:num_samples],
-                            mask_latent[:num_samples],
-                            noise_context=sample_noise_context
-                        )
-                    else:
-                        x_sample, _ = scheduler.sample_prev_timestep(x_sample, noise_pred, t)
-                
-                # Decode generated latent to pixel space
-                if vae is not None:
-                    sample_decoded_raw = vae.decode(x_sample)
-                else:
-                    sample_decoded_raw = x_sample
-                
-                # Composite with original decoded context
-                sample_decoded = mask_decoded * sample_decoded_raw + (1 - mask_decoded) * gt_decoded_original
-                
-                # Use original ground truth for comparison (not re-decoded)
-                gt_decoded = gt_decoded_original
-                
-                # Apply post-processing for cleaner visualization:
-                sample_decoded = apply_post_processing(
-                    tensor=sample_decoded,
-                    layer_names=prediction_layers,
-                    layers_registry=layers_registry,
-                    post_process_config=post_process_config,
-                    inplace=False,
-                    mask=mask_decoded  # Pass mask for normalize_mask_region
-                )
-                
-                # Save comparison: ground truth vs predictions (top: GT, bottom: predictions)
-                save_layerwise_comparisons(
-                    input_tensor=gt_decoded,
-                    recon_tensor=sample_decoded,
-                    channel_names=[f'channel_{i}' for i in range(len(prediction_layers))],
-                    layer_names=prediction_layers,
-                    layers_registry=layers_registry,
-                    save_dir=os.path.join(out_dir, samples_dir_name),
-                    filename_prefix=f'sample_step_{global_step}_comparison',
-                    n_samples=num_samples,
-                    use_colormaps=True,
-                    mask=mask_decoded
-                )
-                
-                # Also save predictions alone (existing behavior)
-                save_layerwise_samples(
-                    tensor=sample_decoded,
-                    layer_names=prediction_layers,
-                    layers_registry=layers_registry,
-                    save_dir=os.path.join(out_dir, samples_dir_name),
-                    filename_prefix=f'sample_step_{global_step}',
-                    n_samples=num_samples,
-                    is_reconstruction=True,  # VAE decoding, may have different scale
-                    use_colormaps=True,
-                    mask=mask_decoded
-                )
-                
-                # Also save RGB composite if available
-                if 'rgb' in [l.lower() for l in prediction_layers]:
-                    rgb_save_path = os.path.join(out_dir, samples_dir_name, f'sample_step_{global_step}_RGB_composite.png')
-                    save_rgb_composite(
-                        tensor=sample_decoded,
-                        layer_names=prediction_layers,
-                        save_path=rgb_save_path,
-                        n_samples=num_samples,
-                        normalize_per_channel=True
-                    )
-                
-                model.train()
+            
+            run_ddpm_sampling(
+                model=model,
+                scheduler=scheduler,
+                im_latent=im_latent,
+                mask_latent=mask_latent,
+                cond_input=cond_input,
+                vae=vae,
+                prediction_layers=prediction_layers,
+                layers_registry=layers_registry,
+                out_dir=out_dir,
+                samples_dir_name=samples_dir_name,
+                epoch_idx=epoch_idx,
+                global_step=global_step,
+                sample_steps=sample_steps,
+                inpainting_mode=inpainting_mode,
+                prediction_type=prediction_type,
+                device=device,
+                post_process_config=post_process_config,
+                num_samples=4
+            )
         
         # Validation sampling (only rank 0, others wait at barrier above)
         if is_main and validate_enabled and val_sample_epochs > 0 and (epoch_idx + 1) % val_sample_epochs == 0:
