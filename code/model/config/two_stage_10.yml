@@ -400,7 +400,7 @@ diffusion_stages:
       # Latent-space weighting (derived from Jacobian sensitivity)
       latent_weights:
         enabled: true
-        method: 'linear_jacobian'  # 'linear_jacobian' | 'non_linear_jacobian' | null
+        method: 'nonlinear_jacobian'  # 'linear_jacobian' | 'non_linear_jacobian' | null
         
         # For non_linear_jacobian only
         non_linear_predictor: 'polynomial'  # Only 'polynomial' supported for now
@@ -409,9 +409,9 @@ diffusion_stages:
         # Desired layer weights (what we want to emphasize)
         # Higher = more emphasis on that layer in loss
         layer_weights:
-          buildings: 20.0         # Much higher - buildings are hardest to generate spatially
-          buildings_heights: 16.0  # Also boost heights (correlated with buildings)
-          streets: 0.2            # Keep low (streets are easy - just lines)
+          buildings: 100.0         # Much higher - buildings are hardest to generate spatially
+          buildings_heights: 80.0  # Also boost heights (correlated with buildings)
+          streets: 0.1            # Keep low (streets are easy - just lines)
           vegetation: 1.5         # Slight boost (harder than streets, easier than buildings)
       
       # Ground truth losses - auxiliary losses for improved training
@@ -423,7 +423,7 @@ diffusion_stages:
         # Compares predicted vs target in semantic feature space
         perceptual:
           enabled: true
-          weight: 0.0001               # Loss weight (applied after ground_truth_loss.weight)
+          weight: 0.001               # Loss weight (applied after ground_truth_loss.weight)
           normalize_features: true     # L2-normalize features before MSE (reduces magnitude ~10-100x)
           start_epoch: 0               # Start applying after N epochs (0=from start)
           layers: [0, 1, 2]            # VAE encoder layers for feature extraction
