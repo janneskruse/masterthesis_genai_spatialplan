@@ -35,6 +35,7 @@ from model.utils.diffusion_utils import (
 from model.utils.loss_weighting import compute_loss_weights
 from model.utils.scalar_controls import parse_scalar_controls_config
 from model.utils.samples import save_layerwise_samples, save_rgb_composite, save_layerwise_comparisons
+from model.utils.post_process import apply_post_processing
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
@@ -1098,11 +1099,23 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         sample_decoded = x_sample
                         gt_decoded = im_latent[:num_samples]
                     
-                    # Upsample mask to match decoded resolution for visualization
+                    # Upsample mask to match decoded resolution (needed for post-processing)
                     mask_vis = torchF.interpolate(
                         mask_latent[:num_samples],
                         size=(sample_decoded.shape[2], sample_decoded.shape[3]),
                         mode='nearest'
+                    )
+                    
+                    # Apply post-processing for cleaner visualization:
+                    # 1. normalize_mask_region: normalize generated region to [0,1], keep context unchanged
+                    # 2. sharpen_binary: threshold binary layers to {0,1}
+                    sample_decoded = apply_post_processing(
+                        tensor=sample_decoded,
+                        layer_names=prediction_layers,
+                        layers_registry=layers_registry,
+                        post_process_config=post_process_config,
+                        inplace=False,
+                        mask=mask_vis  # Pass mask for normalize_mask_region
                     )
                     
                     # Save comparison: ground truth vs predictions (top: GT, bottom: predictions)
