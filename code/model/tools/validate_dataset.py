@@ -183,7 +183,14 @@ def visualize_sample(sample_data, mode='default', save_path=None):
     plt.close()
 
 
-def validate_dataset(num_samples=5, config=None, mode='default', use_cached_patches=False, recompute_layer_stats=False):
+def validate_dataset(
+    num_samples=5, 
+    config=None, 
+    mode='default', 
+    use_cached_patches=False, 
+    recompute_layer_stats=False, 
+    plot_samples=True
+    ):
     """
     Validate dataset loading and visualize samples.
     
@@ -192,6 +199,8 @@ def validate_dataset(num_samples=5, config=None, mode='default', use_cached_patc
         config: Configuration dict (if None, will load from load_configs)
         mode: Dataset mode - 'default', 'vae:<group>', or 'diffusion:<stage>'
         use_cached_patches: Whether to use cached patches (default: False for validation)
+        recompute_layer_stats: Whether to recompute layer statistics (default: False)
+        plot_samples: Whether to plot sample visualizations (default: True)
     """
     print("="*60)
     print(f"Dataset Validation - Mode: {mode}")
@@ -258,8 +267,9 @@ def validate_dataset(num_samples=5, config=None, mode='default', use_cached_patc
                 print(f"  Conditioning range: [{output_dict['image'].min():.3f}, {output_dict['image'].max():.3f}]")
             
             # Visualize
-            save_path = os.path.join(output_dir, f'sample_{i}.png')
-            visualize_sample(sample, mode=mode, save_path=save_path)
+            if plot_samples:
+                save_path = os.path.join(output_dir, f'sample_{i}.png')
+                visualize_sample(sample, mode=mode, save_path=save_path)
             
             print(f"  ✓ Sample {i+1} validated successfully")
             
@@ -290,7 +300,16 @@ if __name__ == '__main__':
                        help='Use cached patches instead of on-the-fly loading (default: False)')
     parser.add_argument('--recompute_layer_stats', action='store_true',
                        help='Recompute layer statistics even if cached stats exist (default: False)')
+    parser.add_argument('--no_plots', action='store_true',
+                       help='Disable sample visualizations (default: plots are enabled)')
     
     args = parser.parse_args()
     config = load_configs(parser)
-    validate_dataset(args.num_samples, config, args.mode, args.use_cached_patches, args.recompute_layer_stats)
+    validate_dataset(
+        num_samples=args.num_samples, 
+        config=config, 
+        mode=args.mode, 
+        use_cached_patches=args.use_cached_patches, 
+        recompute_layer_stats=args.recompute_layer_stats, 
+        plot_samples=not args.no_plots
+    )
