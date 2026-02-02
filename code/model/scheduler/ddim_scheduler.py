@@ -268,8 +268,8 @@ class DDIMScheduler:
         
         x0_pred = (xt - sqrt_one_minus_alpha_t * noise_pred) / sqrt_alpha_t
         
-        # Clamp x0 prediction for stability (latents may be outside [-1,1])
-        x0_pred = torch.clamp(x0_pred, -3.0, 3.0)
+        # Clamp x0 prediction for stability (but not too aggressive - VAE latents can be larger)
+        x0_pred = torch.clamp(x0_pred, -10.0, 10.0)
         
         # Last step: return clean prediction
         if ddim_step == 0:
