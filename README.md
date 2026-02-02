@@ -108,7 +108,7 @@ e.g. to run the diffusion script with 4 GPUs:
 
 ```bash
 # 1. Request interactive session (ntasks=1 for bash, but reserve 4 GPUs)
-srun --pty -p paula --gpus=a30:4 --ntasks=1 --cpus-per-task=8 --mem=64G --time=01:00:00 bash
+srun --pty -p paula --gpus=a30:4 --ntasks=1 --cpus-per-task=8 --mem=64G --time=02:00:00 bash
 
 # 2. Activate environment
 conda activate genaiSpatialplan
