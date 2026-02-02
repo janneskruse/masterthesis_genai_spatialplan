@@ -1036,12 +1036,25 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 progress_bar.set_postfix(postfix)
             
             # Save sample predictions periodically
-            if is_main and epoch_idx % sample_epochs > 0 and (epoch_idx + 1) % sample_epochs == 0:
+            if is_main and (epoch_idx + 1) % sample_epochs == 0:
                 with torch.no_grad():
                     model.eval()
                     
                     # Generate a few samples
                     num_samples = min(4, im_latent.shape[0])
+                    
+                    # Decode ground truth context ONCE before sampling
+                    if vae is not None:
+                        gt_decoded_original = vae.decode(im_latent[:num_samples])
+                    else:
+                        gt_decoded_original = im_latent[:num_samples]
+                    
+                    # Upsample mask to decoded resolution (needed for context compositing)
+                    mask_decoded = torchF.interpolate(
+                        mask_latent[:num_samples],
+                        size=(gt_decoded_original.shape[2], gt_decoded_original.shape[3]),
+                        mode='nearest'
+                    )
                     
                     # Start from pure noise in masked region
                     x_sample = im_latent[:num_samples].clone()
@@ -1049,19 +1062,18 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     # Fixed noise_context for hard mode
                     sample_noise_context = None
                     
-                    if inpainting_mode == "hard":  # FIX: Use inpainting_mode variable, not stage name
+                    if inpainting_mode == "hard":
                         x_sample = mask_latent[:num_samples] * torch.randn_like(x_sample) + (1 - mask_latent[:num_samples]) * x_sample
-                        # FIX: Create fixed noise_context for temporal consistency
+                        # Create fixed noise_context for temporal consistency
                         sample_noise_context = torch.randn_like(x_sample)
                     else:
                         x_sample = torch.randn_like(x_sample)
                     
-                    # Quick sampling (DDIM-style with fewer steps for speed)
-                    # For cleaner results: more steps
-                    sample_steps = min(sample_steps, scheduler.num_timesteps)
+                    # Quick sampling using sample steps defined by config
+                    current_sample_steps = min(sample_steps, scheduler.num_timesteps)
                     
                     # Create timestep schedule: evenly spaced from T to 0
-                    timesteps = np.linspace(scheduler.num_timesteps - 1, 0, sample_steps).astype(int)
+                    timesteps = np.linspace(scheduler.num_timesteps - 1, 0, current_sample_steps).astype(int)
                     
                     # Prepare conditioning for sampling (slice all keys to num_samples)
                     sample_cond = {}
@@ -1092,46 +1104,26 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         else:
                             x_sample, _ = scheduler.sample_prev_timestep(x_sample, noise_pred, t)
                     
-                    # Decode to pixel space
+                    # Decode generated latent to pixel space
                     if vae is not None:
-                        sample_decoded = vae.decode(x_sample)
-                        gt_decoded = vae.decode(im_latent[:num_samples])  # Ground truth for comparison
+                        sample_decoded_raw = vae.decode(x_sample)
                     else:
-                        sample_decoded = x_sample
-                        gt_decoded = im_latent[:num_samples]
+                        sample_decoded_raw = x_sample
                     
-                    # Upsample mask to match decoded resolution (needed for post-processing and debug)
-                    mask_vis = torchF.interpolate(
-                        mask_latent[:num_samples],
-                        size=(sample_decoded.shape[2], sample_decoded.shape[3]),
-                        mode='nearest'
-                    )
+                    # Composite with original decoded context
+                    sample_decoded = mask_decoded * sample_decoded_raw + (1 - mask_decoded) * gt_decoded_original
                     
-                    # DEBUG: Check if context was preserved correctly
-                    # In hard mode, outside mask should match ground truth exactly
-                    if inpainting_mode == "hard":
-                        context_mask = (1 - mask_latent[:num_samples])  # 1 = context region
-                        latent_context_diff = ((x_sample - im_latent[:num_samples]) * context_mask).abs()
-                        print(f"\n[DEBUG SAMPLING] Step {global_step}")
-                        print(f"  Timesteps: first={timesteps[0]}, last={timesteps[-1]}, total={len(timesteps)}")
-                        print(f"  Context preservation check (should be ~0):")
-                        print(f"    Latent diff (context region): max={latent_context_diff.max().item():.6f}, mean={latent_context_diff.mean().item():.6f}")
-                        print(f"  Mask stats: min={mask_latent[:num_samples].min():.2f}, max={mask_latent[:num_samples].max():.2f}, mean={mask_latent[:num_samples].mean():.2f}")
-                        
-                        # Also check decoded space
-                        decoded_context_diff = ((sample_decoded - gt_decoded) * (1 - mask_vis)).abs()
-                        print(f"    Decoded diff (context region): max={decoded_context_diff.max().item():.6f}, mean={decoded_context_diff.mean().item():.6f}")
+                    # Use original ground truth for comparison (not re-decoded)
+                    gt_decoded = gt_decoded_original
                     
                     # Apply post-processing for cleaner visualization:
-                    # 1. normalize_mask_region: normalize generated region to [0,1], keep context unchanged
-                    # 2. sharpen_binary: threshold binary layers to {0,1}
                     sample_decoded = apply_post_processing(
                         tensor=sample_decoded,
                         layer_names=prediction_layers,
                         layers_registry=layers_registry,
                         post_process_config=post_process_config,
                         inplace=False,
-                        mask=mask_vis  # Pass mask for normalize_mask_region
+                        mask=mask_decoded  # Pass mask for normalize_mask_region
                     )
                     
                     # Save comparison: ground truth vs predictions (top: GT, bottom: predictions)
@@ -1145,7 +1137,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         filename_prefix=f'sample_step_{global_step}_comparison',
                         n_samples=num_samples,
                         use_colormaps=True,
-                        mask=mask_vis
+                        mask=mask_decoded
                     )
                     
                     # Also save predictions alone (existing behavior)
@@ -1158,7 +1150,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         n_samples=num_samples,
                         is_reconstruction=True,  # VAE decoding, may have different scale
                         use_colormaps=True,
-                        mask=mask_vis
+                        mask=mask_decoded
                     )
                     
                     # Also save RGB composite if available
