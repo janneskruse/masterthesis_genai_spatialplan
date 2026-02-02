@@ -441,7 +441,7 @@ diffusion_stages:
 
     post_process:
       normalize_mask_region: True  # Normalize generated region to [0,1], keep context unchanged
-      sharpen_binary: True         # Threshold binary layers (buildings, streets, vegetation) to {0, 1}
+      sharpen_binary: False         # Threshold binary layers (buildings, streets, vegetation) to {0, 1}
       threshold: 0.5               # Threshold value for binary sharpening
       # clip_output: False         # Hard clamp - use normalize_mask_region instead
   
