@@ -675,9 +675,9 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # Post-processing configuration (for validation sampling)
     post_process_config = stage_config.get('post_process', {})
     
-    # Image save frequency
-    sample_epochs = stage_config.get('sample_epochs', 50)
-    sample_steps = stage_config.get('sample_steps', 500)
+    # Image save frequency (from train_config, not stage_config!)
+    sample_epochs = train_config.get('sample_epochs', 50)
+    sample_steps = train_config.get('sample_steps', 500)
     
     # Gradient accumulation configuration
     gradient_accumulation_steps = train_config.get('gradient_accumulation_steps', 1)
