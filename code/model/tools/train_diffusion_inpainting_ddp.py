@@ -34,7 +34,7 @@ from model.utils.diffusion_utils import (
 )
 from model.utils.loss_weighting import compute_loss_weights
 from model.utils.scalar_controls import parse_scalar_controls_config
-from model.utils.samples import save_layerwise_samples, save_rgb_composite
+from model.utils.samples import save_layerwise_samples, save_rgb_composite, save_layerwise_comparisons
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
@@ -1092,8 +1092,10 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     # Decode to pixel space
                     if vae is not None:
                         sample_decoded = vae.decode(x_sample)
+                        gt_decoded = vae.decode(im_latent[:num_samples])  # Ground truth for comparison
                     else:
                         sample_decoded = x_sample
+                        gt_decoded = im_latent[:num_samples]
                     
                     # Upsample mask to match decoded resolution for visualization
                     mask_vis = torchF.interpolate(
@@ -1102,7 +1104,21 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                         mode='nearest'
                     )
                     
-                    # Save layerwise visualizations using unified utility
+                    # Save comparison: ground truth vs predictions (top: GT, bottom: predictions)
+                    save_layerwise_comparisons(
+                        input_tensor=gt_decoded,
+                        recon_tensor=sample_decoded,
+                        channel_names=[f'channel_{i}' for i in range(len(prediction_layers))],
+                        layer_names=prediction_layers,
+                        layers_registry=layers_registry,
+                        save_dir=os.path.join(out_dir, samples_dir_name),
+                        filename_prefix=f'sample_step_{global_step}_comparison',
+                        n_samples=num_samples,
+                        use_colormaps=True,
+                        mask=mask_vis
+                    )
+                    
+                    # Also save predictions alone (existing behavior)
                     save_layerwise_samples(
                         tensor=sample_decoded,
                         layer_names=prediction_layers,
