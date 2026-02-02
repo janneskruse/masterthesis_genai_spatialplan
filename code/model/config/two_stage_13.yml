@@ -427,8 +427,8 @@ diffusion_stages:
           relative_weight: true      # If true, weight is fraction of noise loss (0.01 = 1% of noise loss)
                                      # If false, weight is absolute multiplier on perceptual loss
           normalize_features: true   # L2-normalize features before MSE (reduces magnitude ~10-100x)
-          start_epoch: 10            # Start applying after N epochs (0=from start)
-          warmup_epochs: 5           # Gradually ramp up weight over N epochs after start (0=instant)
+          start_epoch: 5            # Start applying after N epochs (0=from start)
+          warmup_epochs: 10           # Gradually ramp up weight over N epochs after start (0=instant)
           layers: [0, 1, 2]          # VAE encoder layers for feature extraction
           apply_every_n_steps: 1     # Apply every N training steps
           apply_below_timestep: 1000 # Only apply when t < threshold (999=all timesteps)
