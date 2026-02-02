@@ -676,7 +676,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     post_process_config = stage_config.get('post_process', {})
     
     # Image save frequency
-    img_save_steps = train_config_global.get('img_save_steps', 1000)
+    sample_epochs = stage_config.get('sample_epochs', 50)
+    sample_steps = stage_config.get('sample_steps', 500)
     
     # Gradient accumulation configuration
     gradient_accumulation_steps = train_config.get('gradient_accumulation_steps', 1)
@@ -1035,7 +1036,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 progress_bar.set_postfix(postfix)
             
             # Save sample predictions periodically
-            if is_main and global_step % img_save_steps == 0:
+            if is_main and epoch_idx % sample_epochs > 0 and (epoch_idx + 1) % sample_epochs == 0:
                 with torch.no_grad():
                     model.eval()
                     
@@ -1057,7 +1058,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                     
                     # Quick sampling (DDIM-style with fewer steps for speed)
                     # For cleaner results: more steps
-                    sample_steps = min(500, scheduler.num_timesteps)
+                    sample_steps = min(sample_steps, scheduler.num_timesteps)
                     
                     # Create timestep schedule: evenly spaced from T to 0
                     timesteps = np.linspace(scheduler.num_timesteps - 1, 0, sample_steps).astype(int)

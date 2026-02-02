@@ -627,6 +627,10 @@ train_params:
       loss_type: 'min_snr'  # Options: 'simple', 'snr', 'min_snr', 'v_loss'
       min_snr_gamma: 5.0  # Clamp SNR to reduce loss from very noisy timesteps
       
+      # DDPM sampling
+      sample_epochs: 2  # Sample every N epochs during training
+      sample_steps: 500 # half DDPM steps for intermediate quality checks
+
       # Validation sampling during training
       val_sample_epochs: 2  # Sample every N epochs (0 to disable)
       val_num_samples: 4  # Number of validation samples per epoch
@@ -652,6 +656,10 @@ train_params:
       # Loss improvements
       loss_type: 'min_snr'
       min_snr_gamma: 5.0
+
+      # full DDPM sampling
+      sample_epochs: 50  # Sample every N epochs during training
+      sample_steps: 500 # half DDPM steps for intermediate quality checks
       
       # Validation sampling
       val_sample_epochs: 15  # Sample every N epochs (less frequent due to longer training)
