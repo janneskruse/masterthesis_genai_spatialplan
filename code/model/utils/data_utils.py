@@ -11,6 +11,10 @@ import torchvision.transforms.functional as TF
 # Local imports
 from model.utils.layer_config import is_binary_layer
 
+# ===========================================================================
+# LAYER TRANSFORMATION UTILITIES
+# ===========================================================================
+
 def apply_layer_mask(
     data: torch.Tensor,
     mask: torch.Tensor,
@@ -345,7 +349,7 @@ def normalize_layer(data, layer_config, layer_statistics=None):
 
 
 # ===========================================================================
-# TEMPERATURE CONTROL UTILITIES
+# Scalar CONTROL UTILITIES
 # ===========================================================================
 
 def masked_quantile(x: torch.Tensor, mask: torch.Tensor, q: float = 0.95) -> torch.Tensor:
@@ -425,6 +429,10 @@ def normalize_scalar_like_layer(
     # Extract scalar
     return float(t_norm.item())
 
+
+# ===========================================================================
+# BATCHING AND AUGMENTATION UTILITIES
+# ===========================================================================
 
 def collate_fn(batch):
     """
