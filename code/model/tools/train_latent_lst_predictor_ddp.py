@@ -33,6 +33,7 @@ from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.utils.statistics import compute_lst_statistic
+from model.utils.vae_registry import VAERegistry
 from model.lst_predictor.latent_predictor import LatentLSTPredictor
 from helpers.load_configs import load_configs, add_config_arguments
 
@@ -73,6 +74,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         return
     
     existing_patches_path = existing_paths_result.patches_path
+    existing_vae_paths = existing_paths_result.vae_checkpoints
     
     # Setup distributed
     rank, local_rank, world_size = setup_distributed()
@@ -181,6 +183,59 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         print(f"✓ Latent size: {latent_size}x{latent_size}")
         print(f"✓ Latent channels: {z_channels}")
     
+    ########## Load VAE for on-the-fly encoding (if needed) #############
+    # Check if dataset will return full-res images (needs_encoding)
+    # This happens when pre-computed latents don't exist
+    vae = None
+    needs_encoding_global = False
+    
+    # Check first sample to see if encoding is needed
+    sample_data = urban_dataset[0]
+    if len(sample_data) == 2:
+        _, sample_cond = sample_data
+        sample_meta = sample_cond.get('meta', {})
+        if isinstance(sample_meta, list) and len(sample_meta) > 0:
+            needs_encoding_global = sample_meta[0].get('needs_encoding', False)
+        else:
+            needs_encoding_global = sample_meta.get('needs_encoding', False)
+    
+    if needs_encoding_global:
+        if is_main:
+            print(f"\n{'='*50}")
+            print(f"Loading VAE for on-the-fly encoding")
+            print(f"{'='*50}")
+        
+        # Use VAERegistry for cleaner management
+        vae_registry = VAERegistry(config, device)
+        
+        # Determine VAE checkpoint path
+        vae_config = vae_groups.get(mode, {})
+        if mode in existing_vae_paths:
+            vae_ckpt_path = existing_vae_paths[mode]
+        else:
+            default_ckpt_name = vae_config.get('checkpoint_name', f'{mode}_vae_ckpt.pth')
+            vae_ckpt_path = os.path.join(out_dir, default_ckpt_name)
+        
+        # Load VAE
+        if is_main:
+            print(f"  - {mode.upper()} VAE for encoding")
+        vae_registry.load_vae(
+            group_name=mode,
+            checkpoint_path=vae_ckpt_path,
+            autoencoder_config=vae_config
+        )
+        vae = vae_registry.get_vae(mode)
+        vae_registry.freeze(mode)
+        
+        if vae is None:
+            raise RuntimeError(
+                f"Dataset returned full-res images but could not load VAE for mode '{mode}'. "
+                f"Either provide pre-computed latents or ensure VAE checkpoint exists at {vae_ckpt_path}."
+            )
+        
+        if is_main:
+            print(f"✓ Loaded and froze {mode} VAE for encoding training samples")
+    
     # Distributed sampler
     sampler = DistributedSampler(
         urban_dataset,
@@ -281,11 +336,11 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         for batch_idx, data in enumerate(progress_bar):
             optimizer.zero_grad()
             
-            # Extract data: (latent, cond_dict)
+            # Extract data: (latent_or_image, cond_dict)
             if len(data) != 2:
                 continue
             
-            latent, cond_dict = data
+            latent_or_image, cond_dict = data
             
             # Get LST full-res from conditioning
             if 'image' not in cond_dict or cond_dict['image'] is None:
@@ -296,8 +351,18 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             
             if isinstance(meta, list) and len(meta) > 0:
                 pixel_space_names = meta[0].get('pixel_space_names', [])
+                needs_encoding = meta[0].get('needs_encoding', False)
             else:
                 pixel_space_names = meta.get('pixel_space_names', [])
+                needs_encoding = meta.get('needs_encoding', False)
+            
+            # Encode full-res image to latent if needed
+            if needs_encoding:
+                with torch.no_grad():
+                    full_res_image = latent_or_image.float().to(device)
+                    latent, _, _ = vae.encode(full_res_image)
+            else:
+                latent = latent_or_image
             
             # Find LST channel in conditioning
             lst_idx = None
@@ -325,8 +390,9 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             target = compute_lst_statistic(lst_fullres, statistic=statistic, mask=mask)
             target = target.to(device)
             
-            # Forward pass
-            latent = latent.float().to(device)
+            # Forward pass (latent already on device if encoded, otherwise move now)
+            if not needs_encoding:
+                latent = latent.float().to(device)
             pred = model(latent)
             
             # Compute loss
