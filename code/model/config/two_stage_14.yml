@@ -316,7 +316,7 @@ latent_lst_predictor:
   hidden_dims: [64, 128, 256]
   
   # Training
-  epochs: 100
+  epochs: 40
   batch_size: 32          # Can be large (small model)
   lr: 0.0001
   loss: 'mse'             # 'mse', 'l1', 'huber'
