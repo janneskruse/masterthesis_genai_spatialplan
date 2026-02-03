@@ -487,12 +487,12 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             global_step += 1
             
             if rank == 0:
-                # Convert MSE loss to RMSE in Celsius for interpretability
-                # MSE is in squared normalized units, so sqrt gives normalized error, then scale to Celsius
-                loss_rmse_celsius = math.sqrt(loss.item()) * lst_max
+                # Convert loss to error in Celsius for interpretability
+                loss_val = loss.item()
+                error_celsius = (math.sqrt(loss_val) if loss_is_squared else loss_val) * lst_max
                 progress_bar.set_postfix({
-                    'loss': f'{loss.item():.4f}',
-                    'RMSE°C': f'{loss_rmse_celsius:.2f}'
+                    'loss': f'{loss_val:.4f}',
+                    'err°C': f'{error_celsius:.2f}'
                 })
         
         # Synchronize
@@ -574,12 +574,13 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         
         # Epoch summary
         if is_main:
-            # Convert MSE to RMSE in Celsius
-            train_rmse_celsius = math.sqrt(train_loss) * lst_max
-            summary = f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Train: {train_loss:.4f} (RMSE ~{train_rmse_celsius:.2f}°C)'
+            # Convert loss to error in Celsius
+            train_err_celsius = (math.sqrt(train_loss) if loss_is_squared else train_loss) * lst_max
+            err_label = 'RMSE' if loss_is_squared else 'err'
+            summary = f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Train: {train_loss:.4f} ({err_label} ~{train_err_celsius:.2f}°C)'
             if val_loss is not None:
-                val_rmse_celsius = math.sqrt(val_loss) * lst_max
-                summary += f' | Val: {val_loss:.4f} (RMSE ~{val_rmse_celsius:.2f}°C)'
+                val_err_celsius = (math.sqrt(val_loss) if loss_is_squared else val_loss) * lst_max
+                summary += f' | Val: {val_loss:.4f} ({err_label} ~{val_err_celsius:.2f}°C)'
             print(summary)
         
         # Determine which loss to use for checkpointing
@@ -617,9 +618,10 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
                     'best_val_loss': best_val_loss,
                 }, checkpoint_path)
                 
-                best_rmse_celsius = math.sqrt(best_val_loss) * lst_max
+                best_err_celsius = (math.sqrt(best_val_loss) if loss_is_squared else best_val_loss) * lst_max
                 loss_type_str = 'val' if val_loss is not None else 'train'
-                print(f"  ✓ Saved best model ({loss_type_str} loss: {best_val_loss:.4f}, RMSE ~{best_rmse_celsius:.2f}°C)")
+                err_label = 'RMSE' if loss_is_squared else 'err'
+                print(f"  ✓ Saved best model ({loss_type_str} loss: {best_val_loss:.4f}, {err_label} ~{best_err_celsius:.2f}°C)")
         else:
             # No improvement - increment patience counter on ALL ranks
             patience_counter += 1
