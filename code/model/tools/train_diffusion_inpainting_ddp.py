@@ -260,7 +260,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     if is_main:
         print(f"\n✓ Created DDPM training scheduler ({scheduler.num_timesteps} timesteps, {beta_schedule} schedule)")
         print(f"✓ Prediction type: {prediction_type}")
-        print(f"✓ Created DDIM validation scheduler ({val_scheduler.ddim_steps} steps, eta={val_ddim_eta:.2f}, clamp=[{val_ddim_clamp_range[0]}, {val_ddim_clamp_range[1]}])")
+        print(f"✓ Created DDIM validation scheduler ({val_scheduler.ddim_steps} steps, eta={val_ddim_eta:.2f}, clamp=[{clamp_range[0]}, {clamp_range[1]}])")
     
     ########## Load Dataset #############
     if is_main:

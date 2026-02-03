@@ -640,7 +640,7 @@ train_params:
       val_sample_steps: 50  # DDIM steps for fast validation (20x faster than 1000 DDPM steps)
       val_ddim_eta: 0.5  # DDIM stochasticity: 0.0=deterministic, 1.0=DDPM-like noise
                          # Higher eta can help explore diverse modes and reduce class collapse
-      val_ddim_clamp_range: [-10.0, 10.0]  # Clamp x0_pred for numerical stability
+      clamp_range: [-10.0, 10.0]  # Clamp x0_pred for numerical stability
       val_guidance_scale: 7.5  # CFG scale for validation (None to disable CFG)
       
       checkpoint_name: 'semantic_diffusion_ckpt.pth'
@@ -670,7 +670,7 @@ train_params:
       val_num_samples: 4
       val_sample_steps: 50  # DDIM steps for fast validation
       val_ddim_eta: 0.0  # Deterministic for satellite (photorealistic consistency)
-      val_ddim_clamp_range: [-6.0, 6.0]  # Clamp x0_pred for numerical stability
+      clamp_range: [-6.0, 6.0]  # Clamp x0_pred for numerical stability
       val_guidance_scale: 7.5
       
       checkpoint_name: 'satellite_diffusion_ckpt.pth'
