@@ -62,7 +62,7 @@ class UrbanInpaintingDataset(Dataset):
         :param split: 'train' or 'val'
         :param use_cached_patches: whether to use cached patches
         :param cache_dir: directory for cached patches
-        :param mode: 'default', 'vae:satellite', 'vae:environmental', 'diffusion:semantic', etc.
+        :param mode: 'default', 'vae:satellite', 'vae:environmental', 'diffusion:semantic', 'lst:semantic', etc.
         """
         
         ###### Setup config variables #######
@@ -82,12 +82,13 @@ class UrbanInpaintingDataset(Dataset):
         # Validate mode format
         if mode != 'default':
             mode_parts = mode.split(':')
-            if len(mode_parts) != 2 or mode_parts[0] not in ['vae', 'diffusion']:
+            if len(mode_parts) != 2 or mode_parts[0] not in ['vae', 'diffusion', 'lst']:
                 raise ValueError(
-                    f"Invalid mode: '{mode}'. Must be 'default', 'vae:<group_name>', or 'diffusion:<stage_name>'. "
-                    f"Examples: 'vae:satellite', 'diffusion:semantic'"
+                    f"Invalid mode: '{mode}'. Must be 'default', 'vae:<group_name>', "
+                    f"'diffusion:<stage_name>', or 'lst:<group_name>'. "
+                    f"Examples: 'vae:satellite', 'diffusion:semantic', 'lst:semantic'"
                 )
-            self.mode_type = mode_parts[0]  # 'vae' or 'diffusion'
+            self.mode_type = mode_parts[0]  # 'vae', 'diffusion', or 'lst'
             self.mode_target = mode_parts[1]  # 'satellite', 'semantic', etc.
         else:
             self.mode_type = 'default'
@@ -255,6 +256,9 @@ class UrbanInpaintingDataset(Dataset):
         # Load latents for diffusion mode (config-driven)
         if self.mode_type == 'diffusion':
             self._load_diffusion_latents()
+        # Load latents for LST predictor mode
+        elif self.mode_type == 'lst':
+            self._load_lst_latents()
         
         # Final summary
         self._print_summary()
@@ -661,6 +665,37 @@ class UrbanInpaintingDataset(Dataset):
                 self.group_latents[cond_group] = cond_latents
         
         print(f"\n✓ Successfully loaded latents for {len(self.group_latents)} VAE groups")
+        print(f"{'='*60}\n")
+        
+    
+    def _load_lst_latents(self):
+        """
+        Load latents for LST predictor training.
+        
+        Similar to _load_diffusion_latents but only loads the target group.
+        """
+        if self.mode_type != 'lst':
+            return
+        
+        target_group = self.mode_target
+        
+        print(f"\n{'='*60}")
+        print(f"Loading latents for LST predictor mode '{self.mode_target}'")
+        print(f"{'='*60}")
+        
+        # Load target group latents
+        print(f"\nTarget group: '{target_group}'")
+        target_latents = self._load_group_latents(target_group, reconcile=True)
+        
+        if target_latents is None:
+            raise RuntimeError(
+                f"Failed to load latents for group '{target_group}'. "
+                f"Run VAE training for this group first."
+            )
+        
+        self.group_latents[target_group] = target_latents
+        
+        print(f"\n✓ Successfully loaded {len(target_latents)} latents for LST predictor")
         print(f"{'='*60}\n")
                     
     def prepare_cached_patches(self, max_patches: Optional[int] = None) -> None:
@@ -1191,7 +1226,7 @@ class UrbanInpaintingDataset(Dataset):
             
             return image, {'image': None,'meta': image_meta}
         
-        else:  # self.mode_type == 'diffusion'
+        elif self.mode_type == 'diffusion':
             # Diffusion mode: Load prediction latent + conditioning (pixel + latent space)
             stage_config = self.diffusion_stages[self.mode_target]
             pred_group = stage_config.get('prediction_group')
@@ -1390,6 +1425,79 @@ class UrbanInpaintingDataset(Dataset):
             else:
                 # No latent available - return full-res image for encoding
                 return pred_image, cond
+            
+        elif self.mode_type == 'lst':
+            # LST predictor mode: Return VAE latent as image, LST full-res as conditioning
+            # Used for training latent-space LST predictors for Phase 2/3 guidance
+            
+            target_group = self.mode_target  # 'semantic' or 'satellite'
+            
+            if target_group not in self.vae_groups:
+                raise ValueError(
+                    f"LST mode requires VAE group '{target_group}', but it was not found. "
+                    f"Available groups: {list(self.vae_groups.keys())}"
+                )
+            
+            # Load pre-computed latent for target group
+            pred_latent = None
+            if target_group in self.group_latents and self.group_latents[target_group] is not None:
+                pred_latent_path = self.group_latents[target_group][index]
+                pred_latent = load_single_latent(pred_latent_path, device=None)
+                
+                # Apply latent scaling if configured
+                if hasattr(self, 'latent_scale_factor') and self.latent_scale_factor != 1.0:
+                    pred_latent = pred_latent * self.latent_scale_factor
+            
+            if pred_latent is None:
+                raise RuntimeError(
+                    f"LST mode requires pre-computed latents for group '{target_group}'. "
+                    f"Run VAE training first to generate latents."
+                )
+            
+            # Extract LST from unified image (full resolution for target computation)
+            lst_matches = get_layer_channels_from_names(channel_names, 'lst')
+            if not lst_matches:
+                raise ValueError(
+                    f"LST mode requires 'lst' layer in patch, but it was not found. "
+                    f"Available layers: {set(layer_names)}"
+                )
+            
+            lst_indices = [idx for idx, _ in lst_matches]
+            lst_fullres = unified_image[lst_indices]  # [C_lst, H, W]
+            
+            # Optionally extract inpainting mask (for masked p95 computation)
+            mask = None
+            mask_matches = get_layer_channels_from_names(channel_names, 'inpainting_mask')
+            if mask_matches:
+                mask_idx = mask_matches[0][0]
+                mask = unified_image[mask_idx:mask_idx+1]  # [1, H, W]
+            
+            # Build conditioning dict with LST (and optionally mask)
+            cond = {'meta': patch_data['meta'].copy()}
+            
+            pixel_cond_list = [lst_fullres]
+            pixel_cond_names = ['lst']
+            
+            if mask is not None:
+                pixel_cond_list.append(mask)
+                pixel_cond_names.append('inpainting_mask')
+            
+            cond['image'] = torch.stack(pixel_cond_list, dim=0) if len(pixel_cond_list) > 1 else lst_fullres.unsqueeze(0)
+            # Flatten to [C, H, W] if stacked
+            if len(pixel_cond_list) > 1:
+                cond['image'] = torch.cat(pixel_cond_list, dim=0)
+            else:
+                cond['image'] = lst_fullres
+            
+            cond['meta']['pixel_space_names'] = pixel_cond_names
+            cond['meta']['layer_names'] = pixel_cond_names
+            cond['meta']['channel_names'] = pixel_cond_names
+            cond['meta']['target_group'] = target_group
+            
+            return pred_latent, cond
+        
+        else:
+            raise ValueError(f"Unsupported mode_type: {self.mode_type}")
     
     def _getitem_cached(self, index: int):
         """
