@@ -312,23 +312,29 @@ vae_groups:
 # ===========================================================================
 
 latent_lst_predictor:
-  # Architecture
-  hidden_dims: [64, 128, 256]
-  dropout: 0.3             # Dropout rate for regularization (0.0 to disable)
+  # Architecture - deeper network for more capacity
+  # 64x64 latent → 32x32 → 16x16 → 8x8 → 4x4 → global pool
+  hidden_dims: [64, 128, 256, 256]  # 4 conv blocks for more capacity
+  dropout: 0.2             # Moderate dropout (0.3 was too aggressive)
   
   # Training
-  epochs: 100              # Max epochs (will early stop before this)
-  batch_size: 32           # Can be large (small model)
-  lr: 0.0001
-  loss: 'rmse'             # 'rmse' (recommended - direct °C interpretation), 'mse', 'l1', 'huber'
+  epochs: 200              # More epochs with early stopping
+  batch_size: 64           # Larger batch for stable gradients
+  lr: 0.0005               # Higher LR with scheduler
+  loss: 'mse'              # MSE for smooth gradients (display shows RMSE)
+  
+  # Learning rate scheduling
+  lr_scheduler: 'cosine'   # 'cosine', 'step', 'plateau', or null
+  lr_warmup_epochs: 5      # Linear warmup for first N epochs
+  lr_min: 0.00001          # Minimum LR for cosine schedule
   
   # Regularization
-  weight_decay: 0.001      # L2 regularization (0.0 to disable)
+  weight_decay: 0.0001     # Lighter L2 (0.001 was too strong)
   
   # Early stopping (based on validation loss)
   early_stopping: true     # Enable/disable early stopping
-  patience: 10             # Epochs to wait for improvement before stopping
-  min_delta: 0.0001        # Minimum improvement threshold
+  patience: 20             # More patience with scheduler
+  min_delta: 0.00001       # Smaller threshold
   
   # Target computation
   statistic: 'p95'         # Which statistic to predict: 'p95', 'mean', 'max'

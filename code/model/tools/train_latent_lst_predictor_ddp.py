@@ -23,6 +23,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 from torch.optim import Adam
+from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -121,6 +122,11 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     weight_decay = predictor_config.get('weight_decay', 0.0)  # L2 regularization
     dropout = predictor_config.get('dropout', 0.1)  # Dropout rate
     
+    # Learning rate scheduler params
+    lr_scheduler_type = predictor_config.get('lr_scheduler', None)  # 'cosine', 'step', 'plateau', or None
+    lr_warmup_epochs = predictor_config.get('lr_warmup_epochs', 0)
+    lr_min = predictor_config.get('lr_min', 1e-6)
+    
     # Early stopping params
     early_stopping_enabled = predictor_config.get('early_stopping', True)
     patience = predictor_config.get('patience', 10)  # Epochs to wait for improvement
@@ -158,6 +164,10 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         print(f"✓ batch_size: {batch_size}")
         print(f"✓ lr: {base_lr}")
         print(f"✓ weight_decay: {weight_decay}")
+        print(f"✓ lr_scheduler: {lr_scheduler_type or 'none'}")
+        if lr_scheduler_type:
+            print(f"✓ lr_warmup: {lr_warmup_epochs} epochs")
+            print(f"✓ lr_min: {lr_min}")
         print(f"✓ loss: {loss_type}")
         print(f"✓ statistic: {statistic}")
         print(f"✓ region: {region}")
@@ -378,6 +388,29 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     else:
         raise ValueError(f"Unknown loss type: {loss_type}. Options: 'mse', 'rmse', 'l1', 'huber'")
     
+    # Learning rate scheduler
+    scheduler = None
+    if lr_scheduler_type == 'cosine':
+        # Cosine annealing from adjusted_lr to lr_min over (epochs - warmup) epochs
+        scheduler = CosineAnnealingLR(
+            optimizer, 
+            T_max=num_epochs - lr_warmup_epochs,
+            eta_min=lr_min
+        )
+        if is_main:
+            print(f"✓ Using CosineAnnealingLR scheduler (T_max={num_epochs - lr_warmup_epochs}, eta_min={lr_min})")
+    elif lr_scheduler_type == 'step':
+        # Step decay every 30 epochs
+        scheduler = StepLR(optimizer, step_size=30, gamma=0.5)
+        if is_main:
+            print(f"✓ Using StepLR scheduler (step=30, gamma=0.5)")
+    elif lr_scheduler_type == 'plateau':
+        # Reduce on plateau (will be stepped with val_loss)
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=lr_min)
+        if is_main:
+            print(f"✓ Using ReduceLROnPlateau scheduler (factor=0.5, patience=5)")
+    elif lr_scheduler_type is not None:
+        raise ValueError(f"Unknown lr_scheduler: {lr_scheduler_type}. Options: 'cosine', 'step', 'plateau', or null")
     
     # Load checkpoint if provided
     start_epoch = 0
@@ -633,6 +666,24 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             if is_main:
                 print(f"\n⚠ Early stopping triggered! No improvement for {patience} epochs.")
             break
+        
+        # Learning rate scheduler step
+        if scheduler is not None:
+            if epoch_idx >= lr_warmup_epochs:
+                # After warmup, step the scheduler
+                if isinstance(scheduler, ReduceLROnPlateau):
+                    scheduler.step(checkpoint_loss)
+                else:
+                    scheduler.step()
+            else:
+                # During warmup: linear warmup from lr_min to adjusted_lr
+                warmup_lr = lr_min + (adjusted_lr - lr_min) * (epoch_idx + 1) / lr_warmup_epochs
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = warmup_lr
+            
+            if is_main:
+                current_lr = optimizer.param_groups[0]['lr']
+                print(f"  LR: {current_lr:.6f}")
         
         # Periodic checkpoint
         if is_main and (epoch_idx + 1) % 20 == 0:
