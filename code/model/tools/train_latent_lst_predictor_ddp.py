@@ -573,37 +573,43 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         # Determine which loss to use for checkpointing
         checkpoint_loss = val_loss if val_loss is not None else train_loss
         
+        # Check if there's improvement (all ranks need to agree on this!)
+        is_improvement = checkpoint_loss < best_val_loss - min_delta
+        
         # Save best checkpoint (based on validation loss if available)
-        if is_main and checkpoint_loss < best_val_loss - min_delta:
+        if is_improvement:
             best_val_loss = checkpoint_loss
-            patience_counter = 0  # Reset patience
-            model_to_save = model.module if hasattr(model, 'module') else model
-            checkpoint_path = out_dir / checkpoint_name
+            patience_counter = 0  # Reset patience on ALL ranks
             
-            torch.save({
-                'epoch': epoch_idx,
-                'model_state_dict': model_to_save.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'best_val_loss': best_val_loss,
-                'config': {
-                    'z_channels': z_channels,
-                    'latent_size': latent_size,
-                    'hidden_dims': hidden_dims,
-                    'mode': mode,
-                    'statistic': statistic,
-                    'region': region,
-                    'dropout': dropout,
-                },
-                'train_loss': train_loss,
-                'val_loss': val_loss,
-                'best_val_loss': best_val_loss,
-            }, checkpoint_path)
-            
-            best_loss_celsius = best_val_loss * lst_max
-            loss_type_str = 'val' if val_loss is not None else 'train'
-            print(f"  ✓ Saved best model ({loss_type_str} loss: {best_val_loss:.4f} ~{best_loss_celsius:.2f}°C)")
+            # Only main rank saves the checkpoint
+            if is_main:
+                model_to_save = model.module if hasattr(model, 'module') else model
+                checkpoint_path = out_dir / checkpoint_name
+                
+                torch.save({
+                    'epoch': epoch_idx,
+                    'model_state_dict': model_to_save.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'best_val_loss': best_val_loss,
+                    'config': {
+                        'z_channels': z_channels,
+                        'latent_size': latent_size,
+                        'hidden_dims': hidden_dims,
+                        'mode': mode,
+                        'statistic': statistic,
+                        'region': region,
+                        'dropout': dropout,
+                    },
+                    'train_loss': train_loss,
+                    'val_loss': val_loss,
+                    'best_val_loss': best_val_loss,
+                }, checkpoint_path)
+                
+                best_loss_celsius = best_val_loss * lst_max
+                loss_type_str = 'val' if val_loss is not None else 'train'
+                print(f"  ✓ Saved best model ({loss_type_str} loss: {best_val_loss:.4f} ~{best_loss_celsius:.2f}°C)")
         else:
-            # No improvement - increment patience counter
+            # No improvement - increment patience counter on ALL ranks
             patience_counter += 1
             if is_main and early_stopping_enabled:
                 print(f"  No improvement. Patience: {patience_counter}/{patience}")
