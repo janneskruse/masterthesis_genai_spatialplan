@@ -138,26 +138,34 @@ dataset_params:
 # ===========================================================================
 # TEMPERATURE THRESHOLD CONTROL
 # Three-layer control stack for constraining generated layouts by max temperature
-# To-do: implement layer 2 and 3 into the sampling loop
+# ===========================================================================
+# Phase 1: Scalar conditioning (via time embedding) - already implemented
+# Phase 2: Soft gradient guidance using LatentLSTPredictor - NEW
+# Phase 3: Hard accept/reject check after sampling - TODO
 # ===========================================================================
 
-# temperature_control:
-#   # Layer 2: Soft guidance (optional)
-#   # Use trained LST predictor to guide sampling toward threshold
-#   guidance:
-#     enabled: false  # Set to true to enable predictor-based guidance
-#     scale: 0.5  # Guidance strength (0.0 = no guidance, 1.0+ = strong)
-#     predictor_checkpoint: "lst_predictor_ckpt.pth"  # Path relative to results dir
-#     eval_every_n_steps: 1  # Apply guidance every N denoising steps
+temperature_control:
+  # Normalization (must match dataset)
+  lst_max: 80.0  # Maximum LST value in Celsius for normalization
+
+  # Phase 2: Soft guidance using LatentLSTPredictor
+  # Uses gradient-based guidance in latent space (no VAE decode needed!)
+  guidance:
+    enabled: false  # Set to true to enable predictor-based guidance
+    scale: 1.0  # Guidance strength (0.0 = no guidance, higher = stronger)
+    target_p95_celsius: 35.0  # Target max temperature in Celsius
+    predictor_mode: 'semantic'  # Which latent predictor to use: 'semantic' or 'satellite'
+    eval_every_n_steps: 1  # Apply guidance every N denoising steps
+    warmup_fraction: 0.1  # Skip first 10% of steps (too noisy for guidance)
+    cooldown_fraction: 0.1  # Skip last 10% of steps (for quality)
   
-#   # Layer 3: Hard check (optional)
-#   # Reject samples that violate threshold, retry with stronger guidance
-#   hard_check:
-#     enabled: false  # Set to true to enable acceptance/retry logic
-#     max_tries: 4  # Maximum retry attempts
-#     accept_margin: 0.02  # Accept if predicted_p95 <= threshold + margin (normalized)
-
-
+  # Phase 3: Hard check (optional)
+  # Reject samples that violate threshold, retry with stronger guidance
+  hard_check:
+    enabled: false  # Set to true to enable acceptance/retry logic
+    max_tries: 4  # Maximum retry attempts
+    accept_margin: 2.0  # Accept if predicted_p95 <= threshold + margin (Celsius)
+    guidance_scale_increase: 0.5  # Increase guidance scale per retry
 
 
 

@@ -3,6 +3,10 @@ Latent-space LST predictor for diffusion guidance.
 Predicts LST p95 from semantic/satellite VAE latents.
 """
 ###### import libraries ######
+# Standard libraries
+import os
+from typing import Optional, Dict, Any
+
 # Data Science/ML libraries
 import torch
 import torch.nn as nn
@@ -88,3 +92,77 @@ class LatentLSTPredictor(nn.Module):
             LST prediction [B, 1] in Celsius
         """
         return self.forward(z) * lst_max
+
+
+def load_latent_lst_predictor(
+    config: Dict[str, Any],
+    mode: str,
+    device: torch.device,
+    checkpoint_dir: Optional[str] = None
+) -> Optional[LatentLSTPredictor]:
+    """
+    Load a trained LatentLSTPredictor from checkpoint.
+    
+    Args:
+        config: Full config dict containing 'latent_lst_predictor' section
+        mode: Predictor mode ('semantic' or 'satellite')
+        device: Device to load model on
+        checkpoint_dir: Directory containing checkpoint (defaults to results/<task_name>)
+        
+    Returns:
+        Loaded LatentLSTPredictor or None if checkpoint not found
+    """
+    predictor_config = config.get('latent_lst_predictor', {})
+    modes_config = predictor_config.get('modes', {})
+    
+    if mode not in modes_config:
+        print(f"⚠ Mode '{mode}' not found in latent_lst_predictor.modes config")
+        return None
+    
+    mode_config = modes_config[mode]
+    
+    # Get architecture params
+    z_channels = mode_config.get('z_channels', 3)
+    latent_size = mode_config.get('latent_size', 64)
+    hidden_dims = predictor_config.get('hidden_dims', [64, 128, 256])
+    
+    # Get checkpoint path
+    checkpoint_name = mode_config.get('checkpoint_name', f'latent_lst_predictor_{mode}.pth')
+    
+    if checkpoint_dir is None:
+        train_config = config.get('train_params', {})
+        task_name = train_config.get('task_name', 'urban_inpainting')
+        repo_dir =config.get('repo_dir', '')
+        if not repo_dir:
+            raise ValueError("repo_dir must be specified in config if checkpoint_dir is not provided")
+        checkpoint_dir = os.path.join(repo_dir, 'results', task_name)
+    
+    checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
+    
+    if not os.path.exists(checkpoint_path):
+        print(f"⚠ Latent LST predictor checkpoint not found: {checkpoint_path}")
+        return None
+    
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    
+    # Create model
+    model = LatentLSTPredictor(
+        z_channels=z_channels,
+        latent_size=latent_size,
+        hidden_dims=hidden_dims,
+    ).to(device)
+    
+    # Load weights
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    
+    # Print info
+    epoch = checkpoint.get('epoch', 'unknown')
+    val_loss = checkpoint.get('val_loss', checkpoint.get('best_val_loss', 'unknown'))
+    print(f"✓ Loaded latent LST predictor ({mode})")
+    print(f"  Checkpoint: {checkpoint_path}")
+    print(f"  Epoch: {epoch}, Val loss: {val_loss:.6f}" if isinstance(val_loss, float) else f"  Epoch: {epoch}")
+    print(f"  Architecture: z_channels={z_channels}, latent_size={latent_size}, hidden_dims={hidden_dims}")
+    
+    return model

@@ -29,9 +29,16 @@ from model.utils.data_utils import normalize_scalar_like_layer
 from model.utils.scalar_controls import parse_scalar_controls_config
 from model.utils.building_metrics import aggregate_metrics_batch, print_metrics_summary
 from model.utils.post_process import apply_post_processing
+from model.utils.latent_guidance import (
+    apply_latent_lst_guidance, 
+    compute_latent_lst_prediction,
+    should_apply_guidance,
+    LatentGuidanceConfig
+)
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 from model.lst_predictor.predictor import LSTPredictor
+from model.lst_predictor.latent_predictor import LatentLSTPredictor, load_latent_lst_predictor
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -204,6 +211,8 @@ def sample_semantics(
     pred_group,
     mode='semantic',
     lst_predictor=None,
+    latent_lst_predictor=None,
+    latent_guidance_config=None,
     num_samples=4, 
     guidance_scale=7.5,
     lst_guidance_scale=1.0,
@@ -229,7 +238,9 @@ def sample_semantics(
         vae_groups: VAE groups config
         pred_group: Prediction group name
         mode: Diffusion mode (e.g., 'semantic')
-        lst_predictor: Optional LST predictor for guidance
+        lst_predictor: Optional LST predictor for guidance (full-resolution, deprecated)
+        latent_lst_predictor: LatentLSTPredictor for Phase 2 guidance (NEW)
+        latent_guidance_config: LatentGuidanceConfig with guidance parameters
         num_samples: Number of samples to generate
         guidance_scale: Classifier-free guidance scale
         lst_guidance_scale: LST guidance scale
@@ -271,6 +282,13 @@ def sample_semantics(
     ddim_steps = diffusion_config.get('ddim_steps', 50)
     ddim_eta = diffusion_config.get('ddim_eta', 0.0)
     
+    # Phase 2 latent guidance config
+    use_latent_guidance = (
+        latent_guidance_config is not None and 
+        latent_guidance_config.enabled and 
+        latent_lst_predictor is not None
+    )
+    
     print("\n" + "="*50)
     print("Semantic Sampling Configuration")
     print("="*50)
@@ -284,10 +302,25 @@ def sample_semantics(
         print(f"DDPM steps: {scheduler.num_timesteps}")
     print(f"Number of samples: {num_samples}")
     print(f"Guidance scale (CFG): {guidance_scale}")
-    print(f"LST guidance scale: {lst_guidance_scale}")
-    print(f"Use LST guidance: {use_lst_guidance}")
+    print(f"LST guidance scale (deprecated): {lst_guidance_scale}")
+    print(f"Use LST guidance (deprecated): {use_lst_guidance}")
     print(f"Prediction group: {pred_group}")
     print(f"Semantic layers: {semantic_layers}")
+    
+    # Print Phase 2 latent guidance info
+    print("\n--- Phase 2: Latent LST Guidance ---")
+    if use_latent_guidance:
+        print(f"✓ ENABLED")
+        print(f"  Target temperature: {latent_guidance_config.target_p95_celsius}°C")
+        print(f"  Guidance scale: {latent_guidance_config.scale}")
+        print(f"  Apply every N steps: {latent_guidance_config.eval_every_n_steps}")
+        print(f"  Warmup fraction: {latent_guidance_config.warmup_fraction:.0%}")
+        print(f"  Cooldown fraction: {latent_guidance_config.cooldown_fraction:.0%}")
+    else:
+        if latent_lst_predictor is None:
+            print("✗ Disabled (no latent predictor loaded)")
+        elif latent_guidance_config is None or not latent_guidance_config.enabled:
+            print("✗ Disabled (guidance not enabled in config)")
     
     # Load dataset to get conditioning examples
     task_name = train_config.get('task_name', 'urban_inpainting')
@@ -706,7 +739,31 @@ def sample_semantics(
                     with torch.no_grad():
                         noise_pred = model(x, t, cond_input=cond_input)
                 
-                # Apply LST guidance (currently disabled)
+                # =====================================================================
+                # PHASE 2: Latent LST Guidance (NEW)
+                # Apply gradient-based guidance to steer generation toward target temperature
+                # =====================================================================
+                if use_latent_guidance and should_apply_guidance(
+                    step_idx=step_idx,
+                    num_steps=num_steps,
+                    eval_every_n_steps=latent_guidance_config.eval_every_n_steps,
+                    warmup_fraction=latent_guidance_config.warmup_fraction,
+                    cooldown_fraction=latent_guidance_config.cooldown_fraction,
+                ):
+                    noise_pred = apply_latent_lst_guidance(
+                        x=x,
+                        t=t,
+                        noise_pred=noise_pred,
+                        model=model,
+                        scheduler=scheduler,
+                        cond_input=cond_input,
+                        latent_predictor=latent_lst_predictor,
+                        target_p95=latent_guidance_config.target_p95_normalized,
+                        guidance_scale=latent_guidance_config.scale,
+                        mask=mask_latent,
+                    )
+                
+                # (Deprecated) Full-resolution LST guidance
                 # if use_lst_guidance and lst_predictor is not None and lst_target is not None:
                 #     pred_vae = vae_registry.get_vae(pred_group)
                 #     t_value_for_guidance = t_value if sampler_type == 'ddim' else step_idx
@@ -1063,13 +1120,58 @@ def infer(args, config):
         print(f"✗ Semantic Diffusion Model not found at {ldm_path}")
         return
     
-    # Load LST Predictor (optional)
+    # Load LST Predictor (optional - deprecated full-resolution version)
     lst_predictor = None
     if args.use_lst_guidance:
         # LST predictor path from base train_config
         base_train_config = config['train_params']
         lst_predictor_path = os.path.join(data_dir, base_train_config.get('lst_predictor_ckpt_name', 'lst_predictor_best.pth'))
         lst_predictor = load_lst_predictor(lst_predictor_path, device)
+    
+    # =====================================================================
+    # PHASE 2: Load Latent LST Predictor and Guidance Config (NEW)
+    # =====================================================================
+    latent_lst_predictor = None
+    latent_guidance_config = None
+    
+    # Get temperature control config
+    temp_control_config = config.get('temperature_control', {})
+    guidance_cfg = temp_control_config.get('guidance', {})
+    
+    # Check if latent guidance is enabled
+    if guidance_cfg.get('enabled', False):
+        # Load latent guidance config
+        latent_guidance_config = LatentGuidanceConfig.from_config(config)
+        
+        # Override target temperature if provided via command line
+        if hasattr(args, 'target_temperature') and args.target_temperature is not None:
+            latent_guidance_config.target_p95_celsius = args.target_temperature
+            latent_guidance_config.target_p95_normalized = args.target_temperature / latent_guidance_config.lst_max
+            print(f"✓ Overriding target temperature from CLI: {args.target_temperature}°C")
+        
+        # Override guidance scale if provided via command line
+        if hasattr(args, 'latent_guidance_scale') and args.latent_guidance_scale is not None:
+            latent_guidance_config.scale = args.latent_guidance_scale
+            print(f"✓ Overriding latent guidance scale from CLI: {args.latent_guidance_scale}")
+        
+        # Determine which predictor mode to use
+        predictor_mode = guidance_cfg.get('predictor_mode', mode)  # Default to current diffusion mode
+        
+        # Load latent predictor
+        latent_lst_predictor = load_latent_lst_predictor(
+            config=config,
+            mode=predictor_mode,
+            device=device,
+            checkpoint_dir=data_dir,
+        )
+        
+        if latent_lst_predictor is None:
+            print(f"⚠ Could not load latent LST predictor - guidance will be disabled")
+            latent_guidance_config = None
+        else:
+            print(f"✓ Latent guidance enabled: target={latent_guidance_config.target_p95_celsius}°C, scale={latent_guidance_config.scale}")
+    else:
+        print("Latent LST guidance not enabled in config (temperature_control.guidance.enabled=false)")
     
     ########## Sample Semantics #############
     samples = sample_semantics(
@@ -1089,6 +1191,8 @@ def infer(args, config):
         pred_group=pred_group,
         mode=mode,
         lst_predictor=lst_predictor,
+        latent_lst_predictor=latent_lst_predictor,
+        latent_guidance_config=latent_guidance_config,
         num_samples=args.num_samples,
         guidance_scale=args.guidance_scale,
         lst_guidance_scale=args.lst_guidance_scale,
@@ -1106,12 +1210,18 @@ if __name__ == '__main__':
     parser.add_argument('--mode', type=str, default='semantic', help='Diffusion stage to sample (e.g., semantic, satellite)')
     parser.add_argument('--num_samples', type=int, default=4, help='Number of samples to generate')
     parser.add_argument('--guidance_scale', type=float, default=7.5, help='Classifier-free guidance scale')
-    parser.add_argument('--lst_guidance_scale', type=float, default=1.0, help='LST guidance scale')
-    parser.add_argument('--use_lst_guidance', action='store_true', help='Use LST predictor guidance')
+    parser.add_argument('--lst_guidance_scale', type=float, default=1.0, help='LST guidance scale (deprecated)')
+    parser.add_argument('--use_lst_guidance', action='store_true', help='Use LST predictor guidance (deprecated)')
     parser.add_argument('--overwrite_samples', action='store_true', help='Overwrite existing samples')
     parser.add_argument('--config', type=str, default=None, help='Path to config file')
     
-    # Generic scalar control arguments (temperature, vegetation, heights, etc.)
+    # Phase 2: Latent LST guidance arguments
+    parser.add_argument('--target_temperature', type=float, default=None,
+                       help='Target p95 temperature in Celsius (overrides config). Requires guidance enabled in config.')
+    parser.add_argument('--latent_guidance_scale', type=float, default=None,
+                       help='Latent guidance scale (overrides config). Use with --target_temperature.')
+    
+    # Generic scalar control arguments (Phase 1: via time embedding)
     # Use --control key=value syntax, repeatable for multiple controls
     # Examples:
     #   --control tmax=35.0 (temperature in Celsius)
