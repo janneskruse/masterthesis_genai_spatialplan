@@ -222,7 +222,7 @@ def validate_latent_lst_predictor(
     if save_latents and sample_latents:
         latent_batch = torch.cat(sample_latents, dim=0)
         latent_vis_path = os.path.join(save_dir, f'latent_samples_{mode}.png')
-        save_latent_visualization(latent_batch, latent_vis_path, n_samples=8, mode=mode)
+        save_latent_visualization(latent_batch, latent_vis_path, n_samples=8)
         print(f"  ✓ Saved latent visualization: {latent_vis_path}")
     
     # Save metrics JSON
