@@ -195,8 +195,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         print(f"✓ Latent size: {latent_size}x{latent_size}")
         print(f"✓ Latent channels: {z_channels}")
     
-    ########## Load VAE for on-the-fly encoding (if needed) #############
-    # Check if dataset will return full-res images (needs_encoding)
+    ########## Check if training dataset needs encoding #############
     # This happens when pre-computed latents don't exist
     vae = None
     needs_encoding_global = False
@@ -211,7 +210,83 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         else:
             needs_encoding_global = sample_meta.get('needs_encoding', False)
     
-    if needs_encoding_global:
+    if is_main and needs_encoding_global:
+        print(f"✓ Training dataset requires on-the-fly encoding")
+    
+    # Distributed sampler
+    sampler = DistributedSampler(
+        urban_dataset,
+        num_replicas=world_size,
+        rank=rank,
+        shuffle=True,
+        drop_last=True
+    ) if world_size > 1 else None
+    
+    data_loader = DataLoader(
+        urban_dataset,
+        batch_size=batch_size,
+        shuffle=(sampler is None),
+        num_workers=0,
+        pin_memory=True,
+        collate_fn=collate_fn,
+        sampler=sampler,
+        drop_last=True
+    )
+    
+    ########## Load Validation Dataset (for early stopping) #############
+    val_loader = None
+    val_needs_encoding = False
+    if early_stopping_enabled:
+        if is_main:
+            print(f"\n{'='*50}")
+            print(f"Loading Validation Dataset for Early Stopping")
+            print(f"{'='*50}")
+        
+        val_dataset = UrbanInpaintingDataset(
+            split='val',
+            mode=f'lst:{mode}',
+            use_cached_patches=use_cached_patches,
+            cache_dir=str(cache_dir)
+        )
+        
+        if is_main:
+            print(f"✓ Loaded {len(val_dataset)} validation samples")
+        
+        # Check if validation dataset needs encoding
+        val_sample_data = val_dataset[0]
+        if len(val_sample_data) == 2:
+            _, val_sample_cond = val_sample_data
+            val_sample_meta = val_sample_cond.get('meta', {})
+            if isinstance(val_sample_meta, list) and len(val_sample_meta) > 0:
+                val_needs_encoding = val_sample_meta[0].get('needs_encoding', False)
+            else:
+                val_needs_encoding = val_sample_meta.get('needs_encoding', False)
+        
+        if is_main and val_needs_encoding:
+            print(f"✓ Validation dataset requires on-the-fly encoding")
+        
+        # Validation sampler (no shuffle, include all samples)
+        val_sampler = DistributedSampler(
+            val_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+            drop_last=False
+        ) if world_size > 1 else None
+        
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=True,
+            collate_fn=collate_fn,
+            sampler=val_sampler
+        )
+    
+    ########## Load VAE for on-the-fly encoding (if needed by train OR val) #############
+    # Check if either training or validation needs encoding
+    if (needs_encoding_global or val_needs_encoding) and vae is None:
         if is_main:
             print(f"\n{'='*50}")
             print(f"Loading VAE for on-the-fly encoding")
@@ -246,64 +321,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             )
         
         if is_main:
-            print(f"✓ Loaded and froze {mode} VAE for encoding training samples")
-    
-    # Distributed sampler
-    sampler = DistributedSampler(
-        urban_dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=True,
-        drop_last=True
-    ) if world_size > 1 else None
-    
-    data_loader = DataLoader(
-        urban_dataset,
-        batch_size=batch_size,
-        shuffle=(sampler is None),
-        num_workers=0,
-        pin_memory=True,
-        collate_fn=collate_fn,
-        sampler=sampler,
-        drop_last=True
-    )
-    
-    ########## Load Validation Dataset (for early stopping) #############
-    val_loader = None
-    if early_stopping_enabled:
-        if is_main:
-            print(f"\n{'='*50}")
-            print(f"Loading Validation Dataset for Early Stopping")
-            print(f"{'='*50}")
-        
-        val_dataset = UrbanInpaintingDataset(
-            split='val',
-            mode=f'lst:{mode}',
-            use_cached_patches=use_cached_patches,
-            cache_dir=str(cache_dir)
-        )
-        
-        if is_main:
-            print(f"✓ Loaded {len(val_dataset)} validation samples")
-        
-        # Validation sampler (no shuffle, include all samples)
-        val_sampler = DistributedSampler(
-            val_dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=False,
-            drop_last=False
-        ) if world_size > 1 else None
-        
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=0,
-            pin_memory=True,
-            collate_fn=collate_fn,
-            sampler=val_sampler
-        )
+            print(f"✓ Loaded and froze {mode} VAE for encoding samples")
     
     ########## Create Model #############
     if is_main:
