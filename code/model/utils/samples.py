@@ -11,6 +11,11 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn.functional as F
 from torchvision.utils import save_image, make_grid
+import numpy as np
+
+# visualization
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Local imports
 from model.utils.colors import get_colormap_for_layer, apply_colormap_to_tensor
@@ -485,3 +490,48 @@ def save_rgb_comparison(
         
     except Exception as e:
         print(f"[WARNING] Failed to save RGB comparison: {e}")
+
+
+def save_latent_visualization(
+    latent: torch.Tensor,
+    save_path: str,
+    n_samples: int = 8,
+):
+    """
+    Save visualization of VAE latent channels.
+    
+    Args:
+        latent: Latent tensor [B, C, H, W]
+        save_path: Path to save image
+        n_samples: Number of samples to show
+        mode: 'semantic' or 'satellite' for colormap hints
+    """
+    n_samples = min(n_samples, latent.shape[0])
+    n_channels = latent.shape[1]
+    
+    # Create subplot grid: rows = channels, cols = samples
+    fig, axes = plt.subplots(n_channels, n_samples, figsize=(2 * n_samples, 2 * n_channels))
+    
+    if n_channels == 1:
+        axes = axes.reshape(1, -1)
+    if n_samples == 1:
+        axes = axes.reshape(-1, 1)
+    
+    for ch in range(n_channels):
+        for s in range(n_samples):
+            ax = axes[ch, s]
+            img = latent[s, ch].cpu().numpy()
+            
+            # Normalize for visualization
+            vmin, vmax = np.percentile(img, [2, 98])
+            img_norm = np.clip((img - vmin) / (vmax - vmin + 1e-8), 0, 1)
+            
+            ax.imshow(img_norm, cmap=sns.color_palette("rocket", as_cmap=True))
+            ax.axis('off')
+            
+            if s == 0:
+                ax.set_ylabel(f'Ch {ch}', fontsize=8)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()

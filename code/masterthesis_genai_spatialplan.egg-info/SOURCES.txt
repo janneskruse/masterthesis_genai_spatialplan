@@ -71,6 +71,7 @@ code/model/tools/train_vae_ddp.py
 code/model/tools/train_vqvae.py
 code/model/tools/validate_dataset.py
 code/model/tools/validate_inpainting_mask_coverage.py
+code/model/tools/validate_latent_lst_predictor.py
 code/model/tools/validate_lst_predictor.py
 code/model/tools/validate_vae.py
 code/model/utils/__init__.py
@@ -85,14 +86,17 @@ code/model/utils/ema.py
 code/model/utils/inpainting.py
 code/model/utils/jacobian_sensitivity.py
 code/model/utils/lanpaint.py
+code/model/utils/latent_guidance.py
 code/model/utils/layer_config.py
 code/model/utils/load_cuda.py
 code/model/utils/loss_weighting.py
 code/model/utils/perceptual_loss.py
+code/model/utils/plot.py
 code/model/utils/post_process.py
 code/model/utils/read_yaml.py
 code/model/utils/samples.py
 code/model/utils/scalar_controls.py
+code/model/utils/statistics.py
 code/model/utils/text_utils.py
 code/model/utils/vae_registry.py
 code/model/utils/vae_utils.py
