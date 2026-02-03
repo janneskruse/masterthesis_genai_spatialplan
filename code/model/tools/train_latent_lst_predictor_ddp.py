@@ -31,7 +31,7 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
-from model.utils.layer_config import get_layer_channels_from_names
+from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.lst_predictor.latent_predictor import LatentLSTPredictor
 from helpers.load_configs import load_configs, add_config_arguments
 
@@ -91,25 +91,46 @@ def compute_lst_statistic(
     return torch.stack(results).unsqueeze(1)  # [B, 1]
 
 
-def train_latent_lst_predictor(mode: str = 'semantic'):
+def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str = None):
     """
     Train latent LST predictor for a specific VAE group.
     
     Args:
         mode: VAE group name ('semantic' or 'satellite')
+        load_checkpoint_path: Optional path to checkpoint file to resume training from
     """
     # Record training start time
     training_start_time = time.time()
+    
+    # ========= load config files ==========
+    config = load_configs()
+    data_config = config['data_config']
+    train_config_global = config['train_params']
+    
+    # ========== Check for existing paths (skip training if artifacts already exist) ==========
+    existing_paths_result = check_existing_paths(
+        train_config=train_config_global,
+        mode=mode,
+        type='lst_latent'
+    )
+    
+    # Early exit if LST latent predictor checkpoint already exists (before DDP setup)
+    if existing_paths_result.skip_training:
+        print(f"\n{'='*60}")
+        print(f"SKIPPING LST LATENT PREDICTOR TRAINING: Using existing checkpoint")
+        print(f"{'='*60}")
+        print(f"  Mode: {mode}")
+        print(f"  Existing path: {existing_paths_result.latent_lst_predictor_checkpoint or 'N/A'}")
+        print(f"{'='*60}\n")
+        return
+    
+    existing_patches_path = existing_paths_result.patches_path
     
     # Setup distributed
     rank, local_rank, world_size = setup_distributed()
     device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
     is_main = (rank == 0)
     
-    ###### Setup config variables #######
-    config = load_configs()
-    data_config = config['data_config']
-    train_config_global = config['train_params']
     
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
@@ -149,8 +170,16 @@ def train_latent_lst_predictor(mode: str = 'semantic'):
     statistic = predictor_config.get('statistic', 'p95')
     region = predictor_config.get('region', 'full')  # 'full' or 'mask'
     
+    # Create output directory
+    task_name = train_config_global.get('task_name', 'urban_inpainting')
+    out_dir = Path(big_data_storage_path) / "results" / task_name
+    
     # Checkpoint name
     checkpoint_name = mode_config.get('checkpoint_name', f'latent_lst_predictor_{mode}.pth')
+    
+    # checkpoint path
+    if load_checkpoint_path is not None:
+        load_checkpoint_path = os.path.join(out_dir, load_checkpoint_path)
     
     # Get LST normalization range for interpretability
     layers_registry = config.get('layers', {})
@@ -172,10 +201,6 @@ def train_latent_lst_predictor(mode: str = 'semantic'):
         print(f"✓ region: {region}")
         print(f"✓ LST max (Celsius): {lst_max}")
     
-    # Create output directory
-    task_name = train_config_global.get('task_name', 'urban_inpainting')
-    out_dir = Path(big_data_storage_path) / "results" / task_name
-    
     if is_main:
         out_dir.mkdir(parents=True, exist_ok=True)
     
@@ -188,10 +213,14 @@ def train_latent_lst_predictor(mode: str = 'semantic'):
         print(f"Loading Dataset for LST Predictor (mode: lst:{mode})")
         print(f"{'='*50}")
     
-    # Use lst:<mode> dataset mode
-    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
-    use_cached_patches = cache_dir.exists() and len(list(cache_dir.glob('*.pt'))) > 0
+    # check for existing cached patches
+    if existing_patches_path is not None:
+        cache_dir = existing_patches_path
+    else:
+        cache_dir = f"{big_data_storage_path}/processed/{task_name}/patches"
+    use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
+    # Create dataset
     urban_dataset = UrbanInpaintingDataset(
         split='train',
         mode=f'lst:{mode}',
@@ -267,6 +296,18 @@ def train_latent_lst_predictor(mode: str = 'semantic'):
     else:
         raise ValueError(f"Unknown loss type: {loss_type}")
     
+    
+    # Load checkpoint if provided
+    start_epoch = 0
+    if load_checkpoint_path:
+        start_epoch, _ = load_checkpoint(
+            checkpoint_path=load_checkpoint_path,
+            model=model,
+            optimizer=optimizer,
+            device=device,
+            is_main=is_main
+        )
+    
     if is_main:
         print(f"\n✓ Training for {num_epochs} epochs")
         print(f"✓ Learning rate: {adjusted_lr}")
@@ -281,7 +322,7 @@ def train_latent_lst_predictor(mode: str = 'semantic'):
     global_step = 0
     best_loss = float('inf')
     
-    for epoch_idx in range(num_epochs):
+    for epoch_idx in range(start_epoch, num_epochs):
         if sampler is not None:
             sampler.set_epoch(epoch_idx)
         
@@ -436,10 +477,17 @@ if __name__ == '__main__':
         help='VAE group to train predictor for (semantic or satellite)'
     )
     
+    parser.add_argument(
+        '--load_checkpoint',
+        type=str,
+        default=None,
+        help='Path to checkpoint file to resume training from'
+    )
+    
     args = parser.parse_args()
     
     try:
-        train_latent_lst_predictor(mode=args.mode)
+        train_latent_lst_predictor(mode=args.mode, load_checkpoint_path=args.load_checkpoint)
     except KeyboardInterrupt:
         print("\n⚠ Training interrupted by user")
     except Exception as e:

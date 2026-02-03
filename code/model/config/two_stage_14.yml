@@ -610,6 +610,9 @@ train_params:
       semantic: null
       satellite: null
       environmental: null
+    latent_lst_predictor: 
+      semantic: null
+      satellite: null
 
   # Data augmentation for training (spatial transformations only)
   augmentation:

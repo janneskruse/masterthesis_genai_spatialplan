@@ -85,6 +85,7 @@ class ExistingPathsResult:
     latents_path: Optional[str] = None
     vae_checkpoints: Dict[str, str] = field(default_factory=dict)
     patches_path: Optional[str] = None
+    latent_lst_predictor_checkpoint: Optional[str] = None
     warnings: list = field(default_factory=list)
 
 
@@ -116,7 +117,7 @@ def check_existing_paths(
     Args:
         train_config: The train_params section of the config
         mode: The training mode (e.g., 'semantic', 'satellite')
-        type: The type of training (default: 'default'). Can be 'vae', 'diffusion', etc.
+        type: The type of training (default: 'default'). Can be 'vae', 'diffusion', 'lst_latent', etc.
         
     Returns:
         ExistingPathsResult with resolved paths and skip_training flag
@@ -168,6 +169,26 @@ def check_existing_paths(
                     result.warnings.append(
                         f"existing_paths.vae_checkpoints.{group_name} specified but not found: {vae_path_raw}"
                     )
+    
+    existing_latent_lst_predictor_checkpoints = existing_paths.get('latent_lst_predictor_checkpoints', {})
+    lst_latent_path_raw = existing_latent_lst_predictor_checkpoints.get(mode, None)
+    if type == 'lst_latent':
+        if _is_valid_path_string(lst_latent_path_raw):
+            if os.path.exists(lst_latent_path_raw):
+                result.skip_training = True
+                result.latent_lst_predictor_checkpoint = lst_latent_path_raw
+            else:
+                result.warnings.append(
+                    f"existing_paths.latent_lst_predictor_checkpoints.{mode} specified but not found: {lst_latent_path_raw}"
+                )
+    else:
+        if _is_valid_path_string(lst_latent_path_raw):
+            if os.path.exists(lst_latent_path_raw):
+                result.latent_lst_predictor_checkpoint = lst_latent_path_raw
+            else:
+                result.warnings.append(
+                    f"existing_paths.latent_lst_predictor_checkpoints.{mode} specified but not found: {lst_latent_path_raw}"
+                )
     
     # Check for existing patches path
     patches_path_raw = existing_paths.get('patches', None)
