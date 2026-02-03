@@ -541,11 +541,11 @@ train_params:
     latents:
       satellite: null
       semantic: null
-      environmental: /work/zt75vipu-thesis/data/results/two_stage_7/environmental_latents/
+      environmental: null
     vae_checkpoints: 
       satellite: null
       semantic: null
-      environmental: /work/zt75vipu-thesis/data/results/two_stage_7/environmental_vae_ckpt.pth
+      environmental: null
     diffusion_checkpoints:
       semantic: null
       satellite: null
