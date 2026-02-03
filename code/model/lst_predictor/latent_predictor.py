@@ -28,17 +28,20 @@ class LatentLSTPredictor(nn.Module):
         z_channels: int = 3,
         latent_size: int = 64,
         hidden_dims: list = [64, 128, 256],
+        dropout: float = 0.1,
     ):
         """
         Args:
             z_channels: Number of latent channels (3 for semantic, 4 for satellite)
             latent_size: Spatial size of latent (64 for 2x VAE downsampling)
             hidden_dims: Hidden dimensions for CNN encoder
+            dropout: Dropout probability for regularization (0.0 to disable)
         """
         super().__init__()
         
         self.z_channels = z_channels
         self.latent_size = latent_size
+        self.dropout = dropout
         
         # CNN encoder with progressive downsampling
         encoder_layers = []
@@ -50,6 +53,9 @@ class LatentLSTPredictor(nn.Module):
                 nn.GroupNorm(min(8, h_dim), h_dim),
                 nn.SiLU(),
             ])
+            # Add dropout after each conv block (except last)
+            if dropout > 0 and i < len(hidden_dims) - 1:
+                encoder_layers.append(nn.Dropout2d(dropout))
             in_ch = h_dim
         
         # Global average pooling
@@ -62,7 +68,7 @@ class LatentLSTPredictor(nn.Module):
         self.head = nn.Sequential(
             nn.Linear(hidden_dims[-1], hidden_dims[-1] // 2),
             nn.SiLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout if dropout > 0 else 0.1),  # Always have some dropout in head
             nn.Linear(hidden_dims[-1] // 2, 1),
             nn.Sigmoid(),  # Output in [0, 1] (normalized LST)
         )
@@ -125,6 +131,7 @@ def load_latent_lst_predictor(
     z_channels = mode_config.get('z_channels', 3)
     latent_size = mode_config.get('latent_size', 64)
     hidden_dims = predictor_config.get('hidden_dims', [64, 128, 256])
+    dropout = predictor_config.get('dropout', 0.1)
     
     # Get checkpoint path
     checkpoint_name = mode_config.get('checkpoint_name', f'latent_lst_predictor_{mode}.pth')
@@ -151,6 +158,7 @@ def load_latent_lst_predictor(
         z_channels=z_channels,
         latent_size=latent_size,
         hidden_dims=hidden_dims,
+        dropout=dropout,
     ).to(device)
     
     # Load weights

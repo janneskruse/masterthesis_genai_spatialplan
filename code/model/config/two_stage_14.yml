@@ -314,16 +314,25 @@ vae_groups:
 latent_lst_predictor:
   # Architecture
   hidden_dims: [64, 128, 256]
+  dropout: 0.3             # Dropout rate for regularization (0.0 to disable)
   
   # Training
-  epochs: 40
-  batch_size: 32          # Can be large (small model)
+  epochs: 100              # Max epochs (will early stop before this)
+  batch_size: 32           # Can be large (small model)
   lr: 0.0001
-  loss: 'mse'             # 'mse', 'l1', 'huber'
+  loss: 'mse'              # 'mse', 'l1', 'huber'
+  
+  # Regularization
+  weight_decay: 0.001      # L2 regularization (0.0 to disable)
+  
+  # Early stopping (based on validation loss)
+  early_stopping: true     # Enable/disable early stopping
+  patience: 10             # Epochs to wait for improvement before stopping
+  min_delta: 0.0001        # Minimum improvement threshold
   
   # Target computation
-  statistic: 'p95'        # Which statistic to predict: 'p95', 'mean', 'max'
-  region: 'full'          # 'full' (whole patch) or 'mask' (inside inpainting mask only)
+  statistic: 'p95'         # Which statistic to predict: 'p95', 'mean', 'max'
+  region: 'full'           # 'full' (whole patch) or 'mask' (inside inpainting mask only)
   
   # Mode-specific settings (semantic or satellite)
   modes:

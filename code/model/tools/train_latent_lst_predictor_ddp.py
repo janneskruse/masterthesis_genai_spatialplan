@@ -116,6 +116,15 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     base_lr = predictor_config.get('lr', 0.0001)
     loss_type = predictor_config.get('loss', 'mse')
     
+    # Regularization params
+    weight_decay = predictor_config.get('weight_decay', 0.0)  # L2 regularization
+    dropout = predictor_config.get('dropout', 0.1)  # Dropout rate
+    
+    # Early stopping params
+    early_stopping_enabled = predictor_config.get('early_stopping', True)
+    patience = predictor_config.get('patience', 10)  # Epochs to wait for improvement
+    min_delta = predictor_config.get('min_delta', 1e-4)  # Minimum improvement threshold
+    
     # Target computation params
     statistic = predictor_config.get('statistic', 'p95')
     region = predictor_config.get('region', 'full')  # 'full' or 'mask'
@@ -143,12 +152,15 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         print(f"✓ z_channels: {z_channels}")
         print(f"✓ latent_size: {latent_size}")
         print(f"✓ hidden_dims: {hidden_dims}")
+        print(f"✓ dropout: {dropout}")
         print(f"✓ epochs: {num_epochs}")
         print(f"✓ batch_size: {batch_size}")
         print(f"✓ lr: {base_lr}")
+        print(f"✓ weight_decay: {weight_decay}")
         print(f"✓ loss: {loss_type}")
         print(f"✓ statistic: {statistic}")
         print(f"✓ region: {region}")
+        print(f"✓ early_stopping: {early_stopping_enabled} (patience={patience})")
         print(f"✓ LST max (Celsius): {lst_max}")
     
     if is_main:
@@ -252,8 +264,46 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         num_workers=0,
         pin_memory=True,
         collate_fn=collate_fn,
-        sampler=sampler
+        sampler=sampler,
+        drop_last=True
     )
+    
+    ########## Load Validation Dataset (for early stopping) #############
+    val_loader = None
+    if early_stopping_enabled:
+        if is_main:
+            print(f"\n{'='*50}")
+            print(f"Loading Validation Dataset for Early Stopping")
+            print(f"{'='*50}")
+        
+        val_dataset = UrbanInpaintingDataset(
+            split='val',
+            mode=f'lst:{mode}',
+            use_cached_patches=use_cached_patches,
+            cache_dir=str(cache_dir)
+        )
+        
+        if is_main:
+            print(f"✓ Loaded {len(val_dataset)} validation samples")
+        
+        # Validation sampler (no shuffle, include all samples)
+        val_sampler = DistributedSampler(
+            val_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+            drop_last=False
+        ) if world_size > 1 else None
+        
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=True,
+            collate_fn=collate_fn,
+            sampler=val_sampler
+        )
     
     ########## Create Model #############
     if is_main:
@@ -265,6 +315,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         z_channels=z_channels,
         latent_size=latent_size,
         hidden_dims=hidden_dims,
+        dropout=dropout,
     ).to(device)
     
     # Wrap with DDP
@@ -287,7 +338,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     
     ########## Training Setup #############
     adjusted_lr = base_lr * world_size
-    optimizer = Adam(model.parameters(), lr=adjusted_lr)
+    optimizer = Adam(model.parameters(), lr=adjusted_lr, weight_decay=weight_decay)
     
     # Loss function
     if loss_type == 'mse':
@@ -323,15 +374,18 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         print(f"{'='*50}")
     
     global_step = 0
-    best_loss = float('inf')
+    best_val_loss = float('inf')
+    patience_counter = 0
     
     for epoch_idx in range(start_epoch, num_epochs):
         if sampler is not None:
             sampler.set_epoch(epoch_idx)
         
-        losses = []
+        # ========== Training Phase ==========
+        model.train()
+        train_losses = []
         
-        progress_bar = tqdm(data_loader, desc=f'Epoch {epoch_idx + 1}/{num_epochs}', disable=(rank != 0))
+        progress_bar = tqdm(data_loader, desc=f'Epoch {epoch_idx + 1}/{num_epochs} [Train]', disable=(rank != 0))
         
         for batch_idx, data in enumerate(progress_bar):
             optimizer.zero_grad()
@@ -401,7 +455,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             loss.backward()
             optimizer.step()
             
-            losses.append(loss.item())
+            train_losses.append(loss.item())
             global_step += 1
             
             if rank == 0:
@@ -416,16 +470,95 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         if world_size > 1:
             dist.barrier()
         
+        # Training epoch summary
+        train_loss = np.mean(train_losses)
+        
+        # ========== Validation Phase ==========
+        val_loss = None
+        if val_loader is not None:
+            model.eval()
+            val_losses = []
+            
+            with torch.no_grad():
+                for data in tqdm(val_loader, desc=f'Epoch {epoch_idx + 1}/{num_epochs} [Val]', disable=(rank != 0)):
+                    if len(data) != 2:
+                        continue
+                    
+                    latent_or_image, cond_dict = data
+                    
+                    if 'image' not in cond_dict or cond_dict['image'] is None:
+                        continue
+                    
+                    cond_image = cond_dict['image']
+                    meta = cond_dict.get('meta', {})
+                    
+                    if isinstance(meta, list) and len(meta) > 0:
+                        pixel_space_names = meta[0].get('pixel_space_names', [])
+                        needs_encoding = meta[0].get('needs_encoding', False)
+                    else:
+                        pixel_space_names = meta.get('pixel_space_names', [])
+                        needs_encoding = meta.get('needs_encoding', False)
+                    
+                    # Encode full-res image to latent if needed
+                    if needs_encoding:
+                        full_res_image = latent_or_image.float().to(device)
+                        latent, _, _ = vae.encode(full_res_image)
+                    else:
+                        latent = latent_or_image
+                    
+                    # Find LST channel
+                    lst_idx = None
+                    mask_idx = None
+                    for i, name in enumerate(pixel_space_names):
+                        if name == 'lst':
+                            lst_idx = i
+                        elif name == 'inpainting_mask':
+                            mask_idx = i
+                    
+                    if lst_idx is None:
+                        continue
+                    
+                    lst_fullres = cond_image[:, lst_idx:lst_idx+1, :, :].float().to(device)
+                    
+                    mask = None
+                    if region == 'mask' and mask_idx is not None:
+                        mask = cond_image[:, mask_idx:mask_idx+1, :, :].float().to(device)
+                    
+                    target = compute_lst_statistic(lst_fullres, statistic=statistic, mask=mask)
+                    target = target.to(device)
+                    
+                    if not needs_encoding:
+                        latent = latent.float().to(device)
+                    pred = model(latent)
+                    
+                    val_loss_batch = loss_fn(pred, target)
+                    val_losses.append(val_loss_batch.item())
+            
+            # Gather validation losses across all ranks
+            val_loss = np.mean(val_losses)
+            
+            if world_size > 1:
+                # Reduce val_loss across all ranks
+                val_loss_tensor = torch.tensor(val_loss, device=device)
+                dist.all_reduce(val_loss_tensor, op=dist.ReduceOp.AVG)
+                val_loss = val_loss_tensor.item()
+        
         # Epoch summary
-        epoch_loss = np.mean(losses)
-        
         if is_main:
-            epoch_loss_celsius = epoch_loss * lst_max
-            print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f} (~{epoch_loss_celsius:.2f}°C)')
+            train_loss_celsius = train_loss * lst_max
+            summary = f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Train: {train_loss:.4f} (~{train_loss_celsius:.2f}°C)'
+            if val_loss is not None:
+                val_loss_celsius = val_loss * lst_max
+                summary += f' | Val: {val_loss:.4f} (~{val_loss_celsius:.2f}°C)'
+            print(summary)
         
-        # Save best checkpoint
-        if is_main and epoch_loss < best_loss:
-            best_loss = epoch_loss
+        # Determine which loss to use for checkpointing
+        checkpoint_loss = val_loss if val_loss is not None else train_loss
+        
+        # Save best checkpoint (based on validation loss if available)
+        if is_main and checkpoint_loss < best_val_loss - min_delta:
+            best_val_loss = checkpoint_loss
+            patience_counter = 0  # Reset patience
             model_to_save = model.module if hasattr(model, 'module') else model
             checkpoint_path = out_dir / checkpoint_name
             
@@ -433,7 +566,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
                 'epoch': epoch_idx,
                 'model_state_dict': model_to_save.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': best_loss,
+                'best_val_loss': best_val_loss,
                 'config': {
                     'z_channels': z_channels,
                     'latent_size': latent_size,
@@ -441,11 +574,27 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
                     'mode': mode,
                     'statistic': statistic,
                     'region': region,
-                }
+                    'dropout': dropout,
+                },
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+                'best_val_loss': best_val_loss,
             }, checkpoint_path)
             
-            best_loss_celsius = best_loss * lst_max
-            print(f"  ✓ Saved best model (loss: {best_loss:.4f} ~{best_loss_celsius:.2f}°C)")
+            best_loss_celsius = best_val_loss * lst_max
+            loss_type_str = 'val' if val_loss is not None else 'train'
+            print(f"  ✓ Saved best model ({loss_type_str} loss: {best_val_loss:.4f} ~{best_loss_celsius:.2f}°C)")
+        else:
+            # No improvement - increment patience counter
+            patience_counter += 1
+            if is_main and early_stopping_enabled:
+                print(f"  No improvement. Patience: {patience_counter}/{patience}")
+        
+        # Early stopping check
+        if early_stopping_enabled and patience_counter >= patience:
+            if is_main:
+                print(f"\n⚠ Early stopping triggered! No improvement for {patience} epochs.")
+            break
         
         # Periodic checkpoint
         if is_main and (epoch_idx + 1) % 20 == 0:
@@ -454,7 +603,8 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             torch.save({
                 'epoch': epoch_idx,
                 'model_state_dict': model_to_save.state_dict(),
-                'loss': epoch_loss,
+                'train_loss': train_loss,
+                'val_loss': val_loss,
             }, periodic_path)
             print(f'✓ Saved checkpoint: {periodic_path}')
         
@@ -468,12 +618,13 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         hours = int(training_time // 3600)
         minutes = int((training_time % 3600) // 60)
         seconds = int(training_time % 60)
-        best_loss_celsius = best_loss * lst_max
+        best_loss_celsius = best_val_loss * lst_max
         
         print(f"\n{'='*60}")
         print(f"✓ Latent LST Predictor Training Complete!")
         print(f"✓ Mode: {mode}")
-        print(f"✓ Best loss: {best_loss:.4f} (~{best_loss_celsius:.2f}°C)")
+        print(f"✓ Best {'val' if val_loader else 'train'} loss: {best_val_loss:.4f} (~{best_loss_celsius:.2f}°C)")
+        print(f"✓ Stopped at epoch: {epoch_idx + 1}/{num_epochs}")
         print(f"✓ Total Training Time: {hours}h {minutes}m {seconds}s")
         print(f"{'='*60}")
 
