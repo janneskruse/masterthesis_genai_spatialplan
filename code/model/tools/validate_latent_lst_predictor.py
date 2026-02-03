@@ -20,6 +20,7 @@ from model.dataset.dataset import UrbanInpaintingDataset
 from model.lst_predictor.latent_predictor import LatentLSTPredictor, load_latent_lst_predictor
 from model.utils.data_utils import collate_fn
 from model.utils.vae_registry import VAERegistry
+from model.utils.checkpoint import check_existing_paths
 from helpers.load_configs import load_configs, add_config_arguments
 from helpers.indexed_outputs import get_next_run_idx
 from model.utils.statistics import compute_lst_statistic
@@ -258,6 +259,14 @@ def main(args, config):
     
     mode = args.mode
     
+    # Check for existing paths (for VAE checkpoints)
+    existing_paths_result = check_existing_paths(
+        train_config=train_config,
+        mode=mode,
+        type='lst_latent'
+    )
+    existing_vae_paths = existing_paths_result.vae_checkpoints
+    
     print(f"\n{'='*60}")
     print(f"Latent LST Predictor Validation Setup")
     print(f"{'='*60}")
@@ -297,8 +306,13 @@ def main(args, config):
     print(f"Loading Validation Dataset (mode: lst:{mode})")
     print(f"{'='*60}")
     
-    cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
-    use_cached_patches = cache_dir.exists() and len(list(cache_dir.glob('*.pt'))) > 0
+    # Check for existing cached patches
+    existing_patches_path = existing_paths_result.patches_path
+    if existing_patches_path is not None:
+        cache_dir = Path(existing_patches_path)
+    else:
+        cache_dir = Path(big_data_storage_path) / "processed" / task_name / "patches"
+    use_cached_patches = os.path.exists(cache_dir) and len(os.listdir(cache_dir)) > 0
     
     val_dataset = UrbanInpaintingDataset(
         split='val',
@@ -360,14 +374,31 @@ def main(args, config):
             print(f"Loading VAE for on-the-fly encoding")
             print(f"{'='*60}")
             
-            vae_registry = VAERegistry(config, device=device, results_dir=data_dir)
+            # Use VAERegistry for cleaner management
+            vae_registry = VAERegistry(config, device)
+            
+            # Determine VAE checkpoint path (use existing_paths if available)
+            vae_config = vae_groups.get(mode, {})
+            if mode in existing_vae_paths:
+                vae_ckpt_path = existing_vae_paths[mode]
+            else:
+                default_ckpt_name = vae_config.get('checkpoint_name', f'{mode}_vae_ckpt.pth')
+                vae_ckpt_path = os.path.join(data_dir, default_ckpt_name)
+            
+            # Load VAE
+            print(f"  - {mode.upper()} VAE for encoding")
+            vae_registry.load_vae(
+                group_name=mode,
+                checkpoint_path=vae_ckpt_path,
+                autoencoder_config=vae_config
+            )
             vae = vae_registry.get_vae(mode)
+            vae_registry.freeze(mode)
             
             if vae is not None:
-                vae.eval()
-                print(f"✓ Loaded {mode} VAE for encoding validation samples")
+                print(f"✓ Loaded and froze {mode} VAE for encoding validation samples")
             else:
-                print(f"⚠ Could not load VAE for mode '{mode}'. Validation may fail.")
+                print(f"⚠ Could not load VAE for mode '{mode}' from {vae_ckpt_path}. Validation may fail.")
     
     ########## Setup Output Directory #############
     repo_dir = config.get('repo_dir', '.')
