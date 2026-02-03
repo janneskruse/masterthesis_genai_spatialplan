@@ -442,6 +442,11 @@ diffusion_stages:
         # - Adversarial loss: Add discriminator for sharper semantic boundaries
         # - Topology loss: Penalize disconnected buildings/streets (morphological) 
 
+    # Latent scaling to match noise level as Noise schedule assumes data variance ≈ 1
+    latent_scaling:
+      enabled: false
+      scale_factor: 0.37 # 1/global std ~2.7 → 0.37 scaling to match noise level
+
     post_process:
       normalize_mask_region: False  # Normalize generated region to [0,1], keep context unchanged
       sharpen_binary: False         # Threshold binary layers (buildings, streets, vegetation) to {0, 1}

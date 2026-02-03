@@ -132,6 +132,11 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     inpainting_config = stage_config.get('inpainting', {})
     validate_enabled = stage_config.get('validate', True)  # Enable validation by default
     
+    # Latent scaling configuration (for SNR calibration like Stable Diffusion)
+    latent_scaling_config = stage_config.get('latent_scaling', {})
+    use_latent_scaling = latent_scaling_config.get('enabled', False)
+    latent_scale_factor = latent_scaling_config.get('scale_factor', 1.0) if use_latent_scaling else 1.0
+    
     if not prediction_group:
         raise ValueError(f"Diffusion stage '{mode}' has no prediction_group defined")
     
@@ -724,6 +729,10 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f"✓ Timestep loss weighting: {timestep_loss_type}")
         if timestep_loss_type == 'min_snr':
             print(f"  - Min-SNR gamma: {min_snr_gamma}")
+        if use_latent_scaling:
+            print(f"✓ Latent scaling: enabled (factor={latent_scale_factor:.4f})")
+        else:
+            print(f"✓ Latent scaling: disabled (factor=1.0)")
         print(f"✓ Inpainting mode: {inpainting_mode}")
         print(f"✓ Loss type: {loss_type}")
         print(f"✓ Mask loss weight: {mask_loss_weight}")
@@ -1129,7 +1138,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 prediction_type=prediction_type,
                 device=device,
                 post_process_config=post_process_config,
-                num_samples=4
+                num_samples=4,
+                latent_scale_factor=latent_scale_factor
             )
         
         # Validation sampling (only rank 0, others wait at barrier above)
@@ -1155,7 +1165,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
                 ema_model=ema_model,
                 seam_mode_sampling=seam_mode_sampling,
                 seam_config=seam_settings,
-                post_process_config=post_process_config
+                post_process_config=post_process_config,
+                latent_scale_factor=latent_scale_factor
             )
         
         # Synchronize after validation (ensure rank 0 finishes before all continue)

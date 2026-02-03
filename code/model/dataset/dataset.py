@@ -135,6 +135,10 @@ class UrbanInpaintingDataset(Dataset):
             vae_config = self.vae_groups[pred_group]
             unet_config = stage_config.get('unet_config', {})
             
+            latent_scaling_config = stage_config.get('latent_scaling', {})
+            use_latent_scaling = latent_scaling_config.get('enabled', False)
+            self.latent_scale_factor = latent_scaling_config.get('scale_factor', 1.0) if use_latent_scaling else 1.0
+            
         else:
             # Default mode: use first available configs or defaults
             vae_config, unet_config = get_default_configs(self.vae_groups, self.diffusion_stages)
@@ -1167,6 +1171,10 @@ class UrbanInpaintingDataset(Dataset):
                 # Pre-computed latents available
                 pred_latent_path = self.group_latents[pred_group][index]
                 pred_latent = load_single_latent(pred_latent_path, device=None)
+                
+                # scale latent if scale_factor is set
+                if self.latent_scale_factor != 1.0 and pred_latent is not None:
+                    pred_latent = pred_latent * self.latent_scale_factor
             
             # If latent loading failed or not available, extract full-res image for encoding
             if pred_latent is None:
@@ -1233,6 +1241,10 @@ class UrbanInpaintingDataset(Dataset):
                     # Try to load pre-computed latent
                     cond_latent_path = self.group_latents[group_name][index]
                     cond_latent = load_single_latent(cond_latent_path, device=None)
+                    
+                    # scale latent if scale_factor is set
+                    if self.latent_scale_factor != 1.0 and cond_latent is not None:
+                        cond_latent = cond_latent * self.latent_scale_factor
                     
                     if cond_latent is not None:
                         cond[group_name] = cond_latent

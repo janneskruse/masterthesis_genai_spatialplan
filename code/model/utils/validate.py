@@ -43,7 +43,8 @@ def run_validation_sampling(
     ema_model: Optional[Any] = None,
     seam_mode_sampling: Optional[str] = None,
     seam_config: Optional[Dict[str, Any]] = None,
-    post_process_config: Optional[Dict[str, Any]] = None
+    post_process_config: Optional[Dict[str, Any]] = None,
+    latent_scale_factor: float = 1.0
 ) -> None:
     """
     Generate validation samples during training.
@@ -213,8 +214,9 @@ def run_validation_sampling(
         
         # Decode to pixel space
         if vae is not None:
-            val_decoded = vae.decode(x_val)
-            val_decoded_gt = vae.decode(val_im_latent)
+            # Unscale latents before decoding (normalize back to original VAE latent space)
+            val_decoded = vae.decode(x_val / latent_scale_factor)
+            val_decoded_gt = vae.decode(val_im_latent / latent_scale_factor)
         else:
             val_decoded = x_val
             val_decoded_gt = val_im_latent
@@ -314,7 +316,8 @@ def run_ddpm_sampling(
     prediction_type: str,
     device: torch.device,
     post_process_config: Optional[Dict[str, Any]] = None,
-    num_samples: int = 4
+    num_samples: int = 4,
+    latent_scale_factor: float = 1.0
 ) -> None:
     """
     Generate DDPM samples during training (slower, higher quality).
@@ -351,7 +354,8 @@ def run_ddpm_sampling(
         
         # Decode ground truth context ONCE before sampling
         if vae is not None:
-            gt_decoded_original = vae.decode(im_latent[:num_samples])
+            # Unscale latents before decoding (normalize back to original VAE latent space)
+            gt_decoded_original = vae.decode(im_latent[:num_samples] / latent_scale_factor)
         else:
             gt_decoded_original = im_latent[:num_samples]
         
@@ -418,7 +422,8 @@ def run_ddpm_sampling(
         
         # Decode generated latent to pixel space
         if vae is not None:
-            sample_decoded_raw = vae.decode(x_sample)
+            # Unscale latents before decoding (normalize back to original VAE latent space)
+            sample_decoded_raw = vae.decode(x_sample / latent_scale_factor)
         else:
             sample_decoded_raw = x_sample
         
