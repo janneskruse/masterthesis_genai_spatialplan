@@ -50,9 +50,11 @@ code/model/diffusion_blocks/lpips.py
 code/model/diffusion_blocks/unet_cond_base.py
 code/model/diffusion_blocks/vae.py
 code/model/diffusion_blocks/vqvae.py
+code/model/lst_predictor/latent_predictor.py
 code/model/lst_predictor/predictor.py
 code/model/scheduler/__init__.py
 code/model/scheduler/ddim_scheduler.py
+code/model/scheduler/inpainting_samplers.py
 code/model/scheduler/linear_noise_scheduler.py
 code/model/scheduler/lr_scheduler.py
 code/model/scheduler/scheduler_factory.py
@@ -61,7 +63,9 @@ code/model/tools/prepare_patches.py
 code/model/tools/run_pipeline.py
 code/model/tools/sample_satellite_from_semantics.py
 code/model/tools/sample_semantics_inpainting.py
+code/model/tools/test_jacobian_sensitivity.py
 code/model/tools/train_diffusion_inpainting_ddp.py
+code/model/tools/train_latent_lst_predictor_ddp.py
 code/model/tools/train_lst_predictor_ddp.py
 code/model/tools/train_vae_ddp.py
 code/model/tools/train_vqvae.py
@@ -79,9 +83,13 @@ code/model/utils/diffusion_utils.py
 code/model/utils/distributed.py
 code/model/utils/ema.py
 code/model/utils/inpainting.py
+code/model/utils/jacobian_sensitivity.py
+code/model/utils/lanpaint.py
 code/model/utils/layer_config.py
 code/model/utils/load_cuda.py
 code/model/utils/loss_weighting.py
+code/model/utils/perceptual_loss.py
+code/model/utils/post_process.py
 code/model/utils/read_yaml.py
 code/model/utils/samples.py
 code/model/utils/scalar_controls.py
