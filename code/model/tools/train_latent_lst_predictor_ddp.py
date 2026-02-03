@@ -11,6 +11,7 @@ Can be used for Phase 2 (soft guidance) and Phase 3 (hard check) in diffusion sa
 import os
 import argparse
 import time
+import math
 import yaml
 import numpy as np
 from pathlib import Path
@@ -359,14 +360,23 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     optimizer = Adam(model.parameters(), lr=adjusted_lr, weight_decay=weight_decay)
     
     # Loss function
+    # Note: RMSE loss gives values directly in normalized units (multiply by lst_max for Celsius)
+    #       MSE loss requires sqrt conversion for interpretable error
     if loss_type == 'mse':
         loss_fn = nn.MSELoss()
+        loss_is_squared = True  # Need sqrt for RMSE display
+    elif loss_type == 'rmse':
+        # RMSE: sqrt(mean((pred - target)^2)) - directly interpretable
+        loss_fn = lambda pred, target: torch.sqrt(nn.MSELoss()(pred, target) + 1e-8)
+        loss_is_squared = False  # Already in RMSE form
     elif loss_type == 'l1':
         loss_fn = nn.L1Loss()
+        loss_is_squared = False  # MAE is already linear
     elif loss_type == 'huber':
         loss_fn = nn.SmoothL1Loss()
+        loss_is_squared = False  # Huber is ~linear for large errors
     else:
-        raise ValueError(f"Unknown loss type: {loss_type}")
+        raise ValueError(f"Unknown loss type: {loss_type}. Options: 'mse', 'rmse', 'l1', 'huber'")
     
     
     # Load checkpoint if provided
@@ -477,11 +487,12 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             global_step += 1
             
             if rank == 0:
-                # Convert loss to Celsius for interpretability
-                loss_celsius = loss.item() * lst_max
+                # Convert MSE loss to RMSE in Celsius for interpretability
+                # MSE is in squared normalized units, so sqrt gives normalized error, then scale to Celsius
+                loss_rmse_celsius = math.sqrt(loss.item()) * lst_max
                 progress_bar.set_postfix({
                     'loss': f'{loss.item():.4f}',
-                    '~°C': f'{loss_celsius:.2f}'
+                    'RMSE°C': f'{loss_rmse_celsius:.2f}'
                 })
         
         # Synchronize
@@ -563,11 +574,12 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         
         # Epoch summary
         if is_main:
-            train_loss_celsius = train_loss * lst_max
-            summary = f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Train: {train_loss:.4f} (~{train_loss_celsius:.2f}°C)'
+            # Convert MSE to RMSE in Celsius
+            train_rmse_celsius = math.sqrt(train_loss) * lst_max
+            summary = f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Train: {train_loss:.4f} (RMSE ~{train_rmse_celsius:.2f}°C)'
             if val_loss is not None:
-                val_loss_celsius = val_loss * lst_max
-                summary += f' | Val: {val_loss:.4f} (~{val_loss_celsius:.2f}°C)'
+                val_rmse_celsius = math.sqrt(val_loss) * lst_max
+                summary += f' | Val: {val_loss:.4f} (RMSE ~{val_rmse_celsius:.2f}°C)'
             print(summary)
         
         # Determine which loss to use for checkpointing
@@ -605,9 +617,9 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
                     'best_val_loss': best_val_loss,
                 }, checkpoint_path)
                 
-                best_loss_celsius = best_val_loss * lst_max
+                best_rmse_celsius = math.sqrt(best_val_loss) * lst_max
                 loss_type_str = 'val' if val_loss is not None else 'train'
-                print(f"  ✓ Saved best model ({loss_type_str} loss: {best_val_loss:.4f} ~{best_loss_celsius:.2f}°C)")
+                print(f"  ✓ Saved best model ({loss_type_str} loss: {best_val_loss:.4f}, RMSE ~{best_rmse_celsius:.2f}°C)")
         else:
             # No improvement - increment patience counter on ALL ranks
             patience_counter += 1
@@ -642,12 +654,12 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         hours = int(training_time // 3600)
         minutes = int((training_time % 3600) // 60)
         seconds = int(training_time % 60)
-        best_loss_celsius = best_val_loss * lst_max
+        best_rmse_celsius = math.sqrt(best_val_loss) * lst_max
         
         print(f"\n{'='*60}")
         print(f"✓ Latent LST Predictor Training Complete!")
         print(f"✓ Mode: {mode}")
-        print(f"✓ Best {'val' if val_loader else 'train'} loss: {best_val_loss:.4f} (~{best_loss_celsius:.2f}°C)")
+        print(f"✓ Best {'val' if val_loader else 'train'} loss: {best_val_loss:.4f} (RMSE ~{best_rmse_celsius:.2f}°C)")
         print(f"✓ Stopped at epoch: {epoch_idx + 1}/{num_epochs}")
         print(f"✓ Total Training Time: {hours}h {minutes}m {seconds}s")
         print(f"{'='*60}")

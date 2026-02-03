@@ -320,7 +320,7 @@ latent_lst_predictor:
   epochs: 100              # Max epochs (will early stop before this)
   batch_size: 32           # Can be large (small model)
   lr: 0.0001
-  loss: 'mse'              # 'mse', 'l1', 'huber'
+  loss: 'rmse'             # 'rmse' (recommended - direct °C interpretation), 'mse', 'l1', 'huber'
   
   # Regularization
   weight_decay: 0.001      # L2 regularization (0.0 to disable)
