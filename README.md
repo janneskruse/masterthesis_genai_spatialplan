@@ -130,6 +130,7 @@ torchrun --nproc_per_node=4 --master_addr=$MASTER_ADDR --master_port=$MASTER_POR
 
 > **Note:** Use `torchrun` to spawn DDP processes. Nested `srun` can cause GRES specification conflicts.
 
+> **Note* If you want to reattach to a running job you can run `srun --pty --overlap --jobid <your-jobid> bash`
 
 
 ### Copy from and to HPC
