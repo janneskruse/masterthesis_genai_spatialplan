@@ -235,7 +235,7 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
         print(f"SKIPPING VAE TRAINING: Using existing checkpoint")
         print(f"{'='*60}")
         print(f"  Mode: {mode}")
-        print(f"  Existing path: {existing_paths_result.vae_checkpoint}")
+        print(f"  Existing path: {existing_paths_result.vae_checkpoints.get(mode, 'N/A')}")
         print(f"{'='*60}\n")
         return
     
