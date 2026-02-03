@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.lst_predictor.latent_predictor import LatentLSTPredictor, load_latent_lst_predictor
 from model.utils.data_utils import collate_fn
+from model.utils.vae_registry import VAERegistry
 from helpers.load_configs import load_configs, add_config_arguments
 from helpers.indexed_outputs import get_next_run_idx
 from model.utils.statistics import compute_lst_statistic
@@ -37,7 +38,8 @@ def validate_latent_lst_predictor(
     save_dir: str,
     mode: str,
     num_samples: int = 100,
-    save_latents: bool = True
+    save_latents: bool = True,
+    vae: torch.nn.Module = None
 ):
     """
     Validate latent LST predictor on validation set.
@@ -52,6 +54,7 @@ def validate_latent_lst_predictor(
         mode: 'semantic' or 'satellite'
         num_samples: Max number of samples to validate
         save_latents: Whether to save latent visualizations
+        vae: VAE model for encoding full-res images (optional, needed if latents unavailable)
         
     Returns:
         Dictionary with validation metrics
@@ -77,11 +80,11 @@ def validate_latent_lst_predictor(
             if samples_processed >= num_samples:
                 break
             
-            # Extract data: (latent, cond_dict)
+            # Extract data: (latent_or_image, cond_dict)
             if len(data) != 2:
                 continue
             
-            latent, cond_dict = data
+            latent_or_image, cond_dict = data
             
             # Get LST full-res from conditioning
             if 'image' not in cond_dict or cond_dict['image'] is None:
@@ -92,8 +95,22 @@ def validate_latent_lst_predictor(
             
             if isinstance(meta, list) and len(meta) > 0:
                 pixel_space_names = meta[0].get('pixel_space_names', [])
+                needs_encoding = meta[0].get('needs_encoding', False)
             else:
                 pixel_space_names = meta.get('pixel_space_names', [])
+                needs_encoding = meta.get('needs_encoding', False)
+            
+            # Encode full-res image to latent if needed
+            if needs_encoding:
+                if vae is None:
+                    raise RuntimeError(
+                        "Dataset returned full-res images but no VAE provided for encoding. "
+                        "Either provide pre-computed latents or pass VAE to validation function."
+                    )
+                full_res_image = latent_or_image.float().to(device)
+                latent, _, _ = vae.encode(full_res_image)
+            else:
+                latent = latent_or_image
             
             # Find LST channel in conditioning
             lst_idx = None
@@ -323,6 +340,35 @@ def main(args, config):
         print(f"  Please train the latent LST predictor first.")
         return None
     
+    ########## Load VAE for on-the-fly encoding (if needed) #############
+    # Check if dataset will return full-res images (needs_encoding)
+    # This happens when validation latents don't exist
+    vae = None
+    
+    # Check first sample to see if encoding is needed
+    sample_data = val_dataset[0]
+    if len(sample_data) == 2:
+        _, sample_cond = sample_data
+        sample_meta = sample_cond.get('meta', {})
+        if isinstance(sample_meta, list) and len(sample_meta) > 0:
+            needs_encoding = sample_meta[0].get('needs_encoding', False)
+        else:
+            needs_encoding = sample_meta.get('needs_encoding', False)
+        
+        if needs_encoding:
+            print(f"\n{'='*60}")
+            print(f"Loading VAE for on-the-fly encoding")
+            print(f"{'='*60}")
+            
+            vae_registry = VAERegistry(config, device=device, results_dir=data_dir)
+            vae = vae_registry.get_vae(mode)
+            
+            if vae is not None:
+                vae.eval()
+                print(f"✓ Loaded {mode} VAE for encoding validation samples")
+            else:
+                print(f"⚠ Could not load VAE for mode '{mode}'. Validation may fail.")
+    
     ########## Setup Output Directory #############
     repo_dir = config.get('repo_dir', '.')
     save_dir = f"{repo_dir}/results/{task_name}/latent_lst_predictor_validation"
@@ -350,7 +396,8 @@ def main(args, config):
         save_dir=run_dir,
         mode=mode,
         num_samples=args.num_samples,
-        save_latents=args.save_latents
+        save_latents=args.save_latents,
+        vae=vae
     )
     
     print(f"\n{'='*60}")

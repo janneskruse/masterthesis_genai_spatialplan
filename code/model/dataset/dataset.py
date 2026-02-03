@@ -687,15 +687,19 @@ class UrbanInpaintingDataset(Dataset):
         print(f"\nTarget group: '{target_group}'")
         target_latents = self._load_group_latents(target_group, reconcile=True)
         
-        if target_latents is None:
-            raise RuntimeError(
-                f"Failed to load latents for group '{target_group}'. "
-                f"Run VAE training for this group first."
-            )
+        # Note: RuntimeError removed - training/validation can fall back to encoding full-res images
+        # if target_latents is None:
+        #     raise RuntimeError(
+        #         f"Failed to load latents for group '{target_group}'. "
+        #         f"Run VAE training for this group first."
+        #     )
         
         self.group_latents[target_group] = target_latents
         
-        print(f"\n✓ Successfully loaded {len(target_latents)} latents for LST predictor")
+        if target_latents is not None:
+            print(f"\n✓ Successfully loaded {len(target_latents)} latents for LST predictor")
+        else:
+            print(f"\n⚠ No latents found - will return full-res images for on-the-fly encoding")
         print(f"{'='*60}\n")
                     
     def prepare_cached_patches(self, max_patches: Optional[int] = None) -> None:
@@ -1438,8 +1442,10 @@ class UrbanInpaintingDataset(Dataset):
                     f"Available groups: {list(self.vae_groups.keys())}"
                 )
             
-            # Load pre-computed latent for target group
+            # Load pre-computed latent for target group (or fall back to full-res image)
             pred_latent = None
+            pred_image = None  # Full-resolution image for on-the-fly encoding
+            
             if target_group in self.group_latents and self.group_latents[target_group] is not None:
                 pred_latent_path = self.group_latents[target_group][index]
                 pred_latent = load_single_latent(pred_latent_path, device=None)
@@ -1448,11 +1454,15 @@ class UrbanInpaintingDataset(Dataset):
                 if hasattr(self, 'latent_scale_factor') and self.latent_scale_factor != 1.0:
                     pred_latent = pred_latent * self.latent_scale_factor
             
+            # If latent loading failed or not available, extract full-res image for encoding
             if pred_latent is None:
-                raise RuntimeError(
-                    f"LST mode requires pre-computed latents for group '{target_group}'. "
-                    f"Run VAE training first to generate latents."
-                )
+                # Extract target group channels from unified image
+                target_group_config = self.vae_groups[target_group]
+                target_layers = target_group_config.get('layers', [])
+                
+                pred_image = self._extract_group_channels(
+                    unified_image, channel_names, layer_names, target_layers
+                )  # [C_target, H, W] at full resolution
             
             # Extract LST from unified image (full resolution for target computation)
             lst_matches = get_layer_channels_from_names(channel_names, 'lst')
@@ -1494,7 +1504,13 @@ class UrbanInpaintingDataset(Dataset):
             cond['meta']['channel_names'] = pixel_cond_names
             cond['meta']['target_group'] = target_group
             
-            return pred_latent, cond
+            # Return either latent or full-res image (caller will encode if needed)
+            if pred_latent is not None:
+                return pred_latent, cond
+            else:
+                # Mark that this is full-res image needing encoding
+                cond['meta']['needs_encoding'] = True
+                return pred_image, cond
         
         else:
             raise ValueError(f"Unsupported mode_type: {self.mode_type}")
