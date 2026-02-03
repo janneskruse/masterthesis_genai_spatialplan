@@ -23,6 +23,7 @@ layers:
     dice_loss:
       use_dice: True
       weight: 0.5  # Dice loss for crisp edges and reduced salt-and-pepper noise
+    min_coverage_percent: 7.0  # Ignore patches where not at least 7% buildings are present
     
   buildings_heights:
     layer: 'buildings_heights'
@@ -37,6 +38,7 @@ layers:
     dice_loss:
       use_dice: True
       weight: 0.75  # Higher weight for thin structures
+    # min_coverage_percent: 2.0  # Ignore patches where not at least 2% streets are present
     
   street_blocks:
     layer: 'street_blocks'

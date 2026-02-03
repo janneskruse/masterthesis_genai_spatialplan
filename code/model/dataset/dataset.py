@@ -214,7 +214,8 @@ class UrbanInpaintingDataset(Dataset):
         
         # Store runtime statistics (for tracking)
         self.stats = {
-            "inpainting_mask": []
+            "inpainting_mask": [],
+            "patch_filtering": []  # Track patches skipped due to min_coverage constraints
         }
         
         # Cache directory setup
@@ -713,28 +714,46 @@ class UrbanInpaintingDataset(Dataset):
         
         # Metadata for tracking
         metadata_records = []
+        skipped_count = 0
+        valid_cache_idx = 0  # Sequential index for valid patches (no gaps)
         
         # Process and save each patch
-        for cache_idx, (y, x, region) in enumerate(tqdm(patches_to_process, desc="Caching patches")):
+        for original_idx, (y, x, region) in enumerate(tqdm(patches_to_process, desc="Caching patches")):
             try:
                 # Extract patch data (reuse existing logic)
-                patch_data = self._extract_patch_from_xarray(y, x, region, cache_idx)
+                patch_data = self._extract_patch_from_xarray(y, x, region, original_idx)
                 
-                # Save patch
-                patch_path = self.cache_dir / f"patch_{self.split}_{cache_idx}.pt"
+                # Check if patch is invalid (any layer failed min_coverage)
+                if patch_data is None:
+                    skipped_count += 1
+                    # Track skip reason for statistics
+                    self.stats["patch_filtering"].append({
+                        'original_index': original_idx,
+                        'y': y,
+                        'x': x,
+                        'region': region,
+                        'reason': 'min_coverage_failed'
+                    })
+                    continue
+                
+                # Save patch with sequential valid index (no gaps in file names)
+                patch_path = self.cache_dir / f"patch_{self.split}_{valid_cache_idx}.pt"
                 torch.save(patch_data, patch_path)
                 
                 # Record metadata
                 metadata_records.append({
-                    'cache_index': cache_idx,
+                    'cache_index': valid_cache_idx,  # Use sequential valid index
                     'y': y,
                     'x': x,
                     'region': region,
                     'patch_file': str(patch_path.name)
                 })
                 
+                valid_cache_idx += 1
+                
             except Exception as e:
-                print(f"⚠ Failed to cache patch {cache_idx} at (y={y}, x={x}, region={region}): {e}")
+                print(f"⚠ Failed to cache patch {original_idx} at (y={y}, x={x}, region={region}): {e}")
+                skipped_count += 1
                 continue
         
         # Save metadata
@@ -745,9 +764,19 @@ class UrbanInpaintingDataset(Dataset):
         # save stats for inpainting masks etc.
         self.save_stats()
         
-        print(f"\n✓ Successfully cached {len(metadata_records)} patches")
-        print(f"✓ Metadata saved to: {metadata_path}")
-        print(f"✓ Total disk usage: ~{self._estimate_cache_size()} MB\n")
+        # Print detailed summary
+        print(f"\n{'='*60}")
+        print(f"Patch Caching Summary")
+        print(f"{'='*60}")
+        print(f"  Total patches processed:  {len(patches_to_process)}")
+        print(f"  Valid patches cached:     {len(metadata_records)}")
+        print(f"  Skipped (min_coverage):   {skipped_count}")
+        if len(patches_to_process) > 0:
+            skip_rate = 100 * skipped_count / len(patches_to_process)
+            print(f"  Skip rate:                {skip_rate:.1f}%")
+        print(f"  Metadata saved to:        {metadata_path}")
+        print(f"  Total disk usage:         ~{self._estimate_cache_size()} MB")
+        print(f"{'='*60}\n")
         
         return self.cache_dir
     
@@ -757,7 +786,7 @@ class UrbanInpaintingDataset(Dataset):
         x: int, 
         region: str, 
         index: int
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Optional[Dict[str, torch.Tensor]]:
         """
         Extract and process a single patch from Xarray.
         
@@ -769,6 +798,7 @@ class UrbanInpaintingDataset(Dataset):
             Dictionary with:
             - 'image': [C, H, W] tensor of all layers (including inpainting_mask)
             - 'meta': metadata dict with spatial_names list
+            OR None if any layer fails min_coverage constraint.
         """
         ps = self.patch_size
         data_layers = self.data_layers_per_region[region]
@@ -841,6 +871,10 @@ class UrbanInpaintingDataset(Dataset):
             # Apply transformations (filtering, normalization with global stats)
             # Note: masking will be applied in second pass
             layer_data = apply_layer_transform(layer_data, layer_config, layer_statistics, mask_data=None)
+            
+            # Check if layer was filtered out due to min_coverage constraint
+            if layer_data is None:
+                return None  # Signal: entire patch is invalid, skip it
             
             # Convert to CHW format
             layer_data = self._to_chw(layer_data)

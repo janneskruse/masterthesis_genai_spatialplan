@@ -90,6 +90,44 @@ def apply_filter(data, layer_config: Dict):
             return mask.astype(np.float32)
         else:
             return np.where(mask, data, 0.0)
+        
+def check_min_coverage(
+    data: torch.Tensor,
+    layer_config: Dict,
+) -> bool:
+    
+    """
+    Check if layer data meets minimum coverage percentage.
+    
+    Args:
+        data: Input tensor of layer data (binary or continuous)
+        layer_config: Layer configuration with optional 'min_coverage_percent' key
+        is_torch: Whether data is a torch.Tensor (True) or numpy array (False)
+    Returns:
+        True if coverage meets minimum, False otherwise
+    """
+    min_coverage_percent = layer_config.get('min_coverage_percent', None)
+    if min_coverage_percent is None:
+        return True  # No minimum coverage specified
+    
+    is_torch = isinstance(data, torch.Tensor)
+    
+    if is_torch:
+        total_pixels = data.numel()
+        if is_binary_layer(layer_config):
+            covered_pixels = (data > 0.5).sum().item()
+        else:
+            covered_pixels = (data > 0).sum().item()
+    else:
+        total_pixels = data.size
+        if is_binary_layer(layer_config):
+            covered_pixels = np.sum(data > 0.5)
+        else:
+            covered_pixels = np.sum(data > 0)
+    
+    coverage_percent = (covered_pixels / total_pixels) * 100.0
+    return coverage_percent >= min_coverage_percent
+    
 
 def apply_layer_transform(data, layer_config, layer_statistics=None, mask_data=None):
     """
@@ -109,6 +147,11 @@ def apply_layer_transform(data, layer_config, layer_statistics=None, mask_data=N
     is_torch = isinstance(data, torch.Tensor)
     is_binary = is_binary_layer(layer_config)
     filter_config = layer_config.get('filter', {})
+    
+    coverage_ok = check_min_coverage(data, layer_config)
+    if not coverage_ok:
+        return None  # Skip layer if minimum coverage not met
+    
     
     # Step 1: Apply filters (thresholding, range filtering)
     if filter_config:
