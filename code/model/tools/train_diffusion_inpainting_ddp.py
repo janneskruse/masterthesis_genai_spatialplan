@@ -299,7 +299,8 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         num_workers=0,
         pin_memory=True,
         collate_fn=collate_fn,
-        sampler=sampler
+        sampler=sampler,
+        drop_last=True  # Ensure all batches are full-sized (prevents partial batch at epoch end)
     )
     
     # Load validation dataset for proper validation sampling (only if validation enabled)
