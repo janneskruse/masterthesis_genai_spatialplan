@@ -60,10 +60,11 @@ def train_lst_predictor():
         print(f"{'='*50}")
         print(yaml.dump(config, default_flow_style=False))
     
-    dataset_config = config['dataset_params']
+    # dataset_config = config['dataset_params']
     train_config = config['train_params']
     layers_registry = config.get('layers', {})
     vae_groups = config.get('vae_groups', {})
+    lst_predictor_config = config.get('lst_predictor', {})
     
     # Get semantic VAE group configuration
     if 'semantic' not in vae_groups:
@@ -93,7 +94,7 @@ def train_lst_predictor():
             num_semantic_channels += 1  # Binary or single-channel layer
     
     # Optionally include NDVI as additional input
-    include_ndvi = train_config.get('lst_predictor_use_ndvi', True)
+    include_ndvi = lst_predictor_config.get('use_ndvi', True)
     if include_ndvi:
         num_input_channels = num_semantic_channels + 1  # +1 for NDVI
     else:
@@ -146,7 +147,7 @@ def train_lst_predictor():
     
     data_loader = DataLoader(
         urban_dataset,
-        batch_size=train_config.get('lst_predictor_batch_size', 16),
+        batch_size=batch_size,
         shuffle=(sampler is None),
         num_workers=0,
         pin_memory=True,
@@ -161,7 +162,7 @@ def train_lst_predictor():
         print(f"{'='*50}")
     
     # LST Predictor model
-    hidden_dims = train_config.get('lst_predictor_hidden_dims', [64, 128, 256])
+    hidden_dims = lst_predictor_config.get('hidden_dims', [64, 128, 256])
     model = LSTPredictor(
         in_channels=num_input_channels,
         hidden_dims=hidden_dims,
@@ -190,9 +191,9 @@ def train_lst_predictor():
         print(f"  - Hidden dims: {hidden_dims}")
     
     ########## Training Setup #############
-    num_epochs = train_config.get('lst_predictor_epochs', 50)
-    base_lr = train_config.get('lst_predictor_lr', 1e-4)
-    batch_size = train_config.get('lst_predictor_batch_size', 16)
+    num_epochs = lst_predictor_config.get('epochs', 50)
+    base_lr = lst_predictor_config.get('lr', 1e-4)
+    batch_size = lst_predictor_config.get('batch_size', 16)
     
     # Scale learning rate with world size
     adjusted_lr = base_lr * world_size
@@ -202,7 +203,7 @@ def train_lst_predictor():
     optimizer = Adam(model.parameters(), lr=adjusted_lr)
     
     # Loss function
-    loss_fn_type = train_config.get('lst_predictor_loss', 'huber')  # 'l1', 'l2', 'huber'
+    loss_fn_type = lst_predictor_config.get('loss', 'huber')  # 'l1', 'l2', 'huber'
     if loss_fn_type == 'l1':
         loss_fn = nn.L1Loss()
     elif loss_fn_type == 'l2':
@@ -211,8 +212,8 @@ def train_lst_predictor():
         loss_fn = nn.SmoothL1Loss()
     
     # Optionally weight loss inside mask
-    use_mask_weighting = train_config.get('lst_predictor_mask_weighting', True)
-    mask_weight = train_config.get('lst_predictor_mask_weight', 3.0)
+    use_mask_weighting = lst_predictor_config.get('mask_weighting', True)
+    mask_weight = lst_predictor_config.get('mask_weight', 3.0)
     
     if is_main:
         print(f"\n✓ Training for {num_epochs} epochs")
@@ -400,7 +401,7 @@ def train_lst_predictor():
             model_to_save = model.module if hasattr(model, 'module') else model
             checkpoint_path = os.path.join(
                 out_dir,
-                train_config.get('lst_predictor_ckpt_name', 'lst_predictor_best.pth')
+                lst_predictor_config.get('checkpoint_name', 'lst_predictor_best.pth')
             )
             torch.save({
                 'epoch': epoch_idx,
@@ -422,7 +423,7 @@ def train_lst_predictor():
             model_to_save = model.module if hasattr(model, 'module') else model
             periodic_path = os.path.join(
                 out_dir,
-                f'lst_predictor_epoch_{epoch_idx + 1}.pth'
+                f"{lst_predictor_config.get('checkpoint_name', 'lst_predictor_epoch_' + str(epoch_idx + 1) + '.pth')}"
             )
             torch.save({
                 'epoch': epoch_idx,

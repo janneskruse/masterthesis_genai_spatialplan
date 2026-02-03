@@ -157,6 +157,10 @@ dataset_params:
 #     max_tries: 4  # Maximum retry attempts
 #     accept_margin: 0.02  # Accept if predicted_p95 <= threshold + margin (normalized)
 
+
+
+
+
 # ===========================================================================
 # GENERIC SCALAR CONTROLS
 # Flexible framework for multiple scalar conditioning (vegetation, heights, etc.)
@@ -167,8 +171,6 @@ dataset_params:
 #    diffusion_stages:
 #      semantic:
 #        scalar_controls: ["temperature", "building_coverage"]  # List of control names
-# 
-# This allows different stages to use different controls flexibly.
 # ===========================================================================
 
 scalar_controls:
@@ -294,6 +296,56 @@ vae_groups:
     latents_dir: 'environmental_latents'
     stats_dir: 'environmental_stats'
     samples_dir: 'environmental_samples'
+
+
+# ===========================================================================
+# LATENT LST PREDICTOR
+# Predicts LST statistics from VAE latent space for guidance/hard checks
+# ===========================================================================
+
+latent_lst_predictor:
+  # Architecture
+  hidden_dims: [64, 128, 256]
+  
+  # Training
+  epochs: 100
+  batch_size: 32          # Can be large (small model)
+  lr: 0.0001
+  loss: 'mse'             # 'mse', 'l1', 'huber'
+  
+  # Target computation
+  statistic: 'p95'        # Which statistic to predict: 'p95', 'mean', 'max'
+  region: 'full'          # 'full' (whole patch) or 'mask' (inside inpainting mask only)
+  
+  # Mode-specific settings (semantic or satellite)
+  modes:
+    semantic:
+      z_channels: 3       # From semantic VAE config
+      latent_size: 64     # From VAE downsampling
+      checkpoint_name: 'latent_lst_predictor_semantic.pth'
+      
+    satellite:
+      z_channels: 4       # From satellite VAE config
+      latent_size: 64
+      checkpoint_name: 'latent_lst_predictor_satellite.pth'
+
+
+# ===========================================================================
+# LST PREDICTOR
+# Predicts LST statistics from full resolution for hard checks
+# ===========================================================================
+
+lst_predictor:
+  # LST predictor training
+  epochs: 50
+  batch_size: 16
+  lr: 0.0001
+  checkpoint_name: 'lst_predictor_best.pth'
+  use_ndvi: True  # Include NDVI as input to LST predictor
+  hidden_dims: [64, 128, 256]
+  loss: 'huber'  # 'l1', 'l2', 'huber'
+  mask_weighting: True
+  mask_weight: 3.0
 
 # ===========================================================================
 # DIFFUSION PARAMETERS
