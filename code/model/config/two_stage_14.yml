@@ -507,7 +507,7 @@ diffusion_stages:
     # Latent scaling to match noise level as Noise schedule assumes data variance ≈ 1
     latent_scaling:
       enabled: True
-      scale_factor: 0.37 # 1/global std ~2.7 → 0.37 scaling to match noise level
+      scale_factor: 1.0 # 1/global std ~0.9-1.0 → 1.0 scaling to match noise level
 
     post_process:
       normalize_mask_region: False  # Normalize generated region to [0,1], keep context unchanged
@@ -701,8 +701,8 @@ train_params:
       min_snr_gamma: 5.0  # Clamp SNR to reduce loss from very noisy timesteps
       
       # Clamp x0 latents for numerical stability in sampling
-      # Observed semantic latent range: [-11.85, +14.47], std ~2.4-3.5
-      clamp_range: [-20.0, 20.0]  
+      # Observed semantic latent range: [~-5, +5], std ~0.9 - 1.0
+      clamp_range: [-7.0, 7.0]  
 
       # DDPM sampling
       sample_epochs: 5  # Sample every N epochs during training
