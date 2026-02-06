@@ -64,7 +64,9 @@ class DDIMScheduler:
         beta_schedule: str = 'linear',
         ddim_steps: int = 50,
         ddim_eta: float = 0.0,
-        clamp_range: tuple = (-10.0, 10.0)
+        clamp_range: tuple = (-10.0, 10.0),
+        laplace_mu: float = 0.0,
+        laplace_b: float = 0.5
     ):
         """
         Initialize DDIM scheduler.
@@ -73,11 +75,13 @@ class DDIMScheduler:
             num_timesteps: Total timesteps in diffusion process
             beta_start: Initial beta value
             beta_end: Final beta value
-            beta_schedule: Schedule type - 'linear' (default) or 'cosine'
+            beta_schedule: Schedule type - 'linear', 'cosine', or 'laplace'
             ddim_steps: Number of sampling steps (< num_timesteps)
             ddim_eta: Stochasticity (0=deterministic, 1=DDPM-like)
             clamp_range: (min, max) range for clamping x0 predictions during sampling
                         Prevents numerical instability while preserving latent detail
+            laplace_mu: Location parameter for Laplace schedule (default: 0.0)
+            laplace_b: Scale parameter for Laplace schedule (default: 0.5 for 256px, 0.75 for 512px)
         """
         self.num_timesteps = num_timesteps
         self.beta_start = beta_start
@@ -86,24 +90,38 @@ class DDIMScheduler:
         self.ddim_steps = ddim_steps
         self.ddim_eta = ddim_eta
         self.clamp_min, self.clamp_max = clamp_range
+        self.laplace_mu = laplace_mu
+        self.laplace_b = laplace_b
         
-        # Create beta schedule (same options as LinearNoiseScheduler)
+        # Create schedule based on type
         if beta_schedule == 'cosine':
             self.betas = self._cosine_beta_schedule(num_timesteps)
+            self.alphas = 1.0 - self.betas
+            self.alpha_cum_prod = torch.cumprod(self.alphas, dim=0)
         elif beta_schedule == 'linear':
             # Scaled-linear schedule (original DDPM)
             self.betas = (
                 torch.linspace(beta_start ** 0.5, beta_end ** 0.5, num_timesteps) ** 2
             )
+            self.alphas = 1.0 - self.betas
+            self.alpha_cum_prod = torch.cumprod(self.alphas, dim=0)
+        elif beta_schedule == 'laplace':
+            # Laplace schedule: directly computes alpha_cum_prod from log(SNR)
+            self.alpha_cum_prod = self._laplace_schedule(num_timesteps, laplace_mu, laplace_b)
+            # Derive betas and alphas from alpha_cum_prod for compatibility
+            self.alphas = torch.ones_like(self.alpha_cum_prod)
+            self.alphas[1:] = self.alpha_cum_prod[1:] / self.alpha_cum_prod[:-1]
+            self.alphas[0] = self.alpha_cum_prod[0]
+            self.betas = 1.0 - self.alphas
+            # Clip betas for numerical stability
+            self.betas = torch.clamp(self.betas, min=1e-8, max=0.999)
         else:
             raise ValueError(
                 f"Unknown beta_schedule: '{beta_schedule}'. "
-                f"Supported: 'linear', 'cosine'"
+                f"Supported: 'linear', 'cosine', 'laplace'"
             )
         
-        # Pre-compute alpha values
-        self.alphas = 1.0 - self.betas
-        self.alpha_cum_prod = torch.cumprod(self.alphas, dim=0)
+        # Pre-compute sqrt values
         self.sqrt_alpha_cum_prod = torch.sqrt(self.alpha_cum_prod)
         self.sqrt_one_minus_alpha_cum_prod = torch.sqrt(1.0 - self.alpha_cum_prod)
         
@@ -140,6 +158,47 @@ class DDIMScheduler:
         alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
         return torch.clip(betas, 0.0001, 0.9999)
+    
+    def _laplace_schedule(self, timesteps, mu=0.0, b=0.5):
+        """
+        Laplace noise schedule from "Improved Noise Schedule for Diffusion Training".
+        
+        Concentrates training compute around log(SNR)=0 (medium noise levels).
+        
+        Args:
+            timesteps: Number of diffusion steps
+            mu: Location parameter (default: 0.0)
+            b: Scale parameter (default: 0.5 for 256px, 0.75 for 512px)
+               
+        Returns:
+            Tensor of alpha_cum_prod values [timesteps]
+            
+        Reference:
+            Hang, T., et al. (2024). Improved Noise Schedule for Diffusion Training.
+            arXiv:2407.03297
+        """
+        eps = 1e-4
+        t = torch.linspace(eps, 1 - eps, timesteps)
+        
+        # Compute log(SNR) using Laplace distribution inverse CDF
+        t_shifted = 0.5 - t
+        sign_t = torch.sign(t_shifted)
+        abs_t = torch.abs(t_shifted)
+        
+        log_arg = torch.clamp(1 - 2 * abs_t, min=1e-8)
+        log_snr = mu - b * sign_t * torch.log(log_arg)
+        
+        # Convert to alpha_cum_prod
+        snr = torch.exp(log_snr)
+        alphas_cumprod = snr / (1 + snr)
+        alphas_cumprod = torch.clamp(alphas_cumprod, min=1e-8, max=1 - 1e-8)
+        
+        # Enforce monotonic decrease
+        for i in range(1, len(alphas_cumprod)):
+            if alphas_cumprod[i] >= alphas_cumprod[i-1]:
+                alphas_cumprod[i] = alphas_cumprod[i-1] - 1e-8
+        
+        return alphas_cumprod
     
     def velocity_to_epsilon(self, v_pred, xt, t):
         """

@@ -237,12 +237,18 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     # Get clamp range for this stage (important for VAE latent ranges)
     clamp_range = train_config.get('clamp_range', [-10.0, 10.0])
     
+    # Laplace schedule parameters (only used when beta_schedule='laplace')
+    laplace_mu = diffusion_config.get('laplace_mu', 0.0)
+    laplace_b = diffusion_config.get('laplace_b', 0.5)
+    
     scheduler = LinearNoiseScheduler(
         num_timesteps=diffusion_config['num_timesteps'],
         beta_start=diffusion_config['beta_start'],
         beta_end=diffusion_config['beta_end'],
         beta_schedule=beta_schedule,
-        clamp_range=tuple(clamp_range)  # Use same clamp range as DDIM
+        clamp_range=tuple(clamp_range),
+        laplace_mu=laplace_mu,
+        laplace_b=laplace_b
     )
     
     # Create separate DDIM scheduler for fast validation sampling
@@ -254,11 +260,15 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         beta_schedule=beta_schedule,
         ddim_steps=train_config.get('val_sample_steps', 50),
         ddim_eta=val_ddim_eta,
-        clamp_range=tuple(clamp_range)
+        clamp_range=tuple(clamp_range),
+        laplace_mu=laplace_mu,
+        laplace_b=laplace_b
     )
     
     if is_main:
         print(f"\n✓ Created DDPM training scheduler ({scheduler.num_timesteps} timesteps, {beta_schedule} schedule)")
+        if beta_schedule == 'laplace':
+            print(f"  Laplace params: μ={laplace_mu}, b={laplace_b}")
         print(f"✓ Prediction type: {prediction_type}")
         print(f"✓ Created DDIM validation scheduler ({val_scheduler.ddim_steps} steps, eta={val_ddim_eta:.2f}, clamp=[{clamp_range[0]}, {clamp_range[1]}])")
     
@@ -758,7 +768,9 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             print(f"✓ Validation: disabled (val_sample_epochs=0)")
         print(f"{'='*50}\n")
     
+    # //////////////////////////////////////////////////
     ########## Training Loop #############
+    # //////////////////////////////////////////////////
     if is_main:
         print("\n" + "="*50)
         print(f"Starting Training")

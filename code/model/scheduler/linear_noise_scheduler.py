@@ -10,6 +10,7 @@ class LinearNoiseScheduler:
     Supports:
     - 'linear' (scaled-linear): Original DDPM schedule with sqrt scaling
     - 'cosine': Improved DDPM schedule (from "Improved Denoising Diffusion Probabilistic Models")
+    - 'laplace': Laplace noise schedule (from "Improved Noise Schedule for Diffusion Training")
     
     Cosine schedule advantages:
     - More gradual noise addition at early timesteps
@@ -17,44 +18,73 @@ class LinearNoiseScheduler:
     - Can improve sample quality, especially for high-resolution images
     - Works well with min-SNR loss weighting
     
-    Reference:
+    Laplace schedule advantages:
+    - Concentrates training compute around log(SNR)=0 (medium noise levels)
+    - Faster convergence than cosine + min-SNR loss weighting
+    - Up to 28% FID improvement over cosine on ImageNet-256
+    - Better than adjusting loss weights alone
+    
+    References:
         Nichol, A., & Dhariwal, P. (2021). Improved Denoising Diffusion Probabilistic Models.
         arXiv:2102.09672. https://arxiv.org/abs/2102.09672
+        
+        Hang, T., et al. (2024). Improved Noise Schedule for Diffusion Training.
+        arXiv:2407.03297. https://arxiv.org/abs/2407.03297
     """
     
-    def __init__(self, num_timesteps, beta_start, beta_end, beta_schedule='linear', clamp_range=(-10.0, 10.0)):
+    def __init__(self, num_timesteps, beta_start, beta_end, beta_schedule='linear', 
+                 clamp_range=(-10.0, 10.0), laplace_mu=0.0, laplace_b=0.5):
         """
         Args:
             num_timesteps: Total diffusion timesteps (typically 1000)
-            beta_start: Starting beta value (e.g., 0.0001)
-            beta_end: Ending beta value (e.g., 0.02)
-            beta_schedule: Schedule type - 'linear' (default) or 'cosine'
+            beta_start: Starting beta value (e.g., 0.0001) - used for linear schedule
+            beta_end: Ending beta value (e.g., 0.02) - used for linear schedule
+            beta_schedule: Schedule type - 'linear', 'cosine', or 'laplace'
             clamp_range: (min, max) range for clamping x0 predictions during sampling
                         Prevents numerical instability while preserving latent detail
+            laplace_mu: Location parameter for Laplace schedule (default: 0.0, center at log(SNR)=0)
+            laplace_b: Scale parameter for Laplace schedule (default: 0.5 for 256px, use 0.75 for 512px)
+                      Smaller b = sharper peak = more compute at medium noise
         """
         self.num_timesteps = num_timesteps
         self.beta_start = beta_start
         self.beta_end = beta_end
         self.beta_schedule = beta_schedule
         self.clamp_min, self.clamp_max = clamp_range
+        self.laplace_mu = laplace_mu
+        self.laplace_b = laplace_b
         
-        # Compute beta schedule based on type
+        # Compute schedule based on type
         if beta_schedule == 'cosine':
             self.betas = self._cosine_beta_schedule(num_timesteps)
+            # Precompute alpha values from betas
+            self.alphas = 1. - self.betas
+            self.alpha_cum_prod = torch.cumprod(self.alphas, dim=0)
         elif beta_schedule == 'linear':
             # Scaled-linear schedule (original DDPM)
             self.betas = (
                 torch.linspace(beta_start ** 0.5, beta_end ** 0.5, num_timesteps) ** 2
             )
+            # Precompute alpha values from betas
+            self.alphas = 1. - self.betas
+            self.alpha_cum_prod = torch.cumprod(self.alphas, dim=0)
+        elif beta_schedule == 'laplace':
+            # Laplace schedule: directly computes alpha_cum_prod from log(SNR)
+            self.alpha_cum_prod = self._laplace_schedule(num_timesteps, laplace_mu, laplace_b)
+            # Derive betas and alphas from alpha_cum_prod for compatibility
+            self.alphas = torch.ones_like(self.alpha_cum_prod)
+            self.alphas[1:] = self.alpha_cum_prod[1:] / self.alpha_cum_prod[:-1]
+            self.alphas[0] = self.alpha_cum_prod[0]
+            self.betas = 1. - self.alphas
+            # Clip betas for numerical stability
+            self.betas = torch.clamp(self.betas, min=1e-8, max=0.999)
         else:
             raise ValueError(
                 f"Unknown beta_schedule: '{beta_schedule}'. "
-                f"Supported: 'linear', 'cosine'"
+                f"Supported: 'linear', 'cosine', 'laplace'"
             )
         
-        # Precompute alpha values (same for all schedules)
-        self.alphas = 1. - self.betas
-        self.alpha_cum_prod = torch.cumprod(self.alphas, dim=0)
+        # Precompute sqrt values (used by all methods)
         self.sqrt_alpha_cum_prod = torch.sqrt(self.alpha_cum_prod)
         self.sqrt_one_minus_alpha_cum_prod = torch.sqrt(1 - self.alpha_cum_prod)
     
@@ -158,6 +188,71 @@ class LinearNoiseScheduler:
         # Clip to reasonable range (prevent numerical issues)
         # Cosine schedule naturally produces smaller betas than linear
         return torch.clip(betas, 0.0001, 0.9999)
+    
+    def _laplace_schedule(self, timesteps, mu=0.0, b=0.5):
+        """
+        Laplace noise schedule from "Improved Noise Schedule for Diffusion Training".
+        
+        Key insight: By defining log(SNR) via the Laplace distribution inverse CDF,
+        sampling timesteps uniformly naturally concentrates more training compute
+        around log(SNR)=0 (medium noise levels). This is more effective than 
+        adjusting loss weights alone.
+        
+        The schedule defines:
+            λ(t) = μ - b · sign(0.5-t) · log(1 - 2|0.5-t|)
+        
+        where λ = log(SNR), and then:
+            SNR = exp(λ)
+            α_bar = SNR / (1 + SNR)
+        
+        Args:
+            timesteps: Number of diffusion steps
+            mu: Location parameter (default: 0.0 = center distribution at log(SNR)=0)
+            b: Scale parameter (default: 0.5 for ~256px images)
+               - Smaller b = sharper peak = more concentrated around medium noise
+               - Use b=0.5 for 256×256, b=0.75 for 512×512
+               
+        Returns:
+            Tensor of alpha_cum_prod values [timesteps]
+            
+        Reference:
+            Hang, T., et al. (2024). Improved Noise Schedule for Diffusion Training.
+            arXiv:2407.03297. https://arxiv.org/abs/2407.03297
+        """
+        # Map discrete timesteps to continuous t ∈ (0, 1)
+        # t=0 → high SNR (low noise), t=1 → low SNR (high noise)
+        # Use small epsilon to avoid log(0) at boundaries
+        eps = 1e-4
+        t = torch.linspace(eps, 1 - eps, timesteps)
+        
+        # Compute log(SNR) using Laplace distribution inverse CDF
+        # λ(t) = μ - b · sign(0.5-t) · log(1 - 2|0.5-t|)
+        t_shifted = 0.5 - t
+        sign_t = torch.sign(t_shifted)
+        abs_t = torch.abs(t_shifted)
+        
+        # Clamp argument to avoid log(0) near t=0.5
+        log_arg = torch.clamp(1 - 2 * abs_t, min=1e-8)
+        log_snr = mu - b * sign_t * torch.log(log_arg)
+        
+        # Convert log(SNR) to SNR
+        snr = torch.exp(log_snr)
+        
+        # Compute alpha_bar = SNR / (1 + SNR) (variance-preserving formulation)
+        # At t=0: high SNR → alpha_bar ≈ 1 (low noise)
+        # At t=1: low SNR → alpha_bar ≈ 0 (high noise)
+        alphas_cumprod = snr / (1 + snr)
+        
+        # Ensure values are in valid range and monotonically decreasing
+        alphas_cumprod = torch.clamp(alphas_cumprod, min=1e-8, max=1 - 1e-8)
+        
+        # Enforce monotonic decrease (alpha_bar should decrease as t increases)
+        # This handles any numerical edge cases
+        for i in range(1, len(alphas_cumprod)):
+            if alphas_cumprod[i] >= alphas_cumprod[i-1]:
+                alphas_cumprod[i] = alphas_cumprod[i-1] - 1e-8
+        
+        return alphas_cumprod
     
     def add_noise(self, original, noise, t):
         r"""

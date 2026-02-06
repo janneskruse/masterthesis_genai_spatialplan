@@ -380,9 +380,17 @@ diffusion_params:
   beta_end: 0.02
   
   # Beta schedule type (affects noise distribution across timesteps)
-  beta_schedule: 'cosine'  # Options: 'linear' (scaled-linear, default) | 'cosine' (improved DDPM)
-  # Cosine: More gradual noise at early steps, better high-res quality, works with min-SNR
-  # Linear: Original DDPM, well-tested, slightly faster convergence
+  # Options: 
+  #   'linear' (scaled-linear): Original DDPM, well-tested
+  #   'cosine': More gradual noise at early steps, better high-res quality
+  #   'laplace': Concentrates compute at medium noise (log(SNR)≈0), fastest convergence
+  beta_schedule: 'cosine'
+  
+  # Laplace schedule parameters (only used when beta_schedule='laplace')
+  # Reference: "Improved Noise Schedule for Diffusion Training" (arXiv:2407.03297)
+  # Achieves up to 28% FID improvement over cosine on ImageNet-256
+  laplace_mu: 0.0   # Location: 0.0 centers at log(SNR)=0
+  laplace_b: 0.5    # Scale: 0.5 for 256px, 0.75 for 512px (smaller = sharper peak)
   
   # Prediction type (what the model learns to predict)
   prediction_type: 'epsilon'  # Options: 'epsilon' (noise, default) | 'v_prediction' (velocity)
