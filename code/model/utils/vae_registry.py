@@ -31,7 +31,7 @@ class VAERegistry:
         # Extract specific latent channels for conditioning
         cond_latents = registry.extract_latent_channels(
             latents,
-            {'landuse': ['buildings', 'streets'], 'environmental': ['lst']}
+            {'landuse': ['buildings', 'streets'], 'environmental': ['temperature']}
         )
     """
     

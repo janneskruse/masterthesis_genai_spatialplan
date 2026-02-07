@@ -64,7 +64,7 @@ layers:
     normalize: 'clip'
     clip_range: [-1, 1]
     
-  lst:
+  temperature:
     layer: 'landsat_surface_temp_b10_masked'
     type: 'continuous'
     normalize: 'custom'
@@ -144,7 +144,7 @@ dataset_params:
 # ===========================================================================
 
 temperature_control:
-  lst_max: 80.0  # Maximum LST value in Celsius for normalization
+  temp_max: 80.0  # Maximum LST value in Celsius for normalization
 
   guidance:
     enabled: false # true to enable guidance
@@ -180,7 +180,7 @@ scalar_controls:
     # Temperature control
     - name: "temperature"
       keys: ["tmax"]  # scalar key
-      layer: "lst"
+      layer: "temperature"
       statistic: "p95"
       region: "mask"
       training:
@@ -279,7 +279,7 @@ vae_groups:
     
   # Environmental conditions VAE
   environmental:
-    layers: ['lst', 'ndvi']
+    layers: ['temperature', 'ndvi']
     z_channels: 2
     down_channels: [16, 32, 64, 64]
     mid_channels: [64, 64]
@@ -352,7 +352,7 @@ diffusion_stages:
       # Latent-space conditioning (encoded through respective VAEs)
       latent_space:
         - group: 'environmental'
-          layers: ['lst', 'ndvi']  # Control temperature to guide urban density
+          layers: ['temperature', 'ndvi']  # Control temperature to guide urban density
           
         # - group: 'semantic'
         #   layers: ['street_blocks']  # Optional: constrain to valid blocks
@@ -485,7 +485,7 @@ diffusion_stages:
           layers: ['buildings', 'streets', 'buildings_heights', 'vegetation'] # 'buildings_heights'
           
         - group: 'environmental'
-          layers: ['ndvi', 'lst']
+          layers: ['ndvi', 'temperature']
     
     # Inpainting configuration
     inpainting:

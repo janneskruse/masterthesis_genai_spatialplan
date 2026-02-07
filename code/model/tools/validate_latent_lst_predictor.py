@@ -1,5 +1,5 @@
-# Validation script for Latent LST Predictor
-# Creates prediction samples on validation set to assess latent-space LST predictor quality
+# Validation script for Latent Temperature predictor
+# Creates prediction samples on validation set to assess latent-space Temperature predictor quality
 
 ###### import libraries ######
 # Standard libraries
@@ -17,25 +17,25 @@ import matplotlib.pyplot as plt
 
 # Local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.lst_predictor.latent_predictor import LatentLSTPredictor, load_latent_lst_predictor
+from model.temperature_predictor.latent_predictor import LatentTemperaturePredictor, load_latent_temperature_predictor
 from model.utils.data_utils import collate_fn
 from model.utils.vae_registry import VAERegistry
 from model.utils.checkpoint import check_existing_paths
 from helpers.load_configs import load_configs, add_config_arguments
 from helpers.indexed_outputs import get_next_run_idx
-from model.utils.statistics import compute_lst_statistic
+from model.utils.statistics import compute_temperature_statistic
 from model.utils.samples import save_latent_visualization
-from model.utils.plot import save_lst_error_histogram, save_lst_prediction_scatter
+from model.utils.plot import save_temperature_error_histogram, save_temperature_prediction_scatter
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def validate_latent_lst_predictor(
+def validate_latent_temperature_predictor(
     model: torch.nn.Module,
     val_loader: torch.utils.data.DataLoader,
     statistic: str,
     region: str,
-    lst_max: float,
+    temp_max: float,
     save_dir: str,
     mode: str,
     num_samples: int = 100,
@@ -43,14 +43,14 @@ def validate_latent_lst_predictor(
     vae: torch.nn.Module = None
 ):
     """
-    Validate latent LST predictor on validation set.
+    Validate latent Temperature predictor on validation set.
     
     Args:
-        model: Trained LatentLSTPredictor
+        model: Trained LatentTemperaturePredictor
         val_loader: Validation data loader
         statistic: Target statistic ('p95', 'mean', etc.)
         region: Region for statistic computation ('full' or 'mask')
-        lst_max: Max LST value for Celsius conversion
+        temp_max: Max Temperature value for Celsius conversion
         save_dir: Directory to save results
         mode: 'semantic' or 'satellite'
         num_samples: Max number of samples to validate
@@ -70,7 +70,7 @@ def validate_latent_lst_predictor(
     samples_processed = 0
     
     print(f"\n{'='*60}")
-    print(f"Validating Latent LST Predictor ({mode})")
+    print(f"Validating Latent Temperature predictor ({mode})")
     print(f"{'='*60}")
     print(f"Statistic: {statistic}")
     print(f"Region: {region}")
@@ -87,7 +87,7 @@ def validate_latent_lst_predictor(
             
             latent_or_image, cond_dict = data
             
-            # Get LST full-res from conditioning
+            # Get Temperature full-res from conditioning
             if 'image' not in cond_dict or cond_dict['image'] is None:
                 continue
             
@@ -113,28 +113,28 @@ def validate_latent_lst_predictor(
             else:
                 latent = latent_or_image
             
-            # Find LST channel in conditioning
-            lst_idx = None
+            # Find Temperature channel in conditioning
+            temperature_idx = None
             mask_idx = None
             
             for i, name in enumerate(pixel_space_names):
-                if name == 'lst':
-                    lst_idx = i
+                if name == 'temperature':
+                    temperature_idx = i
                 elif name == 'inpainting_mask':
                     mask_idx = i
             
-            if lst_idx is None:
+            if temperature_idx is None:
                 continue
             
-            # Extract LST and mask
-            lst_fullres = cond_image[:, lst_idx:lst_idx+1, :, :].float().to(device)
+            # Extract Temperature and mask
+            temperature_fullres = cond_image[:, temperature_idx:temperature_idx+1, :, :].float().to(device)
             
             mask = None
             if region == 'mask' and mask_idx is not None:
                 mask = cond_image[:, mask_idx:mask_idx+1, :, :].float().to(device)
             
             # Compute target statistic
-            target = compute_lst_statistic(lst_fullres, statistic=statistic, mask=mask)
+            target = compute_temperature_statistic(temperature_fullres, statistic=statistic, mask=mask)
             target = target.to(device)
             
             # Forward pass
@@ -161,14 +161,14 @@ def validate_latent_lst_predictor(
     all_errors = np.array(all_errors)
     
     # Compute metrics
-    mae = all_errors.mean() * lst_max  # Convert to Celsius
-    rmse = np.sqrt((all_errors ** 2).mean()) * lst_max
+    mae = all_errors.mean() * temp_max  # Convert to Celsius
+    rmse = np.sqrt((all_errors ** 2).mean()) * temp_max
     r2 = 1 - np.sum((all_targets - all_predictions) ** 2) / (np.sum((all_targets - all_targets.mean()) ** 2) + 1e-8)
     
     # Percentile errors
-    p50_err = np.percentile(all_errors, 50) * lst_max
-    p95_err = np.percentile(all_errors, 95) * lst_max
-    p99_err = np.percentile(all_errors, 99) * lst_max
+    p50_err = np.percentile(all_errors, 50) * temp_max
+    p95_err = np.percentile(all_errors, 95) * temp_max
+    p99_err = np.percentile(all_errors, 99) * temp_max
     
     metrics = {
         'num_samples': len(all_targets),
@@ -178,10 +178,10 @@ def validate_latent_lst_predictor(
         'p50_error_celsius': float(p50_err),
         'p95_error_celsius': float(p95_err),
         'p99_error_celsius': float(p99_err),
-        'target_mean_celsius': float(all_targets.mean() * lst_max),
-        'target_std_celsius': float(all_targets.std() * lst_max),
-        'pred_mean_celsius': float(all_predictions.mean() * lst_max),
-        'pred_std_celsius': float(all_predictions.std() * lst_max),
+        'target_mean_celsius': float(all_targets.mean() * temp_max),
+        'target_std_celsius': float(all_targets.std() * temp_max),
+        'pred_mean_celsius': float(all_predictions.mean() * temp_max),
+        'pred_std_celsius': float(all_predictions.std() * temp_max),
     }
     
     # Print metrics
@@ -195,8 +195,8 @@ def validate_latent_lst_predictor(
     print(f"  P50 Error: {p50_err:.2f}°C")
     print(f"  P95 Error: {p95_err:.2f}°C")
     print(f"  P99 Error: {p99_err:.2f}°C")
-    print(f"  Target mean: {all_targets.mean() * lst_max:.1f}°C ± {all_targets.std() * lst_max:.1f}°C")
-    print(f"  Pred mean: {all_predictions.mean() * lst_max:.1f}°C ± {all_predictions.std() * lst_max:.1f}°C")
+    print(f"  Target mean: {all_targets.mean() * temp_max:.1f}°C ± {all_targets.std() * temp_max:.1f}°C")
+    print(f"  Pred mean: {all_predictions.mean() * temp_max:.1f}°C ± {all_predictions.std() * temp_max:.1f}°C")
     print(f"{'='*60}")
     
     # Save visualizations
@@ -204,16 +204,16 @@ def validate_latent_lst_predictor(
     
     # Scatter plot
     scatter_path = os.path.join(save_dir, f'scatter_{mode}.png')
-    save_lst_prediction_scatter(
-        all_targets, all_predictions, scatter_path, lst_max,
-        title=f'Latent LST Predictor ({mode}): Target vs Prediction'
+    save_temperature_prediction_scatter(
+        all_targets, all_predictions, scatter_path, temp_max,
+        title=f'Latent Temperature predictor ({mode}): Target vs Prediction'
     )
     print(f"  ✓ Saved scatter plot: {scatter_path}")
     
     # Error histogram
     hist_path = os.path.join(save_dir, f'error_histogram_{mode}.png')
-    save_lst_error_histogram(
-        all_errors, hist_path, lst_max,
+    save_temperature_error_histogram(
+        all_errors, hist_path, temp_max,
         title=f'Prediction Error Distribution ({mode})'
     )
     print(f"  ✓ Saved error histogram: {hist_path}")
@@ -250,7 +250,7 @@ def main(args, config):
     # Extract configs
     data_config = config['data_config']
     train_config = config['train_params']
-    predictor_config = config.get('latent_lst_predictor', {})
+    predictor_config = config.get('latent_temperature_predictor', {})
     vae_groups = config.get('vae_groups', {})
     layers_registry = config.get('layers', {})
     
@@ -263,12 +263,12 @@ def main(args, config):
     existing_paths_result = check_existing_paths(
         train_config=train_config,
         mode=mode,
-        type='lst_latent'
+        type='temperature_latent'
     )
     existing_vae_paths = existing_paths_result.vae_checkpoints
     
     print(f"\n{'='*60}")
-    print(f"Latent LST Predictor Validation Setup")
+    print(f"Latent Temperature predictor Validation Setup")
     print(f"{'='*60}")
     print(f"Task: {task_name}")
     print(f"Mode: {mode}")
@@ -290,9 +290,9 @@ def main(args, config):
     statistic = predictor_config.get('statistic', 'p95')
     region = predictor_config.get('region', 'full')
     
-    # Get LST normalization range
-    lst_config = layers_registry.get('lst', {})
-    lst_max = lst_config.get('normalize_params', {}).get('max', 80)
+    # Get Temperature normalization range
+    temperature_config = layers_registry.get('temperature', {})
+    temp_max = temperature_config.get('normalize_params', {}).get('max', 80)
     
     # Set seed
     seed = train_config.get('seed', 42)
@@ -303,7 +303,7 @@ def main(args, config):
     
     ########## Load Dataset #############
     print(f"\n{'='*60}")
-    print(f"Loading Validation Dataset (mode: lst:{mode})")
+    print(f"Loading Validation Dataset (mode: temperature:{mode})")
     print(f"{'='*60}")
     
     # Check for existing cached patches
@@ -316,7 +316,7 @@ def main(args, config):
     
     val_dataset = UrbanInpaintingDataset(
         split='val',
-        mode=f'lst:{mode}',
+        mode=f'temperature:{mode}',
         use_cached_patches=use_cached_patches,
         cache_dir=str(cache_dir)
     )
@@ -334,13 +334,13 @@ def main(args, config):
     
     ########## Load Model #############
     print(f"\n{'='*60}")
-    print(f"Loading Latent LST Predictor ({mode})")
+    print(f"Loading Latent Temperature predictor ({mode})")
     print(f"{'='*60}")
     
     data_dir = f"{big_data_storage_path}/results/{task_name}"
     
     # Use the load helper
-    model = load_latent_lst_predictor(
+    model = load_latent_temperature_predictor(
         config=config,
         mode=mode,
         device=device,
@@ -348,10 +348,10 @@ def main(args, config):
     )
     
     if model is None:
-        checkpoint_name = mode_config.get('checkpoint_name', f'latent_lst_predictor_{mode}.pth')
+        checkpoint_name = mode_config.get('checkpoint_name', f'latent_temperature_predictor_{mode}.pth')
         print(f"\n✗ Could not load model. Expected checkpoint at:")
         print(f"  {os.path.join(data_dir, checkpoint_name)}")
-        print(f"  Please train the latent LST predictor first.")
+        print(f"  Please train the latent Temperature predictor first.")
         return None
     
     ########## Load VAE for on-the-fly encoding (if needed) #############
@@ -402,7 +402,7 @@ def main(args, config):
     
     ########## Setup Output Directory #############
     repo_dir = config.get('repo_dir', '.')
-    save_dir = f"{repo_dir}/results/{task_name}/latent_lst_predictor_validation"
+    save_dir = f"{repo_dir}/results/{task_name}/latent_temperature_predictor_validation"
     os.makedirs(save_dir, exist_ok=True)
     
     # Get run index
@@ -418,12 +418,12 @@ def main(args, config):
     print(f"✓ Output directory: {run_dir}")
     
     ########## Run Validation #############
-    metrics = validate_latent_lst_predictor(
+    metrics = validate_latent_temperature_predictor(
         model=model,
         val_loader=val_loader,
         statistic=statistic,
         region=region,
-        lst_max=lst_max,
+        temp_max=temp_max,
         save_dir=run_dir,
         mode=mode,
         num_samples=args.num_samples,
@@ -440,7 +440,7 @@ def main(args, config):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Validate Latent LST Predictor')
+    parser = argparse.ArgumentParser(description='Validate Latent Temperature predictor')
     
     add_config_arguments(parser)
     

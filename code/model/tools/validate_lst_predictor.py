@@ -1,5 +1,5 @@
-# Validation script for LST Predictor
-# Creates prediction samples on validation set to assess LST predictor quality
+# Validation script for Temperature predictor
+# Creates prediction samples on validation set to assess Temperature predictor quality
 
 ###### import libraries ######
 # Standard libraries
@@ -17,7 +17,7 @@ from torchvision.utils import make_grid, save_image
 
 # Local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.lst_predictor.predictor import LSTPredictor
+from model.temperature_predictor.predictor import TemperaturePredictor
 from model.utils.layer_config import get_layer_channels_from_names
 from model.utils.colors import get_colormap_for_layer, apply_colormap_to_tensor
 from helpers.load_configs import load_configs, add_config_arguments
@@ -26,22 +26,22 @@ from helpers.indexed_outputs import get_next_run_idx
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-def save_lst_prediction_visualization(
+def save_temperature_prediction_visualization(
     semantic_input: torch.Tensor,
-    lst_target: torch.Tensor,
-    lst_pred: torch.Tensor,
+    temperature_target: torch.Tensor,
+    temperature_pred: torch.Tensor,
     semantic_layer_names: list,
     save_dir: str,
     sample_idx: int,
     n_samples: int = 8
 ):
     """
-    Save LST prediction visualization with semantic inputs, target LST, and predicted LST.
+    Save Temperature prediction visualization with semantic inputs, Target Temperature, and predicted Temperature.
     
     Args:
         semantic_input: Semantic input tensor [B, C_semantic, H, W]
-        lst_target: Target LST tensor [B, 1, H, W]
-        lst_pred: Predicted LST tensor [B, 1, H, W]
+        temperature_target: Target Temperature tensor [B, 1, H, W]
+        temperature_pred: Predicted Temperature tensor [B, 1, H, W]
         semantic_layer_names: List of semantic layer names
         save_dir: Directory to save visualizations
         sample_idx: Sample index for filename
@@ -49,31 +49,31 @@ def save_lst_prediction_visualization(
     """
     n_samples = min(n_samples, semantic_input.shape[0])
     
-    # Get LST colormap (rocket: cool to hot)
-    lst_cmap = get_colormap_for_layer('lst')
+    # Get Temperature colormap (rocket: cool to hot)
+    temperature_cmap = get_colormap_for_layer('temperature')
     
-    # LST is already normalized to [0, 1] by dataset (0°C = 0, 80°C = 1)
-    lst_target_norm = torch.clamp(lst_target, 0, 1)
-    lst_pred_norm = torch.clamp(lst_pred, 0, 1)
+    # Temperature is already normalized to [0, 1] by dataset (0°C = 0, 80°C = 1)
+    temperature_target_norm = torch.clamp(temperature_target, 0, 1)
+    temperature_pred_norm = torch.clamp(temperature_pred, 0, 1)
     
-    # Apply colormap to LST
-    lst_target_colored = apply_colormap_to_tensor(lst_target_norm[:n_samples], lst_cmap)
-    lst_pred_colored = apply_colormap_to_tensor(lst_pred_norm[:n_samples], lst_cmap)
+    # Apply colormap to Temperature
+    temperature_target_colored = apply_colormap_to_tensor(temperature_target_norm[:n_samples], temperature_cmap)
+    temperature_pred_colored = apply_colormap_to_tensor(temperature_pred_norm[:n_samples], temperature_cmap)
     
     # Compute error map (error is also in normalized [0, 1] range)
-    error = torch.abs(lst_pred - lst_target)
+    error = torch.abs(temperature_pred - temperature_target)
     error_norm = torch.clamp(error / 0.25, 0, 1)  # Normalize error: 0.25 = 20°C/80°C max visible error
     error_colored = apply_colormap_to_tensor(error_norm[:n_samples], 'hot')
     
-    # Save LST comparison (target vs prediction)
-    lst_comparison = torch.cat([lst_target_colored, lst_pred_colored], dim=0)
-    grid = make_grid(lst_comparison, nrow=n_samples, normalize=False, padding=2, pad_value=1.0)
-    save_path = os.path.join(save_dir, f'sample_{sample_idx}_lst_comparison.png')
+    # Save Temperature comparison (target vs prediction)
+    temperature_comparison = torch.cat([temperature_target_colored, temperature_pred_colored], dim=0)
+    grid = make_grid(temperature_comparison, nrow=n_samples, normalize=False, padding=2, pad_value=1.0)
+    save_path = os.path.join(save_dir, f'sample_{sample_idx}_temperature_comparison.png')
     save_image(grid, save_path)
     
     # Save error map
     grid_error = make_grid(error_colored, nrow=n_samples, normalize=False, padding=2, pad_value=1.0)
-    save_path_error = os.path.join(save_dir, f'sample_{sample_idx}_lst_error.png')
+    save_path_error = os.path.join(save_dir, f'sample_{sample_idx}_temperature_error.png')
     save_image(grid_error, save_path_error)
     
     # Save semantic inputs (layer-wise)
@@ -100,7 +100,7 @@ def save_lst_prediction_visualization(
         save_image(grid_semantic, save_path_semantic)
 
 
-def validate_lst_predictor(
+def validate_temperature_predictor(
     model,
     dataset,
     semantic_layers,
@@ -108,20 +108,20 @@ def validate_lst_predictor(
     num_samples=8,
     save_dir=None,
     overwrite_samples=False,
-    lst_max_celsius=80
+    temp_max_celsius=80
 ):
     """
-    Validate LST predictor by creating prediction samples on validation set.
+    Validate Temperature predictor by creating prediction samples on validation set.
     
     Args:
-        model: Trained LSTPredictor model
+        model: Trained TemperaturePredictor model
         dataset: UrbanInpaintingDataset in validation mode (default mode)
         semantic_layers: List of semantic layer names
         include_ndvi: Whether NDVI is included in input
         num_samples: Number of validation samples to process
         save_dir: Directory to save samples
         overwrite_samples: Whether to overwrite existing samples
-        lst_max_celsius: Maximum LST value in Celsius for normalization (from config)
+        temp_max_celsius: Maximum Temperature value in Celsius for normalization (from config)
         
     Returns:
         Dictionary with validation metrics
@@ -129,7 +129,7 @@ def validate_lst_predictor(
     model.eval()
     
     print("\n" + "="*60)
-    print("LST Predictor Validation")
+    print("Temperature predictor Validation")
     print("="*60)
     print(f"Semantic layers: {semantic_layers}")
     print(f"Include NDVI: {include_ndvi}")
@@ -147,11 +147,11 @@ def validate_lst_predictor(
     
     # Setup output directories
     if save_dir is None:
-        save_dir = "./results/lst_predictor_validation"
+        save_dir = "./results/temperature_predictor_validation"
     os.makedirs(save_dir, exist_ok=True)
     
     # Get next run index
-    base_name = 'lst_predictor_val'
+    base_name = 'temperature_predictor_val'
     run_idx = get_next_run_idx(save_dir, base_name)
     if overwrite_samples and run_idx > 0:
         run_idx = 0
@@ -166,7 +166,7 @@ def validate_lst_predictor(
     
     ################# Validation Loop ########################
     print("\n" + "="*60)
-    print("Starting LST Predictor Validation")
+    print("Starting Temperature predictor Validation")
     print("="*60)
     
     all_errors = []
@@ -174,8 +174,8 @@ def validate_lst_predictor(
     all_rmse = []
     
     all_semantic_inputs = []
-    all_lst_targets = []
-    all_lst_preds = []
+    all_temperature_targets = []
+    all_temperature_preds = []
     
     with torch.no_grad():
         for sample_idx, data_idx in enumerate(tqdm(sample_indices, desc="Validating")):
@@ -233,22 +233,22 @@ def validate_lst_predictor(
                 print(f"⚠ Warning: No semantic layers found in sample {data_idx}")
                 continue
             
-            # Extract LST target from conditioning
-            lst_target = None
-            lst_matches = get_layer_channels_from_names(channel_names, 'lst')
-            if lst_matches:
-                idx, _ = lst_matches[0]
-                lst_target = cond_image[idx:idx+1, :, :].unsqueeze(0)
+            # Extract Temperature target from conditioning
+            temperature_target = None
+            temperature_matches = get_layer_channels_from_names(channel_names, 'temperature')
+            if temperature_matches:
+                idx, _ = temperature_matches[0]
+                temperature_target = cond_image[idx:idx+1, :, :].unsqueeze(0)
             
-            if lst_target is None:
+            if temperature_target is None:
                 # Try alternative names
                 for idx, ch_name in enumerate(channel_names):
                     if 'landsat_surface_temp' in ch_name.lower() or 'surface_temp' in ch_name.lower():
-                        lst_target = cond_image[idx:idx+1, :, :].unsqueeze(0)
+                        temperature_target = cond_image[idx:idx+1, :, :].unsqueeze(0)
                         break
             
-            if lst_target is None:
-                print(f"⚠ Warning: LST target not found in sample {data_idx}")
+            if temperature_target is None:
+                print(f"⚠ Warning: Temperature target not found in sample {data_idx}")
                 continue
             
             # Extract NDVI if needed
@@ -273,16 +273,16 @@ def validate_lst_predictor(
             
             # Move to device
             semantic_input = semantic_input.float().to(device)
-            lst_target = lst_target.float().to(device)
+            temperature_target = temperature_target.float().to(device)
             
             # Forward pass
-            lst_pred = model(semantic_input)
+            temperature_pred = model(semantic_input)
             
             # Compute metrics (convert from normalized [0, 1] to Celsius for interpretability)
-            # LST normalization: 0°C = 0, max°C = 1 (max from config)
-            error = torch.abs(lst_pred - lst_target)
-            mae = error.mean().item() * lst_max_celsius  # Convert to °C
-            rmse = torch.sqrt((error ** 2).mean()).item() * lst_max_celsius  # Convert to °C
+            # Temperature normalization: 0°C = 0, max°C = 1 (max from config)
+            error = torch.abs(temperature_pred - temperature_target)
+            mae = error.mean().item() * temp_max_celsius  # Convert to °C
+            rmse = torch.sqrt((error ** 2).mean()).item() * temp_max_celsius  # Convert to °C
             
             all_errors.append(error.cpu())
             all_mae.append(mae)
@@ -292,8 +292,8 @@ def validate_lst_predictor(
             sample_pt_path = os.path.join(samples_dir, f'sample_{sample_idx}.pt')
             torch.save({
                 'semantic_input': semantic_input[0].cpu(),
-                'lst_target': lst_target[0].cpu(),
-                'lst_pred': lst_pred[0].cpu(),
+                'temperature_target': temperature_target[0].cpu(),
+                'temperature_pred': temperature_pred[0].cpu(),
                 'error': error[0].cpu(),
                 'mae': mae,
                 'rmse': rmse,
@@ -303,8 +303,8 @@ def validate_lst_predictor(
             
             # Keep for batch visualization
             all_semantic_inputs.append(semantic_input)
-            all_lst_targets.append(lst_target)
-            all_lst_preds.append(lst_pred)
+            all_temperature_targets.append(temperature_target)
+            all_temperature_preds.append(temperature_pred)
     
     # Create visualizations
     print("\nCreating visualizations...")
@@ -312,14 +312,14 @@ def validate_lst_predictor(
     if all_semantic_inputs:
         # Stack all samples
         semantic_batch = torch.cat(all_semantic_inputs, dim=0)  # [N, C_semantic, H, W]
-        lst_target_batch = torch.cat(all_lst_targets, dim=0)  # [N, 1, H, W]
-        lst_pred_batch = torch.cat(all_lst_preds, dim=0)  # [N, 1, H, W]
+        temperature_target_batch = torch.cat(all_temperature_targets, dim=0)  # [N, 1, H, W]
+        temperature_pred_batch = torch.cat(all_temperature_preds, dim=0)  # [N, 1, H, W]
         
         # Save batch visualization
-        save_lst_prediction_visualization(
+        save_temperature_prediction_visualization(
             semantic_input=semantic_batch,
-            lst_target=lst_target_batch,
-            lst_pred=lst_pred_batch,
+            temperature_target=temperature_target_batch,
+            temperature_pred=temperature_pred_batch,
             semantic_layer_names=semantic_layers,
             save_dir=save_dir,
             sample_idx=run_idx,
@@ -367,14 +367,14 @@ def main(args, config):
     task_name = train_config.get('task_name', 'urban_inpainting')
     
     print(f"\n{'='*60}")
-    print(f"LST Predictor Validation Setup")
+    print(f"Temperature predictor Validation Setup")
     print(f"{'='*60}")
     print(f"Task: {task_name}")
     print(f"Number of samples: {args.num_samples}")
     
     # Get semantic layers from config
     if 'semantic' not in vae_groups:
-        raise ValueError("Config must define 'semantic' VAE group for LST predictor validation")
+        raise ValueError("Config must define 'semantic' VAE group for Temperature predictor validation")
     
     semantic_vae_config = vae_groups['semantic']
     semantic_layers = semantic_vae_config.get('layers', [])
@@ -382,10 +382,10 @@ def main(args, config):
     if not semantic_layers:
         raise ValueError("Semantic VAE group has no layers defined")
     
-    # Get LST normalization range from config for metric conversion
-    lst_layer_config = layers_registry.get('lst', {})
-    lst_normalize_params = lst_layer_config.get('normalize_params', {})
-    lst_max_celsius = lst_normalize_params.get('max', 80)  # Default to 80°C if not specified
+    # Get Temperature normalization range from config for metric conversion
+    temperature_layer_config = layers_registry.get('temperature', {})
+    temperature_normalize_params = temperature_layer_config.get('normalize_params', {})
+    temp_max_celsius = temperature_normalize_params.get('max', 80)  # Default to 80°C if not specified
     
     # Count channels in semantic layers
     num_semantic_channels = 0
@@ -400,7 +400,7 @@ def main(args, config):
             num_semantic_channels += 1  # Binary or single-channel layer
     
     # NDVI configuration
-    include_ndvi = train_config.get('lst_predictor_use_ndvi', True)
+    include_ndvi = train_config.get('temperature_predictor_use_ndvi', True)
     if include_ndvi:
         num_input_channels = num_semantic_channels + 1
     else:
@@ -427,21 +427,21 @@ def main(args, config):
     
     print(f"✓ Loaded {len(dataset)} validation patches")
     
-    ########## Load LST Predictor #############
+    ########## Load Temperature predictor #############
     print("\n" + "="*60)
-    print("Loading LST Predictor Model")
+    print("Loading Temperature predictor Model")
     print("="*60)
     
     # Get checkpoint path
     data_dir = f"{big_data_storage_path}/results/{task_name}"
-    checkpoint_name = train_config.get('lst_predictor_ckpt_name', 'lst_predictor_best.pth')
+    checkpoint_name = train_config.get('temperature_predictor_ckpt_name', 'temperature_predictor_best.pth')
     checkpoint_path = os.path.join(data_dir, checkpoint_name)
     
     print(f"Checkpoint path: {checkpoint_path}")
     
     if not os.path.exists(checkpoint_path):
-        print(f"\n✗ LST Predictor checkpoint not found: {checkpoint_path}")
-        print(f"  Please train the LST predictor first before validation")
+        print(f"\n✗ Temperature predictor checkpoint not found: {checkpoint_path}")
+        print(f"  Please train the Temperature predictor first before validation")
         return
     
     # Load checkpoint
@@ -449,10 +449,10 @@ def main(args, config):
     
     # Get model config from checkpoint
     ckpt_config = checkpoint.get('config', {})
-    hidden_dims = ckpt_config.get('hidden_dims', train_config.get('lst_predictor_hidden_dims', [64, 128, 256]))
+    hidden_dims = ckpt_config.get('hidden_dims', train_config.get('temperature_predictor_hidden_dims', [64, 128, 256]))
     
     # Create model
-    model = LSTPredictor(
+    model = TemperaturePredictor(
         in_channels=num_input_channels,
         hidden_dims=hidden_dims,
         out_channels=1
@@ -462,7 +462,7 @@ def main(args, config):
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
     
-    print(f"✓ Loaded LST Predictor from {checkpoint_path}")
+    print(f"✓ Loaded Temperature predictor from {checkpoint_path}")
     print(f"  Epoch: {checkpoint.get('epoch', 'unknown')}")
     print(f"  Loss: {checkpoint.get('loss', 'unknown'):.4f}")
     print(f"  Input channels: {num_input_channels}")
@@ -470,10 +470,10 @@ def main(args, config):
     
     # Setup output directory
     repo_dir = config.get('repo_dir', '.')
-    save_dir = f"{repo_dir}/results/{task_name}/lst_predictor_validation"
+    save_dir = f"{repo_dir}/results/{task_name}/temperature_predictor_validation"
     
-    ########## Validate LST Predictor #############
-    metrics = validate_lst_predictor(
+    ########## Validate Temperature predictor #############
+    metrics = validate_temperature_predictor(
         model=model,
         dataset=dataset,
         semantic_layers=semantic_layers,
@@ -481,12 +481,12 @@ def main(args, config):
         num_samples=args.num_samples,
         save_dir=save_dir,
         overwrite_samples=args.overwrite_samples,
-        lst_max_celsius=lst_max_celsius
+        temp_max_celsius=temp_max_celsius
     )
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Validate LST Predictor with prediction samples')
+    parser = argparse.ArgumentParser(description='Validate Temperature predictor with prediction samples')
     
     add_config_arguments(parser)
     

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --time=3:00:00
-#SBATCH --job-name="train_lst_predictor_ddp"
+#SBATCH --job-name="train_temperature_predictor_ddp"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
@@ -54,7 +54,7 @@ echo "=================================================="
 srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    python3 -u train_lst_predictor_ddp.py --config $CONFIG_PATH
+    python3 -u train_temperature_predictor_ddp.py --config $CONFIG_PATH
 "
 
 # Capture the exit code of srun/python

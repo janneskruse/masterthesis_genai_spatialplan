@@ -215,7 +215,7 @@ def get_conditioning_layers(stage_config: Dict) -> Dict[str, List[str]]:
     Example:
         {
             'landuse': ['street_blocks'],
-            'environmental': ['lst']
+            'environmental': ['temperature']
         }
     """
     conditioning = stage_config.get('conditioning', {})

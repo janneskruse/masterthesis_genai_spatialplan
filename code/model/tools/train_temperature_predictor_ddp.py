@@ -1,4 +1,4 @@
-# Training script for LST predictor from semantic features
+# Training script for Temperature predictor from semantic features
 # Predicts Land Surface Temperature from semantic layout (buildings/roads/vegetation/height)
 
 ###### import libraries ######
@@ -27,13 +27,13 @@ from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.layer_config import get_layer_channels_from_names
 from helpers.load_configs import load_configs
-from model.lst_predictor.predictor import LSTPredictor
+from model.temperature_predictor.predictor import TemperaturePredictor
 
 # Load CUDA
 load_cuda()
 
 
-def train_lst_predictor():
+def train_temperature_predictor():
     # Record training start time
     training_start_time = time.time()
     
@@ -50,7 +50,7 @@ def train_lst_predictor():
     
     if is_main:
         print(f"\n{'='*60}")
-        print("LST Predictor DDP Training")
+        print("Temperature predictor DDP Training")
         print(f"{'='*60}")
         print(f"✓ World size: {world_size}")
         print(f"✓ Rank: {rank}")
@@ -64,11 +64,11 @@ def train_lst_predictor():
     train_config = config['train_params']
     layers_registry = config.get('layers', {})
     vae_groups = config.get('vae_groups', {})
-    lst_predictor_config = config.get('lst_predictor', {})
+    temperature_predictor_config = config.get('temperature_predictor', {})
     
     # Get semantic VAE group configuration
     if 'semantic' not in vae_groups:
-        raise ValueError("Config must define 'semantic' VAE group for LST predictor training")
+        raise ValueError("Config must define 'semantic' VAE group for Temperature predictor training")
     
     semantic_vae_config = vae_groups['semantic']
     semantic_layers = semantic_vae_config.get('layers', [])
@@ -76,10 +76,10 @@ def train_lst_predictor():
     if not semantic_layers:
         raise ValueError("Semantic VAE group has no layers defined")
     
-    # Get LST normalization range from config for loss interpretation
-    lst_layer_config = layers_registry.get('lst', {})
-    lst_normalize_params = lst_layer_config.get('normalize_params', {})
-    lst_max_celsius = lst_normalize_params.get('max', 80)  # Default to 80°C if not specified
+    # Get Temperature normalization range from config for loss interpretation
+    temperature_layer_config = layers_registry.get('temperature', {})
+    temperature_normalize_params = temperature_layer_config.get('normalize_params', {})
+    temp_max_celsius = temperature_normalize_params.get('max', 80)  # Default to 80°C if not specified
     
     # Count channels in semantic layers
     num_semantic_channels = 0
@@ -94,7 +94,7 @@ def train_lst_predictor():
             num_semantic_channels += 1  # Binary or single-channel layer
     
     # Optionally include NDVI as additional input
-    include_ndvi = lst_predictor_config.get('use_ndvi', True)
+    include_ndvi = temperature_predictor_config.get('use_ndvi', True)
     if include_ndvi:
         num_input_channels = num_semantic_channels + 1  # +1 for NDVI
     else:
@@ -117,11 +117,11 @@ def train_lst_predictor():
     ########## Load Dataset #############
     if is_main:
         print(f"\n{'='*50}")
-        print("Loading Urban Dataset for LST Predictor Training")
+        print("Loading Urban Dataset for Temperature predictor Training")
         print(f"{'='*50}")
     
     # Use default mode to get access to ALL layers (RGB as prediction, rest as conditioning)
-    # This gives us semantic layers + LST + NDVI all in the conditioning dict
+    # This gives us semantic layers + Temperature + NDVI all in the conditioning dict
     urban_dataset = UrbanInpaintingDataset(
         split='train',
         mode='default',  # Get all layers: RGB as image, rest as conditioning
@@ -158,12 +158,12 @@ def train_lst_predictor():
     ########## Create Model #############
     if is_main:
         print(f"\n{'='*50}")
-        print("Initializing LST Predictor")
+        print("Initializing Temperature predictor")
         print(f"{'='*50}")
     
-    # LST Predictor model
-    hidden_dims = lst_predictor_config.get('hidden_dims', [64, 128, 256])
-    model = LSTPredictor(
+    # Temperature Predictor model
+    hidden_dims = temperature_predictor_config.get('hidden_dims', [64, 128, 256])
+    model = TemperaturePredictor(
         in_channels=num_input_channels,
         hidden_dims=hidden_dims,
         out_channels=1
@@ -186,14 +186,14 @@ def train_lst_predictor():
     if is_main:
         model_unwrapped = model.module if hasattr(model, 'module') else model
         param_count = sum(p.numel() for p in model_unwrapped.parameters()) / 1e6
-        print(f"✓ Created LST Predictor with {param_count:.2f}M parameters")
+        print(f"✓ Created Temperature predictor with {param_count:.2f}M parameters")
         print(f"  - Input channels: {num_input_channels}")
         print(f"  - Hidden dims: {hidden_dims}")
     
     ########## Training Setup #############
-    num_epochs = lst_predictor_config.get('epochs', 50)
-    base_lr = lst_predictor_config.get('lr', 1e-4)
-    batch_size = lst_predictor_config.get('batch_size', 16)
+    num_epochs = temperature_predictor_config.get('epochs', 50)
+    base_lr = temperature_predictor_config.get('lr', 1e-4)
+    batch_size = temperature_predictor_config.get('batch_size', 16)
     
     # Scale learning rate with world size
     adjusted_lr = base_lr * world_size
@@ -203,7 +203,7 @@ def train_lst_predictor():
     optimizer = Adam(model.parameters(), lr=adjusted_lr)
     
     # Loss function
-    loss_fn_type = lst_predictor_config.get('loss', 'huber')  # 'l1', 'l2', 'huber'
+    loss_fn_type = temperature_predictor_config.get('loss', 'huber')  # 'l1', 'l2', 'huber'
     if loss_fn_type == 'l1':
         loss_fn = nn.L1Loss()
     elif loss_fn_type == 'l2':
@@ -212,8 +212,8 @@ def train_lst_predictor():
         loss_fn = nn.SmoothL1Loss()
     
     # Optionally weight loss inside mask
-    use_mask_weighting = lst_predictor_config.get('mask_weighting', True)
-    mask_weight = lst_predictor_config.get('mask_weight', 3.0)
+    use_mask_weighting = temperature_predictor_config.get('mask_weighting', True)
+    mask_weight = temperature_predictor_config.get('mask_weight', 3.0)
     
     if is_main:
         print(f"\n✓ Training for {num_epochs} epochs")
@@ -276,7 +276,7 @@ def train_lst_predictor():
                 continue
             
             # cond_image is [B, C_cond, H, W] containing all non-RGB layers
-            # This includes: semantic layers (buildings, streets, etc.) + LST + NDVI + mask
+            # This includes: semantic layers (buildings, streets, etc.) + Temperature + NDVI + mask
             
             # Build semantic input tensor from semantic layers only
             semantic_tensor_list = []
@@ -303,23 +303,23 @@ def train_lst_predictor():
                     print(f"⚠ Warning: No semantic layers found in batch")
                 continue
             
-            # Extract LST target from conditioning
-            lst_target = None
-            lst_matches = get_layer_channels_from_names(channel_names, 'lst')
-            if lst_matches:
-                idx, _ = lst_matches[0]
-                lst_target = cond_image[:, idx:idx+1, :, :]
+            # Extract Temperature target from conditioning
+            temperature_target = None
+            temperature_matches = get_layer_channels_from_names(channel_names, 'temperature')
+            if temperature_matches:
+                idx, _ = temperature_matches[0]
+                temperature_target = cond_image[:, idx:idx+1, :, :]
             
-            if lst_target is None:
+            if temperature_target is None:
                 # Try alternative names
                 for idx, ch_name in enumerate(channel_names):
                     if 'landsat_surface_temp' in ch_name.lower() or 'surface_temp' in ch_name.lower():
-                        lst_target = cond_image[:, idx:idx+1, :, :]
+                        temperature_target = cond_image[:, idx:idx+1, :, :]
                         break
             
-            if lst_target is None:
+            if temperature_target is None:
                 if is_main and global_step == 0:
-                    print(f"⚠ Warning: LST target not found in batch")
+                    print(f"⚠ Warning: Temperature target not found in batch")
                     print(f"  Available layers: {set(layer_names)}")
                     print(f"  Sample channels: {channel_names[:10]}")  # Show first 10
                 continue
@@ -354,25 +354,25 @@ def train_lst_predictor():
                         print(f"⚠ Warning: NDVI not found - using zeros")
             
             semantic_input = semantic_input.float().to(device)
-            lst_target = lst_target.float().to(device)
+            temperature_target = temperature_target.float().to(device)
             
             # Forward pass
-            lst_pred = model(semantic_input)
+            temperature_pred = model(semantic_input)
             
-            # Compute loss (LST is normalized to [0, 1] by dataset, so loss is in normalized units)
+            # Compute loss (Temperature is normalized to [0, 1] by dataset, so loss is in normalized units)
             # To interpret: multiply loss by 80 to get approximate error in °C
             if use_mask_weighting and mask is not None:
                 mask = mask.float().to(device)
                 # Weighted loss: higher weight inside mask
-                per_pixel_loss = F.mse_loss(lst_pred, lst_target, reduction='none') if loss_fn_type == 'l2' else \
-                                 F.l1_loss(lst_pred, lst_target, reduction='none') if loss_fn_type == 'l1' else \
-                                 F.smooth_l1_loss(lst_pred, lst_target, reduction='none')
+                per_pixel_loss = F.mse_loss(temperature_pred, temperature_target, reduction='none') if loss_fn_type == 'l2' else \
+                                 F.l1_loss(temperature_pred, temperature_target, reduction='none') if loss_fn_type == 'l1' else \
+                                 F.smooth_l1_loss(temperature_pred, temperature_target, reduction='none')
                 
                 # Weight: higher inside mask
                 weight = mask * mask_weight + (1 - mask) * 1.0
                 loss = (per_pixel_loss * weight).mean()
             else:
-                loss = loss_fn(lst_pred, lst_target)
+                loss = loss_fn(temperature_pred, temperature_target)
             
             loss.backward()
             optimizer.step()
@@ -392,7 +392,7 @@ def train_lst_predictor():
         epoch_loss = np.mean(losses)
         if is_main:
             # Convert loss to Celsius for interpretability (loss is in normalized [0, 1] range)
-            epoch_loss_celsius = epoch_loss * lst_max_celsius
+            epoch_loss_celsius = epoch_loss * temp_max_celsius
             print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f} (~{epoch_loss_celsius:.2f}°C)')
         
         # Save best checkpoint (main process only)
@@ -401,7 +401,7 @@ def train_lst_predictor():
             model_to_save = model.module if hasattr(model, 'module') else model
             checkpoint_path = os.path.join(
                 out_dir,
-                lst_predictor_config.get('checkpoint_name', 'lst_predictor_best.pth')
+                temperature_predictor_config.get('checkpoint_name', 'temperature_predictor_best.pth')
             )
             torch.save({
                 'epoch': epoch_idx,
@@ -415,7 +415,7 @@ def train_lst_predictor():
                     'include_ndvi': include_ndvi
                 }
             }, checkpoint_path)
-            best_loss_celsius = best_loss * lst_max_celsius
+            best_loss_celsius = best_loss * temp_max_celsius
             print(f"  ✓ Saved best model (loss: {best_loss:.4f} ~{best_loss_celsius:.2f}°C)")
         
         # Save periodic checkpoint (main process only)
@@ -423,7 +423,7 @@ def train_lst_predictor():
             model_to_save = model.module if hasattr(model, 'module') else model
             periodic_path = os.path.join(
                 out_dir,
-                f"{lst_predictor_config.get('checkpoint_name', 'lst_predictor_epoch_' + str(epoch_idx + 1) + '.pth')}"
+                f"{temperature_predictor_config.get('checkpoint_name', 'temperature_predictor_epoch_' + str(epoch_idx + 1) + '.pth')}"
             )
             torch.save({
                 'epoch': epoch_idx,
@@ -454,9 +454,9 @@ def train_lst_predictor():
         hours = int(training_time // 3600)
         minutes = int((training_time % 3600) // 60)
         seconds = int(training_time % 60)
-        best_loss_celsius = best_loss * lst_max_celsius
+        best_loss_celsius = best_loss * temp_max_celsius
         print(f"\n{'='*60}")
-        print(f"✓ LST Predictor Training Complete at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}!")
+        print(f"✓ Temperature predictor Training Complete at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}!")
         print(f"✓ Best loss: {best_loss:.4f} (~{best_loss_celsius:.2f}°C)")
         print(f"✓ Total Training Time: {hours}h {minutes}m {seconds}s ({training_time:.2f} seconds)")
         print(f"{'='*60}")
@@ -466,4 +466,4 @@ def train_lst_predictor():
 
 
 if __name__ == '__main__':
-    train_lst_predictor()
+    train_temperature_predictor()

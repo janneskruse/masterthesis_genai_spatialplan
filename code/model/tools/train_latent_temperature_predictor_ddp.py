@@ -1,7 +1,7 @@
 """
-Training script for Latent LST Predictor (DDP).
+Training script for Latent Temperature predictor (DDP).
 
-Trains a predictor to estimate LST p95 (or config-specified statistic) from VAE latent representations.
+Trains a predictor to estimate Temperature p95 (or config-specified statistic) from VAE latent representations.
 Can be used for Phase 2 (soft guidance) and Phase 3 (hard check) in diffusion sampling.
 
 """
@@ -34,17 +34,17 @@ from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.checkpoint import load_checkpoint, check_existing_paths
-from model.utils.statistics import compute_lst_statistic
+from model.utils.statistics import compute_temperature_statistic
 from model.utils.vae_registry import VAERegistry
-from model.lst_predictor.latent_predictor import LatentLSTPredictor
+from model.temperature_predictor.latent_predictor import LatentTemperaturePredictor
 from helpers.load_configs import load_configs, add_config_arguments
 
 # Load CUDA
 load_cuda()
 
-def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str = None):
+def train_latent_temperature_predictor(mode: str = 'semantic', load_checkpoint_path: str = None):
     """
-    Train latent LST predictor for a specific VAE group.
+    Train latent Temperature predictor for a specific VAE group.
     
     Args:
         mode: VAE group name ('semantic' or 'satellite')
@@ -62,16 +62,16 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     existing_paths_result = check_existing_paths(
         train_config=train_config_global,
         mode=mode,
-        type='lst_latent'
+        type='temperature_latent'
     )
     
-    # Early exit if LST latent predictor checkpoint already exists (before DDP setup)
+    # Early exit if Temperature latent predictor checkpoint already exists (before DDP setup)
     if existing_paths_result.skip_training:
         print(f"\n{'='*60}")
-        print(f"SKIPPING LST LATENT PREDICTOR TRAINING: Using existing checkpoint")
+        print(f"SKIPPING TEMPERATURE LATENT PREDICTOR TRAINING: Using existing checkpoint")
         print(f"{'='*60}")
         print(f"  Mode: {mode}")
-        print(f"  Existing path: {existing_paths_result.latent_lst_predictor_checkpoint or 'N/A'}")
+        print(f"  Existing path: {existing_paths_result.latent_temperature_predictor_checkpoint or 'N/A'}")
         print(f"{'='*60}\n")
         return
     
@@ -88,7 +88,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     
     if is_main:
         print(f"\n{'='*60}")
-        print(f"Latent LST Predictor DDP Training")
+        print(f"Latent Temperature predictor DDP Training")
         print(f"{'='*60}")
         print(f"✓ Mode: {mode}")
         print(f"✓ World size: {world_size}")
@@ -104,7 +104,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         )
     
     # Get predictor config
-    predictor_config = config.get('latent_lst_predictor', {})
+    predictor_config = config.get('latent_temperature_predictor', {})
     mode_config = predictor_config.get('modes', {}).get(mode, {})
     
     # Architecture params
@@ -141,16 +141,16 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     out_dir = Path(big_data_storage_path) / "results" / task_name
     
     # Checkpoint name
-    checkpoint_name = mode_config.get('checkpoint_name', f'latent_lst_predictor_{mode}.pth')
+    checkpoint_name = mode_config.get('checkpoint_name', f'latent_temperature_predictor_{mode}.pth')
     
     # checkpoint path
     if load_checkpoint_path is not None:
         load_checkpoint_path = os.path.join(out_dir, load_checkpoint_path)
     
-    # Get LST normalization range for interpretability
+    # Get Temperature normalization range for interpretability
     layers_registry = config.get('layers', {})
-    lst_config = layers_registry.get('lst', {})
-    lst_max = lst_config.get('normalize_params', {}).get('max', 80)
+    temperature_config = layers_registry.get('temperature', {})
+    temp_max = temperature_config.get('normalize_params', {}).get('max', 80)
     
     if is_main:
         print(f"\n{'='*50}")
@@ -172,7 +172,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         print(f"✓ statistic: {statistic}")
         print(f"✓ region: {region}")
         print(f"✓ early_stopping: {early_stopping_enabled} (patience={patience})")
-        print(f"✓ LST max (Celsius): {lst_max}")
+        print(f"✓ Temperature max (Celsius): {temp_max}")
     
     if is_main:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -183,7 +183,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     ########## Load Dataset #############
     if is_main:
         print(f"\n{'='*50}")
-        print(f"Loading Dataset for LST Predictor (mode: lst:{mode})")
+        print(f"Loading Dataset for Temperature predictor (mode: temperature:{mode})")
         print(f"{'='*50}")
     
     # check for existing cached patches
@@ -196,7 +196,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     # Create dataset
     urban_dataset = UrbanInpaintingDataset(
         split='train',
-        mode=f'lst:{mode}',
+        mode=f'temperature:{mode}',
         use_cached_patches=use_cached_patches,
         cache_dir=str(cache_dir)
     )
@@ -255,7 +255,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         
         val_dataset = UrbanInpaintingDataset(
             split='val',
-            mode=f'lst:{mode}',
+            mode=f'temperature:{mode}',
             use_cached_patches=use_cached_patches,
             cache_dir=str(cache_dir)
         )
@@ -337,10 +337,10 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     ########## Create Model #############
     if is_main:
         print(f"\n{'='*50}")
-        print("Initializing Latent LST Predictor")
+        print("Initializing Latent Temperature predictor")
         print(f"{'='*50}")
     
-    model = LatentLSTPredictor(
+    model = LatentTemperaturePredictor(
         z_channels=z_channels,
         latent_size=latent_size,
         hidden_dims=hidden_dims,
@@ -363,14 +363,14 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
     if is_main:
         model_unwrapped = model.module if hasattr(model, 'module') else model
         param_count = sum(p.numel() for p in model_unwrapped.parameters()) / 1e6
-        print(f"✓ Created Latent LST Predictor with {param_count:.2f}M parameters")
+        print(f"✓ Created Latent Temperature predictor with {param_count:.2f}M parameters")
     
     ########## Training Setup #############
     adjusted_lr = base_lr * world_size
     optimizer = Adam(model.parameters(), lr=adjusted_lr, weight_decay=weight_decay)
     
     # Loss function
-    # Note: RMSE loss gives values directly in normalized units (multiply by lst_max for Celsius)
+    # Note: RMSE loss gives values directly in normalized units (multiply by temp_max for Celsius)
     #       MSE loss requires sqrt conversion for interpretable error
     if loss_type == 'mse':
         loss_fn = nn.MSELoss()
@@ -457,7 +457,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             
             latent_or_image, cond_dict = data
             
-            # Get LST full-res from conditioning
+            # Get Temperature full-res from conditioning
             if 'image' not in cond_dict or cond_dict['image'] is None:
                 continue
             
@@ -479,30 +479,30 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             else:
                 latent = latent_or_image
             
-            # Find LST channel in conditioning
-            lst_idx = None
+            # Find Temperature channel in conditioning
+            temperature_idx = None
             mask_idx = None
             
             for i, name in enumerate(pixel_space_names):
-                if name == 'lst':
-                    lst_idx = i
+                if name == 'temperature':
+                    temperature_idx = i
                 elif name == 'inpainting_mask':
                     mask_idx = i
             
-            if lst_idx is None:
+            if temperature_idx is None:
                 if is_main and global_step == 0:
-                    print(f"⚠ LST not found in pixel_space_names: {pixel_space_names}")
+                    print(f"⚠ Temperature not found in pixel_space_names: {pixel_space_names}")
                 continue
             
-            # Extract LST and mask
-            lst_fullres = cond_image[:, lst_idx:lst_idx+1, :, :].float().to(device)
+            # Extract Temperature and mask
+            temperature_fullres = cond_image[:, temperature_idx:temperature_idx+1, :, :].float().to(device)
             
             mask = None
             if region == 'mask' and mask_idx is not None:
                 mask = cond_image[:, mask_idx:mask_idx+1, :, :].float().to(device)
             
             # Compute target statistic
-            target = compute_lst_statistic(lst_fullres, statistic=statistic, mask=mask)
+            target = compute_temperature_statistic(temperature_fullres, statistic=statistic, mask=mask)
             target = target.to(device)
             
             # Forward pass (latent already on device if encoded, otherwise move now)
@@ -522,7 +522,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
             if rank == 0:
                 # Convert loss to error in Celsius for interpretability
                 loss_val = loss.item()
-                error_celsius = (math.sqrt(loss_val) if loss_is_squared else loss_val) * lst_max
+                error_celsius = (math.sqrt(loss_val) if loss_is_squared else loss_val) * temp_max
                 progress_bar.set_postfix({
                     'loss': f'{loss_val:.4f}',
                     'err°C': f'{error_celsius:.2f}'
@@ -568,25 +568,25 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
                     else:
                         latent = latent_or_image
                     
-                    # Find LST channel
-                    lst_idx = None
+                    # Find Temperature channel
+                    temperature_idx = None
                     mask_idx = None
                     for i, name in enumerate(pixel_space_names):
-                        if name == 'lst':
-                            lst_idx = i
+                        if name == 'temperature':
+                            temperature_idx = i
                         elif name == 'inpainting_mask':
                             mask_idx = i
                     
-                    if lst_idx is None:
+                    if temperature_idx is None:
                         continue
                     
-                    lst_fullres = cond_image[:, lst_idx:lst_idx+1, :, :].float().to(device)
+                    temperature_fullres = cond_image[:, temperature_idx:temperature_idx+1, :, :].float().to(device)
                     
                     mask = None
                     if region == 'mask' and mask_idx is not None:
                         mask = cond_image[:, mask_idx:mask_idx+1, :, :].float().to(device)
                     
-                    target = compute_lst_statistic(lst_fullres, statistic=statistic, mask=mask)
+                    target = compute_temperature_statistic(temperature_fullres, statistic=statistic, mask=mask)
                     target = target.to(device)
                     
                     if not needs_encoding:
@@ -608,11 +608,11 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         # Epoch summary
         if is_main:
             # Convert loss to error in Celsius
-            train_err_celsius = (math.sqrt(train_loss) if loss_is_squared else train_loss) * lst_max
+            train_err_celsius = (math.sqrt(train_loss) if loss_is_squared else train_loss) * temp_max
             err_label = 'RMSE' if loss_is_squared else 'err'
             summary = f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | Train: {train_loss:.4f} ({err_label} ~{train_err_celsius:.2f}°C)'
             if val_loss is not None:
-                val_err_celsius = (math.sqrt(val_loss) if loss_is_squared else val_loss) * lst_max
+                val_err_celsius = (math.sqrt(val_loss) if loss_is_squared else val_loss) * temp_max
                 summary += f' | Val: {val_loss:.4f} ({err_label} ~{val_err_celsius:.2f}°C)'
             print(summary)
         
@@ -651,7 +651,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
                     'best_val_loss': best_val_loss,
                 }, checkpoint_path)
                 
-                best_err_celsius = (math.sqrt(best_val_loss) if loss_is_squared else best_val_loss) * lst_max
+                best_err_celsius = (math.sqrt(best_val_loss) if loss_is_squared else best_val_loss) * temp_max
                 loss_type_str = 'val' if val_loss is not None else 'train'
                 err_label = 'RMSE' if loss_is_squared else 'err'
                 print(f"  ✓ Saved best model ({loss_type_str} loss: {best_val_loss:.4f}, {err_label} ~{best_err_celsius:.2f}°C)")
@@ -688,7 +688,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         # Periodic checkpoint
         if is_main and (epoch_idx + 1) % 20 == 0:
             model_to_save = model.module if hasattr(model, 'module') else model
-            periodic_path = out_dir / f'latent_lst_predictor_{mode}_epoch_{epoch_idx + 1}.pth'
+            periodic_path = out_dir / f'latent_temperature_predictor_{mode}_epoch_{epoch_idx + 1}.pth'
             torch.save({
                 'epoch': epoch_idx,
                 'model_state_dict': model_to_save.state_dict(),
@@ -707,10 +707,10 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
         hours = int(training_time // 3600)
         minutes = int((training_time % 3600) // 60)
         seconds = int(training_time % 60)
-        best_rmse_celsius = math.sqrt(best_val_loss) * lst_max
+        best_rmse_celsius = math.sqrt(best_val_loss) * temp_max
         
         print(f"\n{'='*60}")
-        print(f"✓ Latent LST Predictor Training Complete!")
+        print(f"✓ Latent Temperature predictor Training Complete!")
         print(f"✓ Mode: {mode}")
         print(f"✓ Best {'val' if val_loader else 'train'} loss: {best_val_loss:.4f} (RMSE ~{best_rmse_celsius:.2f}°C)")
         print(f"✓ Stopped at epoch: {epoch_idx + 1}/{num_epochs}")
@@ -719,7 +719,7 @@ def train_latent_lst_predictor(mode: str = 'semantic', load_checkpoint_path: str
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Train Latent LST Predictor DDP')
+    parser = argparse.ArgumentParser(description='Train Latent Temperature predictor DDP')
     
     add_config_arguments(parser)
     
@@ -741,7 +741,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     try:
-        train_latent_lst_predictor(mode=args.mode, load_checkpoint_path=args.load_checkpoint)
+        train_latent_temperature_predictor(mode=args.mode, load_checkpoint_path=args.load_checkpoint)
     except KeyboardInterrupt:
         print("\n⚠ Training interrupted by user")
     except Exception as e:

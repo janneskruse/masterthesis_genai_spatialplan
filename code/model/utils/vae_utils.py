@@ -108,8 +108,8 @@ def compute_reconstruction_loss(
     Args:
         recon: Reconstructed tensor [B, C, H, W] (logits for binary channels, values for continuous)
         target: Target tensor [B, C, H, W]
-        channel_names: List of channel names (e.g., ['rgb:red', 'buildings', 'lst'])
-        layer_names: List of layer names for each channel (e.g., ['rgb', 'buildings', 'lst'])
+        channel_names: List of channel names (e.g., ['rgb:red', 'buildings', 'temperature'])
+        layer_names: List of layer names for each channel (e.g., ['rgb', 'buildings', 'temperature'])
         layers_registry: Global layers configuration dict
         binary_weight: Weight for binary channel losses (default weight)
         continuous_weight: Weight for continuous channel losses (default weight)

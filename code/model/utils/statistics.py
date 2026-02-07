@@ -6,7 +6,7 @@
 # Data Science/ML libraries
 import torch
 
-def compute_lst_statistic(
+def compute_temperature_statistic(
     lst_tensor: torch.Tensor,
     statistic: str = 'p95',
     mask: torch.Tensor = None,
@@ -35,7 +35,7 @@ def compute_lst_statistic(
         
         # Remove NaN/invalid values
         lst_flat = lst_flat[~torch.isnan(lst_flat)]
-        lst_flat = lst_flat[lst_flat > 0]  # LST should be positive
+        lst_flat = lst_flat[lst_flat > 0]  # Temperature should be positive
         
         if len(lst_flat) == 0:
             # Fallback to 0 if no valid pixels

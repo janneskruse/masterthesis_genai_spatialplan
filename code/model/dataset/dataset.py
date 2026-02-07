@@ -44,7 +44,7 @@ class UrbanInpaintingDataset(Dataset):
     Dataset for urban layout inpainting with multiple conditioning types:
     - Spatial context (surrounding areas via inpainting mask)
     - OSM features (buildings, streets, water, etc.)
-    - Environmental data (NDVI, LST)
+    - Environmental data (NDVI, Temperature)
     - Satellite imagery
     
     Supports two modes:
@@ -62,7 +62,7 @@ class UrbanInpaintingDataset(Dataset):
         :param split: 'train' or 'val'
         :param use_cached_patches: whether to use cached patches
         :param cache_dir: directory for cached patches
-        :param mode: 'default', 'vae:satellite', 'vae:environmental', 'diffusion:semantic', 'lst:semantic', etc.
+        :param mode: 'default', 'vae:satellite', 'vae:environmental', 'diffusion:semantic', 'temperature:semantic', etc.
         """
         
         ###### Setup config variables #######
@@ -82,13 +82,13 @@ class UrbanInpaintingDataset(Dataset):
         # Validate mode format
         if mode != 'default':
             mode_parts = mode.split(':')
-            if len(mode_parts) != 2 or mode_parts[0] not in ['vae', 'diffusion', 'lst']:
+            if len(mode_parts) != 2 or mode_parts[0] not in ['vae', 'diffusion', 'temperature']:
                 raise ValueError(
                     f"Invalid mode: '{mode}'. Must be 'default', 'vae:<group_name>', "
-                    f"'diffusion:<stage_name>', or 'lst:<group_name>'. "
-                    f"Examples: 'vae:satellite', 'diffusion:semantic', 'lst:semantic'"
+                    f"'diffusion:<stage_name>', or 'temperature:<group_name>'. "
+                    f"Examples: 'vae:satellite', 'diffusion:semantic', 'temperature:semantic'"
                 )
-            self.mode_type = mode_parts[0]  # 'vae', 'diffusion', or 'lst'
+            self.mode_type = mode_parts[0]  # 'vae', 'diffusion', or 'temperature'
             self.mode_target = mode_parts[1]  # 'satellite', 'semantic', etc.
         else:
             self.mode_type = 'default'
@@ -256,9 +256,9 @@ class UrbanInpaintingDataset(Dataset):
         # Load latents for diffusion mode (config-driven)
         if self.mode_type == 'diffusion':
             self._load_diffusion_latents()
-        # Load latents for LST predictor mode
-        elif self.mode_type == 'lst':
-            self._load_lst_latents()
+        # Load latents for Temperature predictor mode
+        elif self.mode_type == 'temperature':
+            self._load_temperature_latents()
         
         # Final summary
         self._print_summary()
@@ -668,19 +668,19 @@ class UrbanInpaintingDataset(Dataset):
         print(f"{'='*60}\n")
         
     
-    def _load_lst_latents(self):
+    def _load_temperature_latents(self):
         """
-        Load latents for LST predictor training.
+        Load latents for Temperature predictor training.
         
         Similar to _load_diffusion_latents but only loads the target group.
         """
-        if self.mode_type != 'lst':
+        if self.mode_type != 'temperature':
             return
         
         target_group = self.mode_target
         
         print(f"\n{'='*60}")
-        print(f"Loading latents for LST predictor mode '{self.mode_target}'")
+        print(f"Loading latents for Temperature predictor mode '{self.mode_target}'")
         print(f"{'='*60}")
         
         # Load target group latents
@@ -697,7 +697,7 @@ class UrbanInpaintingDataset(Dataset):
         self.group_latents[target_group] = target_latents
         
         if target_latents is not None:
-            print(f"\n✓ Successfully loaded {len(target_latents)} latents for LST predictor")
+            print(f"\n✓ Successfully loaded {len(target_latents)} latents for Temperature predictor")
         else:
             print(f"\n⚠ No latents found - will return full-res images for on-the-fly encoding")
         print(f"{'='*60}\n")
@@ -1430,15 +1430,15 @@ class UrbanInpaintingDataset(Dataset):
                 # No latent available - return full-res image for encoding
                 return pred_image, cond
             
-        elif self.mode_type == 'lst':
-            # LST predictor mode: Return VAE latent as image, LST full-res as conditioning
-            # Used for training latent-space LST predictors for Phase 2/3 guidance
+        elif self.mode_type == 'temperature':
+            # Temperature predictor mode: Return VAE latent as image, Temperature full-res as conditioning
+            # Used for training latent-space Temperature predictors for Phase 2/3 guidance
             
             target_group = self.mode_target  # 'semantic' or 'satellite'
             
             if target_group not in self.vae_groups:
                 raise ValueError(
-                    f"LST mode requires VAE group '{target_group}', but it was not found. "
+                    f"Temperature mode requires VAE group '{target_group}', but it was not found. "
                     f"Available groups: {list(self.vae_groups.keys())}"
                 )
             
@@ -1464,16 +1464,16 @@ class UrbanInpaintingDataset(Dataset):
                     unified_image, channel_names, layer_names, target_layers
                 )  # [C_target, H, W] at full resolution
             
-            # Extract LST from unified image (full resolution for target computation)
-            lst_matches = get_layer_channels_from_names(channel_names, 'lst')
-            if not lst_matches:
+            # Extract Temperature from unified image (full resolution for target computation)
+            temperature_matches = get_layer_channels_from_names(channel_names, 'temperature')
+            if not temperature_matches:
                 raise ValueError(
-                    f"LST mode requires 'lst' layer in patch, but it was not found. "
+                    f"Temperature mode requires 'temperature' layer in patch, but it was not found. "
                     f"Available layers: {set(layer_names)}"
                 )
             
-            lst_indices = [idx for idx, _ in lst_matches]
-            lst_fullres = unified_image[lst_indices]  # [C_lst, H, W]
+            temperature_indices = [idx for idx, _ in temperature_matches]
+            temperature_fullres = unified_image[temperature_indices]  # [C_temperature, H, W]
             
             # Optionally extract inpainting mask (for masked p95 computation)
             mask = None
@@ -1482,22 +1482,22 @@ class UrbanInpaintingDataset(Dataset):
                 mask_idx = mask_matches[0][0]
                 mask = unified_image[mask_idx:mask_idx+1]  # [1, H, W]
             
-            # Build conditioning dict with LST (and optionally mask)
+            # Build conditioning dict with Temperature (and optionally mask)
             cond = {'meta': patch_data['meta'].copy()}
             
-            pixel_cond_list = [lst_fullres]
-            pixel_cond_names = ['lst']
+            pixel_cond_list = [temperature_fullres]
+            pixel_cond_names = ['temperature']
             
             if mask is not None:
                 pixel_cond_list.append(mask)
                 pixel_cond_names.append('inpainting_mask')
             
-            cond['image'] = torch.stack(pixel_cond_list, dim=0) if len(pixel_cond_list) > 1 else lst_fullres.unsqueeze(0)
+            cond['image'] = torch.stack(pixel_cond_list, dim=0) if len(pixel_cond_list) > 1 else temperature_fullres.unsqueeze(0)
             # Flatten to [C, H, W] if stacked
             if len(pixel_cond_list) > 1:
                 cond['image'] = torch.cat(pixel_cond_list, dim=0)
             else:
-                cond['image'] = lst_fullres
+                cond['image'] = temperature_fullres
             
             cond['meta']['pixel_space_names'] = pixel_cond_names
             cond['meta']['layer_names'] = pixel_cond_names

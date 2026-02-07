@@ -1,6 +1,6 @@
 """
 Latent-space guidance utilities for diffusion sampling.
-Applies gradient-based guidance using LatentLSTPredictor directly on VAE latents.
+Applies gradient-based guidance using LatentTemperaturePredictor directly on VAE latents.
 """
 ###### import libraries ######
 # Data Science/ML libraries
@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from typing import Optional, Dict, Any
 
 
-def apply_latent_lst_guidance(
+def apply_latent_temperature_guidance(
     x: torch.Tensor,
     t: torch.Tensor,
     noise_pred: torch.Tensor,
@@ -23,10 +23,10 @@ def apply_latent_lst_guidance(
     clamp_x0: float = 3.0,
 ) -> torch.Tensor:
     """
-    Apply LST predictor guidance directly in latent space (no VAE decode needed).
+    Apply Temperature predictor guidance directly in latent space (no VAE decode needed).
     
     Uses classifier guidance approach: modify noise prediction based on gradient
-    of the latent LST predictor w.r.t. the predicted x0.
+    of the latent Temperature predictor w.r.t. the predicted x0.
     
     Phase 2 implementation: Soft guidance that steers generation toward target temperature.
     
@@ -37,7 +37,7 @@ def apply_latent_lst_guidance(
         model: Diffusion U-Net model (for forward pass with gradients)
         scheduler: Noise scheduler (for alpha values)
         cond_input: Conditioning input dict
-        latent_predictor: Trained LatentLSTPredictor model
+        latent_predictor: Trained LatentTemperaturePredictor model
         target_p95: Target temperature p95 in normalized [0, 1] range
         guidance_scale: Strength of guidance (0.0 = no guidance)
         mask: Optional inpainting mask [B, 1, H, W] (guidance only in masked region)
@@ -76,15 +76,15 @@ def apply_latent_lst_guidance(
     x0_pred = torch.clamp(x0_pred, -clamp_x0, clamp_x0)
     
     # Predict LST p95 from x0 latent (no VAE decode!)
-    lst_pred = latent_predictor(x0_pred)  # [B, 1]
+    temperature_pred = latent_predictor(x0_pred)  # [B, 1]
     
     # Compute guidance loss
     # We want to minimize |predicted_lst - target_lst|
     # Gradient descent on this loss → steer toward target
-    lst_loss = F.mse_loss(lst_pred, target)
+    temperature_loss = F.mse_loss(temperature_pred, target)
     
     # Compute gradient of loss w.r.t. x
-    grad = torch.autograd.grad(lst_loss, x_guide, retain_graph=False)[0]
+    grad = torch.autograd.grad(temperature_loss, x_guide, retain_graph=False)[0]
     
     # Apply mask if provided (only guide inside inpainting region)
     if mask is not None:
@@ -101,25 +101,25 @@ def apply_latent_lst_guidance(
     return noise_pred_guided
 
 
-def compute_latent_lst_prediction(
+def compute_latent_temperature_prediction(
     x: torch.Tensor,
     latent_predictor: torch.nn.Module,
-    lst_max: float = 80.0,
+    temp_max: float = 80.0,
 ) -> Dict[str, float]:
     """
     Compute LST prediction from latent for Phase 3 hard check.
     
     Args:
         x: Clean latent [B, C, H, W] (after sampling completes)
-        latent_predictor: Trained LatentLSTPredictor model
-        lst_max: Maximum LST value for denormalization
+        latent_predictor: Trained LatentTemperaturePredictor model
+        temp_max: Maximum LST value for denormalization
         
     Returns:
         Dict with 'p95_normalized' and 'p95_celsius' values
     """
     with torch.no_grad():
         p95_normalized = latent_predictor(x)  # [B, 1]
-        p95_celsius = p95_normalized * lst_max
+        p95_celsius = p95_normalized * temp_max
     
     return {
         'p95_normalized': p95_normalized.mean().item(),
@@ -181,7 +181,7 @@ class LatentGuidanceConfig:
         eval_every_n_steps: int = 1,
         warmup_fraction: float = 0.1,
         cooldown_fraction: float = 0.1,
-        lst_max: float = 80.0,
+        temp_max: float = 80.0,
     ):
         """
         Args:
@@ -191,16 +191,16 @@ class LatentGuidanceConfig:
             eval_every_n_steps: Apply guidance every N steps
             warmup_fraction: Skip first X% of steps
             cooldown_fraction: Skip last X% of steps
-            lst_max: Max LST for normalization
+            temp_max: Max LST for normalization
         """
         self.enabled = enabled
         self.scale = scale
         self.target_p95_celsius = target_p95_celsius
-        self.target_p95_normalized = target_p95_celsius / lst_max
+        self.target_p95_normalized = target_p95_celsius / temp_max
         self.eval_every_n_steps = eval_every_n_steps
         self.warmup_fraction = warmup_fraction
         self.cooldown_fraction = cooldown_fraction
-        self.lst_max = lst_max
+        self.temp_max = temp_max
     
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> 'LatentGuidanceConfig':
@@ -213,7 +213,7 @@ class LatentGuidanceConfig:
             eval_every_n_steps=guidance_cfg.get('eval_every_n_steps', 1),
             warmup_fraction=guidance_cfg.get('warmup_fraction', 0.1),
             cooldown_fraction=guidance_cfg.get('cooldown_fraction', 0.1),
-            lst_max=guidance_cfg.get('lst_max', 80.0),
+            temp_max=guidance_cfg.get('temp_max', 80.0),
         )
     
     def __repr__(self) -> str:

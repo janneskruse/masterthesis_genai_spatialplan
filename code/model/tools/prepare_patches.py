@@ -66,8 +66,8 @@ def main():
     print(f"✓ Cached patches saved to: {cache_dir}")
     print(f"\nNext steps:")
     print(f"1. Generate latents using VAE with cached patches for both semantic and satellite data")
-    print(f"2. Train the LST predictor")
-    print(f"3. Train LDMs with both cached patches, latents and LST predictions")
+    print(f"2. Train the Temperature predictor")
+    print(f"3. Train LDMs with both cached patches, latents and Temperature predictions")
     print(f"{'='*80}\n")
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 """
-Latent-space LST predictor for diffusion guidance.
-Predicts LST p95 from semantic/satellite VAE latents.
+Latent-space Temperature predictor for diffusion guidance.
+Predicts Temperature p95 from semantic/satellite VAE latents.
 """
 ###### import libraries ######
 # Standard libraries
@@ -12,9 +12,9 @@ import torch
 import torch.nn as nn
 
 
-class LatentLSTPredictor(nn.Module):
+class LatentTemperaturePredictor(nn.Module):
     """
-    Predicts LST statistics (p95) from VAE latent representations.
+    Predicts Temperature statistics (p95) from VAE latent representations.
     
     Used for:
     - Phase 2: Soft guidance during diffusion sampling
@@ -70,7 +70,7 @@ class LatentLSTPredictor(nn.Module):
             nn.SiLU(),
             nn.Dropout(dropout if dropout > 0 else 0.1),  # Always have some dropout in head
             nn.Linear(hidden_dims[-1] // 2, 1),
-            nn.Sigmoid(),  # Output in [0, 1] (normalized LST)
+            nn.Sigmoid(),  # Output in [0, 1] (normalized Temperature)
         )
     
     def forward(self, z: torch.Tensor) -> torch.Tensor:
@@ -81,48 +81,48 @@ class LatentLSTPredictor(nn.Module):
             z: Latent tensor [B, z_channels, H, W]
             
         Returns:
-            LST prediction [B, 1] in [0, 1] range
+            Temperature prediction [B, 1] in [0, 1] range
         """
         features = self.encoder(z)
         return self.head(features)
     
-    def predict_celsius(self, z: torch.Tensor, lst_max: float = 80.0) -> torch.Tensor:
+    def predict_celsius(self, z: torch.Tensor, temp_max: float = 80.0) -> torch.Tensor:
         """
-        Predict LST in Celsius (for interpretability).
+        Predict Temperature in Celsius (for interpretability).
         
         Args:
             z: Latent tensor [B, z_channels, H, W]
-            lst_max: Maximum LST value used for normalization
+            temp_max: Maximum Temperature value used for normalization
             
         Returns:
-            LST prediction [B, 1] in Celsius
+            Temperature prediction [B, 1] in Celsius
         """
-        return self.forward(z) * lst_max
+        return self.forward(z) * temp_max
 
 
-def load_latent_lst_predictor(
+def load_latent_temperature_predictor(
     config: Dict[str, Any],
     mode: str,
     device: torch.device,
     checkpoint_dir: Optional[str] = None
-) -> Optional[LatentLSTPredictor]:
+) -> Optional[LatentTemperaturePredictor]:
     """
-    Load a trained LatentLSTPredictor from checkpoint.
+    Load a trained LatentTemperaturePredictor from checkpoint.
     
     Args:
-        config: Full config dict containing 'latent_lst_predictor' section
+        config: Full config dict containing 'latent_temperature_predictor' section
         mode: Predictor mode ('semantic' or 'satellite')
         device: Device to load model on
         checkpoint_dir: Directory containing checkpoint (defaults to results/<task_name>)
         
     Returns:
-        Loaded LatentLSTPredictor or None if checkpoint not found
+        Loaded LatentTemperaturePredictor or None if checkpoint not found
     """
-    predictor_config = config.get('latent_lst_predictor', {})
+    predictor_config = config.get('latent_temperature_predictor', {})
     modes_config = predictor_config.get('modes', {})
     
     if mode not in modes_config:
-        print(f"⚠ Mode '{mode}' not found in latent_lst_predictor.modes config")
+        print(f"⚠ Mode '{mode}' not found in latent_temperature_predictor.modes config")
         return None
     
     mode_config = modes_config[mode]
@@ -134,7 +134,7 @@ def load_latent_lst_predictor(
     dropout = predictor_config.get('dropout', 0.1)
     
     # Get checkpoint path
-    checkpoint_name = mode_config.get('checkpoint_name', f'latent_lst_predictor_{mode}.pth')
+    checkpoint_name = mode_config.get('checkpoint_name', f'latent_temperature_predictor_{mode}.pth')
     
     if checkpoint_dir is None:
         train_config = config.get('train_params', {})
@@ -147,14 +147,14 @@ def load_latent_lst_predictor(
     checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
     
     if not os.path.exists(checkpoint_path):
-        print(f"⚠ Latent LST predictor checkpoint not found: {checkpoint_path}")
+        print(f"⚠ Latent Temperature predictor checkpoint not found: {checkpoint_path}")
         return None
     
     # Load checkpoint
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     # Create model
-    model = LatentLSTPredictor(
+    model = LatentTemperaturePredictor(
         z_channels=z_channels,
         latent_size=latent_size,
         hidden_dims=hidden_dims,
@@ -168,7 +168,7 @@ def load_latent_lst_predictor(
     # Print info
     epoch = checkpoint.get('epoch', 'unknown')
     val_loss = checkpoint.get('val_loss', checkpoint.get('best_val_loss', 'unknown'))
-    print(f"✓ Loaded latent LST predictor ({mode})")
+    print(f"✓ Loaded latent Temperature predictor ({mode})")
     print(f"  Checkpoint: {checkpoint_path}")
     print(f"  Epoch: {epoch}, Val loss: {val_loss:.6f}" if isinstance(val_loss, float) else f"  Epoch: {epoch}")
     print(f"  Architecture: z_channels={z_channels}, latent_size={latent_size}, hidden_dims={hidden_dims}")

@@ -1,15 +1,15 @@
-# CNN-based encoder-decoder class to predict Land Surface Temperature (LST) from semantic features
+# CNN-based encoder-decoder class to predict Temperature from semantic features
 
 ###### import libraries ######
 # Data Science/ML libraries
 import torch.nn as nn
 
 
-class LSTPredictor(nn.Module):
+class TemperaturePredictor(nn.Module):
     """
-    Predictor network to estimate Land Surface Temperature from semantic features.
+    Predictor network to estimate Temperature from semantic features.
     
-    Architecture: CNN-based encoder-decoder for pixel-wise LST prediction.
+    Architecture: CNN-based encoder-decoder for pixel-wise Temperature prediction.
     """
     
     def __init__(self, in_channels, hidden_dims=[64, 128, 256], out_channels=1):
@@ -64,7 +64,7 @@ class LSTPredictor(nn.Module):
             x: Input semantic tensor [B, in_channels, H, W]
             
         Returns:
-            LST prediction [B, 1, H, W]
+            Temperature prediction [B, 1, H, W]
         """
         # Encode
         z = self.encoder(x)
@@ -72,7 +72,7 @@ class LSTPredictor(nn.Module):
         # Decode
         out = self.decoder(z)
         
-        # Predict LST
-        lst_pred = self.head(out)
+        # Predict Temperature
+        temp_pred = self.head(out)
         
-        return lst_pred
+        return temp_pred

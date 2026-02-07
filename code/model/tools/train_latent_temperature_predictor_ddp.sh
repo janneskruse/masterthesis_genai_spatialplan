@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --time=2:00:00
-#SBATCH --job-name="train_latent_lst_predictor"
+#SBATCH --job-name="train_latent_temperature_predictor"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=2
@@ -55,7 +55,7 @@ export NCCL_IB_DISABLE=1
 export NCCL_SOCKET_IFNAME=^lo,docker0
 
 echo "=================================================="
-echo "Latent LST Predictor Training"
+echo "Latent Temperature predictor Training"
 echo "=================================================="
 echo "Config: $CONFIG_PATH"
 echo "Mode: $MODE"
@@ -66,7 +66,7 @@ echo "=================================================="
 srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    python3 -u train_latent_lst_predictor_ddp.py --config $CONFIG_PATH --mode $MODE
+    python3 -u train_latent_temperature_predictor_ddp.py --config $CONFIG_PATH --mode $MODE
 "
 
 EXIT_CODE=$?

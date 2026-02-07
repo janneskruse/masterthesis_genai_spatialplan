@@ -23,7 +23,7 @@ def get_colormap_for_layer(layer_name: str):
     Matches colormaps from validate_dataset.py for consistency.
     
     Args:
-        layer_name: Name of the layer (e.g., 'lst', 'ndvi', 'buildings_heights')
+        layer_name: Name of the layer (e.g., 'temperature', 'ndvi', 'buildings_heights')
         
     Returns:
         matplotlib colormap
@@ -34,7 +34,7 @@ def get_colormap_for_layer(layer_name: str):
         # Binary mask: black to white
         colors = [(0, 0, 0), (1, 1, 1)]
         return LinearSegmentedColormap.from_list('binary', colors, N=100)
-    elif 'temp' in name_lower or 'lst' in name_lower:
+    elif 'temp' in name_lower or 'temperature' in name_lower:
         # Temperature: rocket colormap (cool to hot)
         return sns.color_palette("rocket", as_cmap=True)
     elif 'vegetation' in name_lower or 'ndvi' in name_lower:

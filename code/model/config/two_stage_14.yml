@@ -65,7 +65,7 @@ layers:
     normalize: 'clip'
     clip_range: [-1, 1]
     
-  lst:
+  temperature:
     layer: 'landsat_surface_temp_b10_masked'
     type: 'continuous'
     normalize: 'custom'
@@ -143,7 +143,7 @@ dataset_params:
 # ===========================================================================
 
 temperature_control:
-  lst_max: 80.0  # Maximum LST value in Celsius for normalization
+  temp_max: 80.0  # Maximum LST value in Celsius for normalization
 
   guidance:
     enabled: false # true to enable guidance
@@ -181,7 +181,7 @@ scalar_controls:
     # Temperature control
     - name: "temperature"
       keys: ["tmax"]  # scalar key
-      layer: "lst"
+      layer: "temperature"
       statistic: "p95"
       region: "mask"
       training:
@@ -280,7 +280,7 @@ vae_groups:
     
   # Environmental conditions VAE
   environmental:
-    layers: ['lst', 'ndvi']
+    layers: ['temperature', 'ndvi']
     z_channels: 2
     down_channels: [16, 32, 64, 64]
     mid_channels: [64, 64]
@@ -302,7 +302,7 @@ vae_groups:
 # Predicts statistics from VAE latent space for guidance/hard checks
 # ===========================================================================
 
-latent_lst_predictor:
+latent_temperature_predictor:
   # Architecture
   # 64x64 latent → 32x32 → 16x16 → 8x8 → 4x4 → global pool
   hidden_dims: [64, 128, 256, 256]  # 4 conv blocks
@@ -336,12 +336,12 @@ latent_lst_predictor:
     semantic:
       z_channels: 3
       latent_size: 64
-      checkpoint_name: 'latent_lst_predictor_semantic.pth'
+      checkpoint_name: 'latent_temperature_predictor_semantic.pth'
       
     satellite:
       z_channels: 4
       latent_size: 64
-      checkpoint_name: 'latent_lst_predictor_satellite.pth'
+      checkpoint_name: 'latent_temperature_predictor_satellite.pth'
 
 
 # ===========================================================================
@@ -349,13 +349,13 @@ latent_lst_predictor:
 # Predicts statistics from full resolution for hard checks
 # ===========================================================================
 
-lst_predictor:
-  # LST predictor training
+temperature_predictor:
+  # Temperature predictor training
   epochs: 50
   batch_size: 16
   lr: 0.0001
-  checkpoint_name: 'lst_predictor_best.pth'
-  use_ndvi: True  # Include NDVI as input to LST predictor
+  checkpoint_name: 'temperature_predictor_best.pth'
+  use_ndvi: True  # Include NDVI as input to Temperature predictor
   hidden_dims: [64, 128, 256]
   loss: 'huber'  # 'l1', 'l2', 'huber'
   mask_weighting: True
@@ -423,7 +423,7 @@ diffusion_stages:
       # Latent-space conditioning (encoded through respective VAEs)
       latent_space:
         - group: 'environmental'
-          layers: ['lst', 'ndvi']
+          layers: ['temperature', 'ndvi']
           
         # - group: 'semantic'
         #   layers: ['street_blocks']  # Optional: constrain to valid blocks
@@ -555,7 +555,7 @@ diffusion_stages:
           layers: ['buildings', 'streets', 'buildings_heights' ] # 'vegetation'
           
         - group: 'environmental'
-          layers: ['ndvi', 'lst']
+          layers: ['ndvi', 'temperature']
     
     # Inpainting configuration
     inpainting:
@@ -620,7 +620,7 @@ train_params:
       semantic: null
       satellite: null
       environmental: null
-    latent_lst_predictor: 
+    latent_temperature_predictor: 
       semantic: null
       satellite: null
 

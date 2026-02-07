@@ -11,10 +11,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def save_lst_error_histogram(
+def save_temperature_error_histogram(
     errors: np.ndarray,
     save_path: str,
-    lst_max: float = 80.0,
+    temp_max: float = 80.0,
     title: str = 'Prediction Error Distribution'
 ):
     """
@@ -23,11 +23,11 @@ def save_lst_error_histogram(
     Args:
         errors: Error values in normalized [0, 1] range
         save_path: Path to save plot
-        lst_max: Max LST for Celsius conversion
+        temp_max: Max LST for Celsius conversion
         title: Plot title
     """
     # Convert to Celsius
-    errors_c = errors * lst_max
+    errors_c = errors * temp_max
     
     fig, ax = plt.subplots(figsize=(10, 6))
     
@@ -53,12 +53,12 @@ def save_lst_error_histogram(
     plt.close()
     
 
-def save_lst_prediction_scatter(
+def save_temperature_prediction_scatter(
     targets: np.ndarray,
     predictions: np.ndarray,
     save_path: str,
-    lst_max: float = 80.0,
-    title: str = 'Latent LST Predictor: Target vs Prediction'
+    temp_max: float = 80.0,
+    title: str = 'Latent Temperature predictor: Target vs Prediction'
 ):
     """
     Save scatter plot of target vs predicted LST values.
@@ -67,12 +67,12 @@ def save_lst_prediction_scatter(
         targets: Target values in normalized [0, 1] range
         predictions: Predicted values in normalized [0, 1] range
         save_path: Path to save plot
-        lst_max: Max LST for Celsius conversion
+        temp_max: Max LST for Celsius conversion
         title: Plot title
     """
     # Convert to Celsius
-    targets_c = targets * lst_max
-    predictions_c = predictions * lst_max
+    targets_c = targets * temp_max
+    predictions_c = predictions * temp_max
     
     fig, ax = plt.subplots(figsize=(8, 8))
     
@@ -94,7 +94,7 @@ def save_lst_prediction_scatter(
     ax.text(0.05, 0.95, metrics_text, transform=ax.transAxes, fontsize=12,
             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     
-    ax.set_xlabel('Target LST p95 (°C)', fontsize=12)
+    ax.set_xlabel('Target Temperature p95 (°C)', fontsize=12)
     ax.set_ylabel('Predicted LST p95 (°C)', fontsize=12)
     ax.set_title(title, fontsize=14)
     ax.legend(loc='lower right')
