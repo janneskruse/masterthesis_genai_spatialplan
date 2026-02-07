@@ -771,8 +771,8 @@ if __name__ == '__main__':
                        help='Number of samples to render (None = all)')
     parser.add_argument('--overwrite_samples', action='store_true', 
                        help='Overwrite existing samples (use run_idx=0)')
-    parser.add_argument('--config', type=str, default='two_stage_4.yml', 
-                       help='Config file name (default: two_stage_4.yml)')
+    parser.add_argument('--config', type=str, default='two_stage_14.yml', 
+                       help='Config file name (default: two_stage_14.yml)')
     
     args = parser.parse_args()
     

@@ -14,7 +14,7 @@
 #SBATCH -e log/%x.err-%j
 
 # Parse arguments
-CONFIG_PATH="two_stage_4.yml"
+CONFIG_PATH="two_stage_14.yml"
 CHECKPOINT_PATH=""
 
 while [[ $# -gt 0 ]]; do

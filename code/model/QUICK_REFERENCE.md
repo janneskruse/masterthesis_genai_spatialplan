@@ -25,7 +25,7 @@ python tools/prepare_patches.py --config two_stage_14.yml
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `two_stage_4.yml` | Config file |
+| `--config` | `two_stage_14.yml` | Config file |
 | `--max_patches` | all | Limit patches (for testing) |
 | `--skip_train` | off | Skip training split |
 | `--skip_val` | off | Skip validation split |
@@ -44,7 +44,7 @@ torchrun --nproc_per_node=1 tools/train_vae_ddp.py --config two_stage_14.yml --m
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `two_stage_4.yml` | Config file |
+| `--config` | `two_stage_14.yml` | Config file |
 | `--mode` | *required* | VAE group: `semantic`, `satellite`, `environmental` |
 | `--load_checkpoint` | `None` | Resume from checkpoint |
 
@@ -61,7 +61,7 @@ torchrun --nproc_per_node=1 tools/train_diffusion_inpainting_ddp.py --config two
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `two_stage_4.yml` | Config file |
+| `--config` | `two_stage_14.yml` | Config file |
 | `--mode` | `semantic` | Diffusion stage: `semantic`, `satellite` |
 | `--load_checkpoint` | `None` | Resume from checkpoint |
 
@@ -111,7 +111,7 @@ python tools/sample_satellite_from_semantics.py --config two_stage_14.yml \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `two_stage_4.yml` | Config file |
+| `--config` | `two_stage_14.yml` | Config file |
 | `--semantic_dir` | `None` | Stage 1 output dir (auto-detected if omitted) |
 | `--guidance_scale` | `7.5` | CFG scale |
 | `--num_samples` | all | Limit number of samples |
@@ -131,7 +131,7 @@ python tools/validate_dataset.py --config two_stage_14.yml --num_samples 5
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `two_stage_4.yml` | Config file |
+| `--config` | `two_stage_14.yml` | Config file |
 | `--num_samples` | `5` | Samples to visualize |
 | `--mode` | `default` | `default`, `vae:<group>`, or `diffusion:<stage>` |
 | `--use_cached_patches` | off | Use pre-cached patches |
@@ -148,7 +148,7 @@ python tools/validate_vae.py --config two_stage_14.yml --mode semantic --num_sam
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `two_stage_4.yml` | Config file |
+| `--config` | `two_stage_14.yml` | Config file |
 | `--mode` | *required* | VAE group: `semantic`, `satellite`, `environmental` |
 | `--num_samples` | `4` | Samples to reconstruct |
 | `--overwrite_samples` | off | Overwrite existing |
@@ -163,7 +163,7 @@ python tools/validate_inpainting_mask_coverage.py --config two_stage_14.yml
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `two_stage_4.yml` | Config file |
+| `--config` | `two_stage_14.yml` | Config file |
 | `--split` | `val` | Dataset split: `train` or `val` |
 | `--num_samples` | `100` | Samples to analyze |
 | `--samples_per_type` | `3` | Visual examples per mask type |
@@ -179,7 +179,7 @@ python tools/validate_temperature_predictor.py --config two_stage_14.yml --num_s
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `two_stage_4.yml` | Config file |
+| `--config` | `two_stage_14.yml` | Config file |
 | `--num_samples` | `8` | Samples to validate |
 | `--overwrite_samples` | off | Overwrite existing |
 
@@ -193,7 +193,7 @@ python tools/validate_latent_temperature_predictor.py --config two_stage_14.yml 
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--config` | `two_stage_4.yml` | Config file |
+| `--config` | `two_stage_14.yml` | Config file |
 | `--mode` | `semantic` | Mode: `semantic` or `satellite` |
 | `--num_samples` | `500` | Samples to validate |
 | `--batch_size` | `32` | Batch size |
