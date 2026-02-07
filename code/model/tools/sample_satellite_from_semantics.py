@@ -1,15 +1,14 @@
-# Stage 2: Render satellite imagery from generated semantics
-# Uses satellite diffusion model to generate realistic imagery conditioned on semantic layout
+"""
+Sampling script for Stage 2: Satellite Rendering from Semantics
+"""
 
 ###### import libraries ######
 # Standard libraries
 import os
 import argparse
 import random
-import yaml
 import numpy as np
 from tqdm import tqdm
-from pathlib import Path
 import glob
 
 # Data handling
@@ -78,13 +77,7 @@ def render_satellite_from_semantics(
 ):
     """
     Render satellite imagery from semantic layouts using Stage 2 diffusion model.
-    
-    Follows same pattern as semantic sampling but:
-    - Prediction group: 'satellite' (RGB imagery)
-    - Conditioning: semantic latents + environmental latents + pixel-space mask
-    - Environmental latents loaded from dataset using saved patch metadata
-    - Applies mask to environmental conditioning (as per config)
-    
+
     Args:
         semantic_samples: List of semantic sample dicts from Stage 1
         model: Trained satellite diffusion U-Net
@@ -247,7 +240,7 @@ def render_satellite_from_semantics(
         semantic_tensor = semantic_tensor.to(device).unsqueeze(0)  # [1, C, H, W]
         mask = mask.to(device).unsqueeze(0)  # [1, 1, H, W]
         
-        # Build conditioning dict (following diffusion training pattern)
+        # Build conditioning dict
         cond_input = {'meta': [{}]}
         
         # 1. Pixel-space conditioning: inpainting mask (downsampled to latent resolution)
@@ -433,7 +426,7 @@ def render_satellite_from_semantics(
             noise_context_sd = torch.randn_like(rgb_context_latent)
         
         # =====================================================================
-        # INPAINTING SAMPLING - Use advanced sampler (RePaint/LanPaint) or standard loop
+        # INPAINTING SAMPLING
         # =====================================================================
         
         if inpainting_sampler is not None and inpainting_mode == "hard" and rgb_context_latent is not None:
@@ -731,9 +724,6 @@ def infer(args, config):
     # Load dataset for:
     # 1. RGB satellite context (to preserve original imagery outside inpainting mask)
     # 2. Environmental conditioning (LST, NDVI)
-    
-
-    
     dataset = None
     try:
         dataset = UrbanInpaintingDataset(

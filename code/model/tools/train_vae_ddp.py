@@ -1,5 +1,7 @@
-# Unified Training script for VAE on urban data (DDP)
-# Supports both semantic (Stage 1) and satellite (Stage 2) autoencoder training
+"""
+Training script for VAE model training with DDP to convert
+input data into latent space depending on the VAE group (e.g. satellite, semantic, environmental).
+"""
 
 ###### import libraries ######
 # Standard libraries
@@ -217,12 +219,17 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
               Must match a key in config['vae_groups']
         load_checkpoint_path: Optional path to checkpoint file to resume training from
     """
-    # ========= load config files ==========
+    
+    # //////////////////////////////////////////////////
+    # ============= load config files =================
+    # /////////////////////////////////////////////////
     config = load_configs()
     data_config = config['data_config']
     train_config_global = config['train_params']
     
-    # ========== Check for existing paths (skip training if artifacts already exist) ==========
+    # /////////////////////////////////////////////////////////////////////////
+    # == Check for existing paths (skip training if artifacts already exist) ==
+    # /////////////////////////////////////////////////////////////////////////
     existing_paths_result = check_existing_paths(
         train_config=train_config_global,
         mode=mode,
@@ -241,6 +248,10 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
     
     existing_patches_path = existing_paths_result.patches_path
     
+    
+    # //////////////////////////////////////////////////////////
+    # === Setup training environment with all configuration ===
+    # //////////////////////////////////////////////////////////
     
     # Record training start time
     training_start_time = time.time()
@@ -538,7 +549,12 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
         if layer_weights:
             print(f"✓ Per-layer weights: {layer_weights}")
     
-    ########## Training Loop #############
+    
+    
+    
+    # /////////////////////////////////////////////////
+    # =============== Training Loop ===================
+    # /////////////////////////////////////////////////
     if is_main:
         print(f"\n{'='*50}")
         print(f"Starting Training with {num_epochs} epochs")
@@ -771,7 +787,11 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
         if world_size > 1:
             dist.barrier()
     
-    ########## Save Latents ##########
+    
+    
+    # /////////////////////////////////////////////////
+    # =============== Save Latents ===================
+    # /////////////////////////////////////////////////
     if train_config_global.get('save_latents', True):
         # Save latents in distributed manner
         latent_count = save_latents_distributed(
@@ -787,44 +807,49 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
         
         print(f"Rank {rank}: Saved {latent_count} latents")
         
-        # Save dataset statistics (main rank only)
-        if is_main:
-            urban_dataset.save_stats(f"{out_dir}/{stats_name}")
-            print("✓ Saved dataset statistics")
+    
+    # ///////////////////////////////////////////////////////
+    # == Save Dataset Statistics and Jacobian Sensitivity ==
+    # ///////////////////////////////////////////////////////
         
-        # Compute and save Jacobian sensitivity (main rank only)
-        # This enables class-balanced loss weighting in diffusion training
-        if is_main:
-            # Build layer_channel_ranges from layer config
-            # Maps layer names to (start_channel, end_channel) in decoded output
-            layer_channel_ranges = {}
-            channel_offset = 0
-            for layer_name in layer_names:
-                layer_config = get_layer_info(layers_registry, layer_name)
-                n_channels = count_layer_channels(layer_config)
-                layer_channel_ranges[layer_name] = (channel_offset, channel_offset + n_channels)
-                channel_offset += n_channels
-            
-            # Get sensitivity config from train_params (with defaults)
-            sensitivity_config = train_config.get('sensitivity', {})
-            num_sensitivity_samples = sensitivity_config.get('num_samples', 750)
-            polynomial_degree = sensitivity_config.get('polynomial_degree', 2)
-            
-            try:
-                checkpoint_path = os.path.join(out_dir, checkpoint_name)
-                compute_and_save_sensitivity(
-                    vae=model,
-                    latent_dir=latent_dir,
-                    layer_channel_ranges=layer_channel_ranges,
-                    checkpoint_path=checkpoint_path,
-                    num_samples=num_sensitivity_samples,
-                    polynomial_degree=polynomial_degree,
-                    device=device,
-                )
-                print("✓ Jacobian sensitivity computed and saved to checkpoint")
-            except Exception as e:
-                print(f"⚠ Warning: Failed to compute sensitivity: {e}")
-                print("  Diffusion training will proceed without class balancing.")
+    # Save dataset statistics (main rank only)
+    if is_main:
+        urban_dataset.save_stats(f"{out_dir}/{stats_name}")
+        print("✓ Saved dataset statistics")
+    
+    # Compute and save Jacobian sensitivity (main rank only)
+    # This enables class-balanced loss weighting in diffusion training
+    if is_main:
+        # Build layer_channel_ranges from layer config
+        # Maps layer names to (start_channel, end_channel) in decoded output
+        layer_channel_ranges = {}
+        channel_offset = 0
+        for layer_name in layer_names:
+            layer_config = get_layer_info(layers_registry, layer_name)
+            n_channels = count_layer_channels(layer_config)
+            layer_channel_ranges[layer_name] = (channel_offset, channel_offset + n_channels)
+            channel_offset += n_channels
+        
+        # Get sensitivity config from train_params (with defaults)
+        sensitivity_config = train_config.get('sensitivity', {})
+        num_sensitivity_samples = sensitivity_config.get('num_samples', 750)
+        polynomial_degree = sensitivity_config.get('polynomial_degree', 2)
+        
+        try:
+            checkpoint_path = os.path.join(out_dir, checkpoint_name)
+            compute_and_save_sensitivity(
+                vae=model,
+                latent_dir=latent_dir,
+                layer_channel_ranges=layer_channel_ranges,
+                checkpoint_path=checkpoint_path,
+                num_samples=num_sensitivity_samples,
+                polynomial_degree=polynomial_degree,
+                device=device,
+            )
+            print("✓ Jacobian sensitivity computed and saved to checkpoint")
+        except Exception as e:
+            print(f"⚠ Warning: Failed to compute sensitivity: {e}")
+            print("  Diffusion training will proceed without class balancing.")
     
     # Synchronize before cleanup
     if world_size > 1:

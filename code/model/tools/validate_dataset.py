@@ -1,4 +1,6 @@
-# Validation script to test dataset loading and visualize samples
+"""
+Validation script to test dataset loading and visualize samples
+"""
 ##### Import libraries #####
 # Standard libraries
 import sys

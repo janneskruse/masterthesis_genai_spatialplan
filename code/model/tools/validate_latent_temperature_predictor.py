@@ -1,6 +1,7 @@
-# Validation script for Latent Temperature predictor
-# Creates prediction samples on validation set to assess latent-space Temperature predictor quality
-
+"""
+Validation script for Latent Temperature predictor
+Creates prediction samples on validation set to assess latent-space Temperature predictor quality
+"""
 ###### import libraries ######
 # Standard libraries
 import os

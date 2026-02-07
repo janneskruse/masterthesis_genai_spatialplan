@@ -53,19 +53,23 @@ def train_latent_temperature_predictor(mode: str = 'semantic', load_checkpoint_p
     # Record training start time
     training_start_time = time.time()
     
-    # ========= load config files ==========
+    # //////////////////////////////////////////////////
+    # ============= load config files =================
+    # /////////////////////////////////////////////////
     config = load_configs()
     data_config = config['data_config']
     train_config_global = config['train_params']
     
-    # ========== Check for existing paths (skip training if artifacts already exist) ==========
+    # /////////////////////////////////////////////////////////////////////////
+    # == Check for existing paths (skip training if artifacts already exist) ==
+    # /////////////////////////////////////////////////////////////////////////
     existing_paths_result = check_existing_paths(
         train_config=train_config_global,
         mode=mode,
         type='temperature_latent'
     )
     
-    # Early exit if Temperature latent predictor checkpoint already exists (before DDP setup)
+    # Early exit if Temperature latent predictor checkpoint already exists
     if existing_paths_result.skip_training:
         print(f"\n{'='*60}")
         print(f"SKIPPING TEMPERATURE LATENT PREDICTOR TRAINING: Using existing checkpoint")
@@ -77,6 +81,11 @@ def train_latent_temperature_predictor(mode: str = 'semantic', load_checkpoint_p
     
     existing_patches_path = existing_paths_result.patches_path
     existing_vae_paths = existing_paths_result.vae_checkpoints
+    
+    
+    # //////////////////////////////////////////////////////////////////
+    # == Setup distributed training with all training configurations ==
+    # /////////////////////////////////////////////////////////////////
     
     # Setup distributed
     rank, local_rank, world_size = setup_distributed()
@@ -428,7 +437,12 @@ def train_latent_temperature_predictor(mode: str = 'semantic', load_checkpoint_p
         print(f"✓ Learning rate: {adjusted_lr}")
         print(f"✓ Effective batch size: {batch_size * world_size}")
     
-    ########## Training Loop #############
+    
+    
+    
+    # /////////////////////////////////////////////////
+    # =============== Training Loop ===================
+    # /////////////////////////////////////////////////
     if is_main:
         print(f"\n{'='*50}")
         print(f"Starting Training")

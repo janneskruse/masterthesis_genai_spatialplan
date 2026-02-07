@@ -1,5 +1,6 @@
-# Sampling script for semantic inpainting with Temperature guidance
-# Stage 1: Generate semantic layouts (buildings/roads/vegetation/height) with temperature control
+"""
+Sampling script for semantic inpainting with Temperature guidance
+"""
 
 ###### import libraries ######
 # Standard libraries
@@ -9,7 +10,6 @@ import random
 import json
 import numpy as np
 from tqdm import tqdm
-from pathlib import Path
 
 # Data handling
 import torch
@@ -98,9 +98,7 @@ def apply_temperature_guidance(
 ):
     """
     Apply Temperature predictor guidance to steer semantic generation toward temperature target.
-    
-    Uses classifier guidance approach: modify noise prediction based on gradient of Temperature predictor.
-    
+
     Args:
         x: Current latent [B, C, H, W]
         t: Current timestep
@@ -108,7 +106,7 @@ def apply_temperature_guidance(
         scheduler: Noise scheduler
         cond_input: Conditioning input
         temperature_predictor: Temperature predictor model
-        vae: Semantic VAE
+        pred_vae: Semantic VAE
         temperature_target: Target Temperature raster [B, 1, H, W]
         semantic_channels: List of semantic channel names
         include_ndvi: Whether NDVI is included
@@ -365,10 +363,8 @@ def sample_semantics(
         raise ValueError(f"Prediction VAE for group '{pred_group}' not loaded in registry")
     
     # Check if pred_latent is actually a latent or full-res image that needs encoding
-    needs_encoding = False
     if pred_latent.shape[-2:] != (latent_size, latent_size):
         # Full resolution image - needs encoding
-        needs_encoding = True
         pred_image = pred_latent  # Rename for clarity
         
         print(f"\n⚠ No pre-computed prediction latent found, encoding on-the-fly")
@@ -655,7 +651,7 @@ def sample_semantics(
         
         # For hard inpainting, use ground truth latent from dataset
         x_context = None
-        noise_context = None  # FIX: Fixed noise for temporal consistency
+        noise_context = None  # Fixed noise for temporal consistency
         
         if inpainting_mode == "hard":
             with torch.no_grad():

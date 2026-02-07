@@ -3,9 +3,6 @@ Test script to check inpainting mask coverage statistics across dataset.
 
 Tests the mixed mask strategy with multiple methods (street_blocks, random_polygon, 
 random_rectangle, random_square) and visualizes samples from each type.
-
-If mask stats CSV exists (from cached patches), loads it and samples from each mask type.
-Otherwise, falls back to random sampling.
 """
 
 ###### import libraries ######
@@ -105,8 +102,6 @@ def analyze_mask_coverage(split='val', num_samples=100, plot_samples=True, sampl
 def analyze_from_stats_csv(dataset, stats_csv_path: Path, samples_per_type: int) -> dict:
     """
     Analyze masks using pre-saved statistics CSV.
-    
-    This ensures we test all mask types systematically rather than randomly.
     
     Args:
         dataset: UrbanInpaintingDataset instance

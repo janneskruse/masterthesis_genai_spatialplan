@@ -1,5 +1,7 @@
-# Validation script for Temperature predictor
-# Creates prediction samples on validation set to assess Temperature predictor quality
+"""
+Validation script for Temperature predictor
+Creates prediction samples on validation set to assess Temperature predictor quality
+"""
 
 ###### import libraries ######
 # Standard libraries
@@ -8,11 +10,9 @@ import argparse
 import random
 import numpy as np
 from tqdm import tqdm
-from pathlib import Path
 
 # Data handling
 import torch
-import torch.nn.functional as F
 from torchvision.utils import make_grid, save_image
 
 # Local libraries

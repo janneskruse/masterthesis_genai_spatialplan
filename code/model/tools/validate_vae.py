@@ -1,5 +1,7 @@
-# Validation script for VAE training
-# Creates reconstruction samples on validation set to assess VAE quality
+"""
+Validation script for VAE training
+Creates reconstruction samples on validation set to assess VAE quality
+"""
 
 ###### import libraries ######
 # Standard libraries

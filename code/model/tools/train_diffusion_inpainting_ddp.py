@@ -1,18 +1,18 @@
-# Training script for latent diffusion inpainting with DDP
+"""
+Training script for latent diffusion inpainting with DDP
+"""
 
 ###### import libraries ######
 # system libraries
 import os
 import time
 import yaml
-import random
 import numpy as np
 from tqdm import tqdm
 import argparse
 
 # data science libraries
 import torch
-import torch.nn.functional as torchF
 import torch.distributed as dist
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -34,8 +34,6 @@ from model.utils.diffusion_utils import (
 )
 from model.utils.loss_weighting import compute_loss_weights
 from model.utils.scalar_controls import parse_scalar_controls_config
-from model.utils.samples import save_layerwise_samples, save_rgb_composite, save_layerwise_comparisons
-from model.utils.post_process import apply_post_processing
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.config_utils import build_unet_condition_config
@@ -60,13 +58,17 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         load_checkpoint_path: Path to checkpoint to resume from (None = train from scratch)
     """
     
-    # ========= load config files ==========
+    # //////////////////////////////////////////////////
+    # ============= load config files =================
+    # /////////////////////////////////////////////////
     config = load_configs()
     data_config = config['data_config']
     diffusion_config = config['diffusion_params']
     train_config_global = config['train_params']
     
-    # ========== Check for existing paths (skip training if artifacts already exist) ==========
+    # /////////////////////////////////////////////////////////////////////////
+    # == Check for existing paths (skip training if artifacts already exist) ==
+    # /////////////////////////////////////////////////////////////////////////
     existing_paths_result = check_existing_paths(
         train_config=train_config_global,
         mode=mode,
@@ -91,7 +93,9 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
     big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     
     
-    # ========== Setup training environment and start actual training ===========
+    # //////////////////////////////////////////////////////////
+    # === Setup training environment with all configuration ===
+    # //////////////////////////////////////////////////////////
     
     # Record training start time
     training_start_time = time.time()
@@ -768,9 +772,13 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             print(f"✓ Validation: disabled (val_sample_epochs=0)")
         print(f"{'='*50}\n")
     
-    # //////////////////////////////////////////////////
-    ########## Training Loop #############
-    # //////////////////////////////////////////////////
+    
+    
+    
+    
+    # /////////////////////////////////////////////////
+    # =============== Training Loop ===================
+    # /////////////////////////////////////////////////
     if is_main:
         print("\n" + "="*50)
         print(f"Starting Training")
@@ -941,7 +949,6 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
             # Compute training target based on prediction type
             if prediction_type == 'v_prediction':
                 # Model predicts velocity v
-                # Target: v = √ᾱ_t · ε - √(1-ᾱ_t) · x_0
                 target = scheduler.get_velocity(im_latent, noise, t)
                 prediction = model_output
             else:  # prediction_type == 'epsilon'

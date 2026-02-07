@@ -1,6 +1,8 @@
-# Test script for Jacobian Sensitivity computation
-# Validates the sensitivity analysis works correctly before using in training
+"""
+Script to test Jacobian sensitivity computation on the VAE decoder.
 
+Validates the sensitivity analysis works correctly before using in training
+"""
 ###### import libraries ######
 # Standard libraries
 import os

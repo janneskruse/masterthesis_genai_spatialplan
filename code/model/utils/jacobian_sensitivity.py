@@ -155,6 +155,9 @@ def compute_dataset_sensitivity(
     
     latent_dir = Path(latent_dir)
     
+    if not latent_dir.exists() or not latent_dir.is_dir():
+        raise ValueError(f"Invalid latent directory: {latent_dir}")
+    
     # Set VAE to eval mode
     vae.eval()
     
