@@ -1,0 +1,6 @@
+Processing region: Leipzig at 2025-08-13 17:34:53 to produce zarr file: /work/zt75vipu-master/data/osm/leipzig/osm_rasterized.zarr
+parse error: Unfinished JSON term at EOF at line 2, column 0
+parse error: Unfinished JSON term at EOF at line 2, column 0
+parse error: Unfinished JSON term at EOF at line 2, column 0
+parse error: Unfinished JSON term at EOF at line 2, column 0
+Missing files for region Leipzig. Please check the processing steps.

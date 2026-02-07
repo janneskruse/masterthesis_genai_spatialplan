@@ -27,8 +27,6 @@ import utm
 from pyproj import CRS
 
 # local imports
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from data_acquisition.cube.metropolitan_regions import get_region_bbox
 
 ##### Function to exit on error ######

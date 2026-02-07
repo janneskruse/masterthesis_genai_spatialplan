@@ -20,7 +20,7 @@ source activate genaiSpatialplan
 echo "Processing region: $REGION"
 
 # Run the combine job for the planetscope datasets
-python3 -u combine_planetscope_xarrays.py --region "$REGION" --landsat_zarr_name "$LANDSAT_ZARR_NAME" --filenames="$FILENAMES"
+python3 -u ../combine_planetscope_xarrays.py --region "$REGION" --landsat_zarr_name "$LANDSAT_ZARR_NAME" --filenames="$FILENAMES"
 
 # Print Region Filenames JSON
 echo "Region Filenames JSON: $REGION_FILENAMES_JSON"

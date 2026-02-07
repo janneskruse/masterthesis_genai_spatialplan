@@ -1,0 +1,6 @@
+Processing PlanetScope data for region Leipzig from files: [/work/zt75vipu-master/data/planet_scope/leipzig/planet_tmp/planet_scope_cover_20230101.parquet at 2025-08-13 17:35:10
+Landsat Zarr Name: 
+OSM Zarr Name: 
+Planet Zarr Name: 
+Processed Zarr Name: 
+Missing files for region Leipzig. Please check the processing steps.

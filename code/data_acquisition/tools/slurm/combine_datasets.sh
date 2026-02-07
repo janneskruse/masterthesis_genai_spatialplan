@@ -17,7 +17,7 @@ source /home/sc.uni-leipzig.de/${USER}/.bashrc
 source activate genaiSpatialplan
 
 # Run the final combination script
-python3 -u combine_datasets.py
+python3 -u ../combine_datasets.py
 
 done
 

@@ -3,27 +3,15 @@
 ## Import libraries
 # system
 import os
-import sys
 import time
-import calendar
-import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
-import hashlib
 from dotenv import load_dotenv
 
 # data manipulation
 import json
 import yaml
-import numpy as np
-import pandas as pd
-import geopandas as gpd
 import rasterio as rio # needed for xarray.rio to work
 import xarray as xr
 import rioxarray as rxr
-from skimage.exposure import match_histograms
-from rioxarray.merge import merge_arrays
-from shapely.geometry import box, shape
 
 # visualization
 from tqdm import tqdm

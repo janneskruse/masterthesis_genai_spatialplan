@@ -21,12 +21,13 @@ __pycache__/
 cache
 
 # pipeline output
-code/data_acquisition/slurm/*.out
-code/data_acquisition/slurm/*.err
-code/data_acquisition/slurm/*.txt
-code/data_acquisition/slurm/outputs/*
+code/data_acquisition/tools/slurm/*.out
+code/data_acquisition/tools/slurm/*.err
+code/data_acquisition/tools/slurm/*.txt
+code/data_acquisition/tools/slurm/outputs/*
 
 code/model/tools/log
+code/model/tools/slurm/log/
 
 # model overview
 code/model/checklist

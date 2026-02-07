@@ -17,7 +17,7 @@ import torch.nn.functional as F
 from torchvision.utils import make_grid, save_image
 
 # Local libraries
-from model.diffusion_blocks.unet_cond_base import Unet
+from model.blocks.unet_cond_base import Unet
 from model.scheduler.scheduler_factory import get_scheduler, get_inpainting_sampler_for_stage
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config

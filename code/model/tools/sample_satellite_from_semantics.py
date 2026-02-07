@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from torchvision.utils import make_grid, save_image
 
 # Local libraries
-from model.diffusion_blocks.unet_cond_base import Unet
+from model.blocks.unet_cond_base import Unet
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.vae_registry import VAERegistry

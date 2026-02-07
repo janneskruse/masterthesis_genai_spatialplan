@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 # Local imports
-from model.diffusion_blocks.vae import VAE
+from model.blocks.vae import VAE
 
 
 class VAERegistry:

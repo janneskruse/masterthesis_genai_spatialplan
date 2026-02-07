@@ -22,7 +22,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 # local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.diffusion_blocks.unet_cond_base import Unet
+from model.blocks.unet_cond_base import Unet
 from model.utils.vae_registry import VAERegistry
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.scheduler.ddim_scheduler import DDIMScheduler

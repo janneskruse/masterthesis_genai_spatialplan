@@ -1,0 +1,4 @@
+FILENAME_ARRAY: /work/zt75vipu-master/data/planet_scope/leipzig/planet_tmp/planet_scope_cover_20230101.parquet
+Processing file: /work/zt75vipu-master/data/planet_scope/leipzig/planet_tmp/planet_scope_cover_20230101.parquet
+Submitted combine job: 15781253
+Dependency string: 15781252

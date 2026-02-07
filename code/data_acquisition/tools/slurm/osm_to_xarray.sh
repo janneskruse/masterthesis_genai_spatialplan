@@ -19,7 +19,7 @@ source activate genaiSpatialplan
 echo "Processing region: $REGION"
 
 # Execute the OSM to Xarray script
-python3 -u osm_to_xarray.py --REGION ${REGION}
+python3 -u ../osm_to_xarray.py --REGION ${REGION}
 
 # Print Region Filenames JSON
 echo "Region Filenames JSON: $REGION_FILENAMES_JSON"

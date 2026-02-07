@@ -37,11 +37,8 @@ p=os.popen('git rev-parse --show-toplevel')
 repo_dir = p.read().strip()
 p.close()
 
-# helpers functions
-sys.path.append(f"{repo_dir}/code/helpers")
-from landsat_config import get_landsat_config_vars
-
 # local imports
+from helpers.landsat_config import get_landsat_config_vars
 from data_acquisition.cube.metropolitan_regions import get_region_bbox
 
 # Load .env file

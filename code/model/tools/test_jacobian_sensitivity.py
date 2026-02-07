@@ -1,8 +1,5 @@
 # Test script for Jacobian Sensitivity computation
 # Validates the sensitivity analysis works correctly before using in training
-#
-# Usage:
-#   python -m model.tools.test_jacobian_sensitivity --checkpoint D:/master_thesis/data/results/two_stage_7/semantic_vae_ckpt.pth --latent_dir D:/master_thesis/data/results/two_stage_7/semantic_latents
 
 ###### import libraries ######
 # Standard libraries
@@ -16,12 +13,8 @@ import time
 import torch
 import numpy as np
 
-# Add project root to path
-project_root = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-
 # Local imports
-from model.diffusion_blocks.vae import VAE
+from model.blocks.vae import VAE
 from model.utils.jacobian_sensitivity import (
     compute_jacobian_sensitivity,
     compute_dataset_sensitivity,
