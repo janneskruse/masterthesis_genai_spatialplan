@@ -5,7 +5,7 @@ import numpy as np
 
 class LinearNoiseScheduler:
     r"""
-    Noise scheduler for DDPM with multiple beta schedule options.
+    Noise scheduler for DDPM with multiple beta schedule options and optional Velocity schedule.
     
     Supports:
     - 'linear' (scaled-linear): Original DDPM schedule with sqrt scaling
@@ -15,14 +15,10 @@ class LinearNoiseScheduler:
     Cosine schedule advantages:
     - More gradual noise addition at early timesteps
     - Better preservation of signal in mid-range timesteps
-    - Can improve sample quality, especially for high-resolution images
-    - Works well with min-SNR loss weighting
     
     Laplace schedule advantages:
     - Concentrates training compute around log(SNR)=0 (medium noise levels)
     - Faster convergence than cosine + min-SNR loss weighting
-    - Up to 28% FID improvement over cosine on ImageNet-256
-    - Better than adjusting loss weights alone
     
     References:
         Nichol, A., & Dhariwal, P. (2021). Improved Denoising Diffusion Probabilistic Models.
@@ -30,6 +26,10 @@ class LinearNoiseScheduler:
         
         Hang, T., et al. (2024). Improved Noise Schedule for Diffusion Training.
         arXiv:2407.03297. https://arxiv.org/abs/2407.03297
+        
+        Velocity prediction:
+            Salimans, T., & Ho, J. (2022). Progressive Distillation for Fast Sampling of 
+            Diffusion Models. ICLR 2022. arXiv:2202.00512.
     """
     
     def __init__(self, num_timesteps, beta_start, beta_end, beta_schedule='linear', 
@@ -124,11 +124,11 @@ class LinearNoiseScheduler:
     
     def velocity_to_epsilon(self, v_pred, xt, t):
         """
-        Convert velocity prediction to noise prediction.
+        Convert velocity prediction to noise prediction adapted from Salimans & Ho (2022).
         
         From v = √ᾱ_t · ε - √(1-ᾱ_t) · x_0 and x_t = √ᾱ_t · x_0 + √(1-ᾱ_t) · ε,
         we can solve for ε:
-        ε = √ᾱ_t · x_t + √(1-ᾱ_t) · v
+        ε = √ᾱ_t · v + √(1-ᾱ_t) · x_t
         
         This conversion is needed during sampling when using v-prediction mode,
         as the DDPM/DDIM sampling formulas expect epsilon (noise) predictions.
@@ -149,13 +149,13 @@ class LinearNoiseScheduler:
         sqrt_alpha_cum_prod = torch.sqrt(self.alpha_cum_prod.to(xt.device)[t])
         sqrt_one_minus_alpha_cum_prod = torch.sqrt(1 - self.alpha_cum_prod.to(xt.device)[t])
         
-        # ε = √ᾱ_t · x_t + √(1-ᾱ_t) · v
-        epsilon = sqrt_alpha_cum_prod * xt + sqrt_one_minus_alpha_cum_prod * v_pred
+        # ε = √ᾱ_t · v + √(1-ᾱ_t) · x_t
+        epsilon = sqrt_alpha_cum_prod * v_pred + sqrt_one_minus_alpha_cum_prod * xt
         return epsilon
     
     def _cosine_beta_schedule(self, timesteps, s=0.008):
         """
-        Cosine schedule as proposed in "Improved Denoising Diffusion Probabilistic Models".
+        Cosine schedule as proposed in Nichol & Dhariwal (2021).
         
         Creates a more gradual noise schedule that:
         - Preserves more signal at early timesteps
@@ -191,9 +191,9 @@ class LinearNoiseScheduler:
     
     def _laplace_schedule(self, timesteps, mu=0.0, b=0.5):
         """
-        Laplace noise schedule from "Improved Noise Schedule for Diffusion Training".
+        Laplace noise schedule adapted from Hang et al. (2024).
         
-        Key insight: By defining log(SNR) via the Laplace distribution inverse CDF,
+        Key insight from Hang et al. (2024): By defining log(SNR) via the Laplace distribution inverse CDF,
         sampling timesteps uniformly naturally concentrates more training compute
         around log(SNR)=0 (medium noise levels). This is more effective than 
         adjusting loss weights alone.
@@ -203,7 +203,7 @@ class LinearNoiseScheduler:
         
         where λ = log(SNR), and then:
             SNR = exp(λ)
-            α_bar = SNR / (1 + SNR)
+            a_bar = SNR / (1 + SNR)
         
         Args:
             timesteps: Number of diffusion steps
@@ -315,7 +315,7 @@ class LinearNoiseScheduler:
         Clamps known regions to context after each denoising step using FIXED noise.
         
         noise_context must be sampled ONCE per sample and reused for all timesteps
-        to prevent temporal inconsiWstency and seam artifacts.
+        to prevent temporal inconsistency and seam artifacts.
         
         :param xt: current timestep sample [B, C, H, W]
         :param noise_pred: model noise prediction

@@ -4,13 +4,7 @@ DDIM (Denoising Diffusion Implicit Models) Scheduler.
 Fast sampling algorithm that produces high-quality samples in 50-100 steps
 instead of 1000 steps. Up to 20x faster than DDPM with similar quality.
 
-Key features:
-- Deterministic sampling (eta=0) for reproducibility
-- Stochastic sampling (eta=1) similar to DDPM
-- Flexible timestep scheduling (skip steps)
-- Compatible with inpainting
-
-Reference:
+Implementation based on:
     "Denoising Diffusion Implicit Models" (Song et al., 2020)
     https://arxiv.org/abs/2010.02502
 """
@@ -33,6 +27,10 @@ class DDIMScheduler:
     3. Skipping timesteps via sub-sequence sampling
     
     Typical usage: 50 steps instead of 1000 (20x speedup)
+    
+    Reference:
+        "Denoising Diffusion Implicit Models" (Song et al., 2020)
+        https://arxiv.org/abs/2010.02502
     
     Args:
         num_timesteps: Total diffusion timesteps (usually 1000)

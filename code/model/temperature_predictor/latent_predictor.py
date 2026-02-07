@@ -1,7 +1,3 @@
-"""
-Latent-space Temperature predictor for diffusion guidance.
-Predicts Temperature p95 from semantic/satellite VAE latents.
-"""
 ###### import libraries ######
 # Standard libraries
 import os

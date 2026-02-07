@@ -5,7 +5,6 @@ Provides flexible LR scheduling for diffusion model training:
 - Cosine annealing for smooth decay
 - Linear decay for simple schedules
 - Constant LR with optional warmup
-- Warmup prevents training instability at start
 """
 
 ###### import libraries ######
@@ -217,14 +216,6 @@ def get_lr_scheduler(
 def get_current_lr(optimizer: Optimizer) -> float:
     """
     Get current learning rate from optimizer.
-    
-    Useful for logging and monitoring.
-    
-    Args:
-        optimizer: PyTorch optimizer
-        
-    Returns:
-        Current learning rate (from first param group)
     """
     return optimizer.param_groups[0]['lr']
 
@@ -239,9 +230,6 @@ def plot_lr_schedule(
     """
     Plot learning rate schedule for visualization.
     
-    Useful for debugging and understanding LR curves.
-    Requires matplotlib.
-    
     Args:
         scheduler_type: 'cosine', 'linear', or 'constant'
         initial_lr: Starting learning rate
@@ -255,7 +243,6 @@ def plot_lr_schedule(
     """
     try:
         import matplotlib.pyplot as plt
-        import numpy as np
     except ImportError:
         print("⚠ matplotlib not available, skipping plot")
         return

@@ -1,30 +1,23 @@
 """
 Inpainting Sampling Strategies for Latent Diffusion Models
 
-This module implements different inpainting strategies that can be combined with
-any base noise sampler (DDPM or DDIM). The strategies are orthogonal to the
-noise schedule choice:
+Implements different inpainting strategies that can be combined with
+any base noise sampler (DDPM or DDIM).
 
 - Noise Sampler (ddpm/ddim): Controls HOW to denoise (x_t -> x_{t-1})
 - Inpainting Sampler (standard/repaint/lanpaint): Controls boundary harmonization strategy
-
-Compatibility:
-- RePaint works with both DDPM and DDIM (original paper used DDPM)
-- LanPaint works with both DDPM and DDIM (designed for pretrained models)
-- Recommendation: Start with DDIM + RePaint for speed, try DDPM if quality insufficient
 
 References:
 - RePaint: https://arxiv.org/abs/2201.09865 (Lugmayr et al., CVPR 2022)
   "RePaint: Inpainting using Denoising Diffusion Probabilistic Models"
   
-  RePaint implementation ported from:
+  Implementation adapted from:
   https://github.com/andreas128/RePaint
   Original code: Copyright (c) 2022 Huawei Technologies Co., Ltd.
   Licensed under CC BY-NC-SA 4.0 (Attribution-NonCommercial-ShareAlike 4.0 International)
   
 - LanPaint: https://arxiv.org/abs/2502.03491 (Zheng et al., 2025)
   "LanPaint: Training-Free Diffusion Inpainting with Asymptotically Exact and Fast Conditional Sampling"
-  Transactions on Machine Learning Research (TMLR), 2025
 """
 
 ###### import libraries ######
@@ -50,15 +43,12 @@ class InpaintingSamplerConfig:
     # Base sampler config
     num_steps: int = 50  # Number of denoising steps
     
-    # RePaint parameters (matching official implementation)
-    # See: https://github.com/andreas128/RePaint
+    # RePaint parameters
     jump_length: int = 10  # Timesteps to jump back (official default: 10)
     jump_n_sample: int = 10  # Number of times to resample at each jump (official default: 10)
     start_resampling: int = 100000000  # Only resample when t <= this (official default: very large = always)
-                                       # Note: This is different from "steps from end"
     
-    # LanPaint parameters (matching official implementation)
-    # See: https://github.com/scraed/LanPaint
+    # LanPaint parameters
     lanpaint_num_steps: int = 5       # K: Inner Langevin iterations per denoising step ("thinking depth")
     lanpaint_lambda: float = 16.0     # λ: BiG score alignment strength (higher = stricter boundary matching)
     lanpaint_step_size: float = 0.2   # η: Step size for Langevin dynamics
@@ -72,11 +62,11 @@ class InpaintingSamplerConfig:
         return cls(
             sampler_type=config.get('type', 'standard'),
             num_steps=config.get('num_steps', 50),
-            # RePaint (official defaults)
+            # RePaint
             jump_length=config.get('jump_length', 10),
             jump_n_sample=config.get('jump_n_sample', 10),
             start_resampling=config.get('start_resampling', 100000000),
-            # LanPaint (official param names)
+            # LanPaint
             lanpaint_num_steps=config.get('lanpaint_num_steps', 5),
             lanpaint_lambda=config.get('lanpaint_lambda', 16.0),
             lanpaint_step_size=config.get('lanpaint_step_size', 0.2),
@@ -228,9 +218,6 @@ class StandardInpaintingSampler(InpaintingSamplerBase):
     At each step:
     1. Denoise the full latent
     2. Replace known region with properly noised ground truth
-    
-    This is your current implementation - provides baseline behavior.
-    Simple but can have boundary artifacts due to one-way information flow.
     """
     
     def sample(
@@ -280,12 +267,7 @@ class RePaintSampler(InpaintingSamplerBase):
     """
     RePaint inpainting sampler with time-travel mechanism.
     
-    Ported from official implementation:
-    https://github.com/andreas128/RePaint
-    
-    Key innovation: Jump back in time and resample to allow information
-    to flow from known regions into generated regions through multiple
-    harmonization passes.
+    Adapted from https://github.com/andreas128/RePaint
     
     Algorithm (from paper Section 4.2):
     1. Generate schedule with jumps: e.g., [249, 248, 249, 248, 247, ...]
@@ -296,8 +278,6 @@ class RePaintSampler(InpaintingSamplerBase):
     
     The schedule creates regular jumps every `jump_length` timesteps,
     repeating `jump_n_sample` times at each jump point.
-    
-    Reference: https://arxiv.org/abs/2201.09865 (CVPR 2022)
     
     Parameters:
         jump_length: How many timesteps to jump back (default: 10)
@@ -318,11 +298,7 @@ class RePaintSampler(InpaintingSamplerBase):
         guidance_scale: float = 0.0,
         show_progress: bool = True
     ) -> torch.Tensor:
-        """
-        RePaint inpainting with time-travel.
-        
-        Ported exactly from official RePaint: p_sample_loop_progressive()
-        """
+
         x = x_init.clone()
         
         # Fixed noise for temporal consistency of context injection
@@ -385,10 +361,6 @@ class RePaintSampler(InpaintingSamplerBase):
     
     def _get_schedule_jump(self) -> list:
         """
-        Generate RePaint schedule with jumps.
-        
-        Ported exactly from official RePaint: guided_diffusion/scheduler.py::get_schedule_jump()
-        
         Returns:
             List of timesteps like [t_T-1, t_T-2, t_T-1, t_T-2, t_T-3, ...]
             where jumps back occur at regular intervals.
@@ -451,8 +423,6 @@ class RePaintSampler(InpaintingSamplerBase):
         """
         Undo one denoising step (forward diffusion by one step).
         
-        Ported exactly from official RePaint: GaussianDiffusion._undo()
-        
         This is NOT the same as adding noise to timestep t using alpha_bar.
         Instead, it's a single-step forward diffusion:
             x_t = sqrt(1 - beta_t) * x_{t-1} + sqrt(beta_t) * noise
@@ -509,14 +479,11 @@ class LanPaintSampler(InpaintingSamplerBase):
     """
     LanPaint inpainting sampler with Stochastic Harmonic Oscillator dynamics.
     
-    Ported from official LanPaint implementation:
+    Adapted from official LanPaint implementations:
     https://github.com/scraed/LanPaint (ComfyUI extension)
     https://github.com/scraed/LanPaintBench (Python benchmark)
     
-    Based on: "LanPaint: Training-Free Diffusion Inpainting with Asymptotically 
-    Exact and Fast Conditional Sampling" (Zheng et al.)
-    
-    Key innovations:
+    Key innovations per https://arxiv.org/abs/2502.03491:
     1. BiG Score: Bidirectional Guided score function
        - For unknown region (mask=1): standard score
        - For known region (mask=0): score_y = -(1+λ)(x_t - y) + λ·e_t
@@ -663,8 +630,7 @@ class LanPaintSampler(InpaintingSamplerBase):
     ) -> Tuple[torch.Tensor, ...]:
         """
         Prepare step sizes and parameters for Langevin dynamics.
-        
-        Ported from official LanPaintBench: ULDCharaPipeline_Sampler.prepare_step_size()
+
         """
         step_size = self.config.lanpaint_step_size
         lamb = self.config.lanpaint_lambda
@@ -707,8 +673,7 @@ class LanPaintSampler(InpaintingSamplerBase):
     ) -> torch.Tensor:
         """
         Evaluate x̂₀ from x_t using the model.
-        
-        Ported from official LanPaintBench: ULDCharaPipeline_Sampler.x0_evalutation()
+
         """
         with torch.no_grad():
             # Scale input for model (official uses sigma scaling)
@@ -740,7 +705,7 @@ class LanPaintSampler(InpaintingSamplerBase):
         """
         Run Langevin dynamics with Stochastic Harmonic Oscillator.
         
-        Ported exactly from official LanPaintBench:
+        Adapted from official LanPaintBench:
         ULDCharaPipeline_Sampler.langevin_dynamics()
         
         Args:

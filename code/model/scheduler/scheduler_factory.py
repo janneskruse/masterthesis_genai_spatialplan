@@ -1,18 +1,10 @@
 """
-Scheduler Factory for Diffusion Sampling.
-
-Centralizes scheduler creation logic to eliminate code duplication
-between training and sampling scripts.
+Scheduler Factory for Diffusion Sampling that centralizes scheduler creation.
 
 Supports:
 - DDPM (LinearNoiseScheduler): Standard diffusion, 1000 steps
 - DDIM (DDIMScheduler): Fast deterministic sampling, 50 steps (20x faster)
 - Inpainting Samplers: Standard, RePaint, LanPaint for boundary harmonization
-
-Future extensions (easy to add):
-- DPM-Solver++: Even faster than DDIM
-- UniPC: Unified predictor-corrector
-- Euler-A: Ancestral sampling
 """
 
 ###### import libraries ######
@@ -27,9 +19,6 @@ from model.scheduler.inpainting_samplers import get_inpainting_sampler
 def get_scheduler(diffusion_config: dict):
     """
     Create scheduler from diffusion configuration.
-    
-    Single source of truth for scheduler creation - ensures training
-    and sampling use identical scheduler configuration.
     
     Args:
         diffusion_config: Diffusion parameters from config dict
@@ -106,12 +95,6 @@ def get_inpainting_sampler_for_stage(
 ):
     """
     Create inpainting sampler for a specific diffusion stage.
-    
-    Reads sampler configuration from:
-    config['diffusion_stages'][stage_name]['inpainting']['sampler']
-    
-    This is the RECOMMENDED way to get inpainting samplers as it supports
-    per-stage configuration (e.g., different samplers for semantic vs satellite).
     
     Args:
         config: Full model config dict

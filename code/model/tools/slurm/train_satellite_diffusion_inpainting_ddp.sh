@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --time=3:00:00
-#SBATCH --job-name="train_diffusion_semantic_ddp"
+#SBATCH --time=6:00:00
+#SBATCH --job-name="train_diffusion_satellite_ddp"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
@@ -42,7 +42,7 @@ source activate genaiSpatialplan
 # Install package in editable mode for proper imports
 cd /home/sc.uni-leipzig.de/${USER}/masterthesis_genai_spatialplan
 pip install -e . --quiet
-cd - # return to previous directory
+cd -
 
 # Get IPv4 address explicitly
 export MASTER_ADDR=$(hostname -I | awk '{print $1}')
@@ -60,7 +60,7 @@ export NCCL_SOCKET_IFNAME=^lo,docker0
 echo "=================================================="
 echo "Master Address: $MASTER_ADDR"
 echo "Master Port: $MASTER_PORT"
-echo "Starting DDP training with $WORLD_SIZE GPUs"
+echo "Starting DDP diffusion training with $WORLD_SIZE GPUs"
 echo "Config: $CONFIG_PATH"
 if [ -n "$CHECKPOINT_PATH" ]; then
     echo "Checkpoint: $CHECKPOINT_PATH"
@@ -69,11 +69,8 @@ else
 fi
 echo "=================================================="
 
-# Enable detailed PyTorch distributed debugging
-# export TORCH_DISTRIBUTED_DEBUG=DETAIL
-
 # Build python command with optional checkpoint
-PYTHON_CMD="python3 -u train_diffusion_inpainting_ddp.py --config $CONFIG_PATH --mode semantic"
+PYTHON_CMD="python3 -u ../train_diffusion_inpainting_ddp.py --config $CONFIG_PATH --mode satellite"
 if [ -n "$CHECKPOINT_PATH" ]; then
     PYTHON_CMD="$PYTHON_CMD --load_checkpoint $CHECKPOINT_PATH"
 fi
@@ -92,13 +89,3 @@ echo "=================================================="
 echo "Job finished at: $(date)"
 echo "Training exit code: $EXIT_CODE"
 echo "=================================================="
-
-
-# # Only submit next job if training succeeded
-# if [ $EXIT_CODE -eq 0 ]; then
-#     echo "Training completed successfully. Submitting Temperature predictor training..."
-#     sbatch train_temperature_predictor_ddp.sh --config $CONFIG_PATH
-# else
-#     echo "Training failed with exit code $EXIT_CODE. Skipping Temperature predictor training."
-#     exit $EXIT_CODE
-# fi

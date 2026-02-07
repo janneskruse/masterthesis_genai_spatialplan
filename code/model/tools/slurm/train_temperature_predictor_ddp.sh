@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --time=3:00:00
-#SBATCH --job-name="train_vae_semantic_ddp"
+#SBATCH --job-name="train_temperature_predictor_ddp"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
@@ -13,27 +13,12 @@
 #SBATCH -o log/%x.out-%j
 #SBATCH -e log/%x.err-%j
 
-# Parse arguments
-CONFIG_PATH="two_stage_4.yml"
-CHECKPOINT_PATH=""
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --config)
-            CONFIG_PATH="$2"
-            shift 2
-            ;;
-        --checkpoint)
-            CHECKPOINT_PATH="$2"
-            shift 2
-            ;;
-        *)
-            # Assume first positional arg is config
-            CONFIG_PATH="$1"
-            shift
-            ;;
-    esac
-done
+# Default config if not provided
+if [ "$1" = "--config" ] && [ -n "$2" ]; then
+    CONFIG_PATH=$2
+else
+    CONFIG_PATH=${1:-two_stage_4.yml}
+fi
 
 mkdir -p log
 
@@ -63,24 +48,13 @@ echo "Master Address: $MASTER_ADDR"
 echo "Master Port: $MASTER_PORT"
 echo "Starting DDP training with $WORLD_SIZE GPUs"
 echo "Passing config: $CONFIG_PATH"
-if [ -n "$CHECKPOINT_PATH" ]; then
-    echo "Resuming from checkpoint: $CHECKPOINT_PATH"
-else
-    echo "Training from scratch (no checkpoint)"
-fi
 echo "=================================================="
-
-# Build Python command dynamically
-PYTHON_CMD="python3 -u train_vae_ddp.py --config $CONFIG_PATH --mode semantic"
-if [ -n "$CHECKPOINT_PATH" ]; then
-    PYTHON_CMD="$PYTHON_CMD --load_checkpoint $CHECKPOINT_PATH"
-fi
 
 # Launch with srun and set CUDA_VISIBLE_DEVICES per process
 srun bash -c "
     export MASTER_ADDR=$MASTER_ADDR
     export MASTER_PORT=$MASTER_PORT
-    $PYTHON_CMD
+    python3 -u ../train_temperature_predictor_ddp.py --config $CONFIG_PATH
 "
 
 # Capture the exit code of srun/python
@@ -90,12 +64,3 @@ echo "=================================================="
 echo "Job finished at: $(date)"
 echo "Training exit code: $EXIT_CODE"
 echo "=================================================="
-
-# Only submit next job if training succeeded
-# if [ $EXIT_CODE -eq 0 ]; then
-#     echo "Training completed successfully. Submitting diffusion training..."
-#     sbatch train_semantic_diffusion_inpainting_ddp.sh --config $CONFIG_PATH
-# else
-#     echo "Training failed with exit code $EXIT_CODE. Skipping diffusion training."
-#     exit $EXIT_CODE
-# fi

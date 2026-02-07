@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH --time=6:00:00
-#SBATCH --job-name="train_diffusion_satellite_ddp"
+#SBATCH --time=3:00:00
+#SBATCH --job-name="train_vae_semantic_ddp"
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4  # One task per GPU
 #SBATCH --cpus-per-task=2    # 8 CPUs / 4 GPUs
@@ -28,6 +28,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
+            # Assume first positional arg is config
             CONFIG_PATH="$1"
             shift
             ;;
@@ -42,7 +43,7 @@ source activate genaiSpatialplan
 # Install package in editable mode for proper imports
 cd /home/sc.uni-leipzig.de/${USER}/masterthesis_genai_spatialplan
 pip install -e . --quiet
-cd -
+cd - # return to previous directory
 
 # Get IPv4 address explicitly
 export MASTER_ADDR=$(hostname -I | awk '{print $1}')
@@ -60,17 +61,17 @@ export NCCL_SOCKET_IFNAME=^lo,docker0
 echo "=================================================="
 echo "Master Address: $MASTER_ADDR"
 echo "Master Port: $MASTER_PORT"
-echo "Starting DDP diffusion training with $WORLD_SIZE GPUs"
-echo "Config: $CONFIG_PATH"
+echo "Starting DDP training with $WORLD_SIZE GPUs"
+echo "Passing config: $CONFIG_PATH"
 if [ -n "$CHECKPOINT_PATH" ]; then
-    echo "Checkpoint: $CHECKPOINT_PATH"
+    echo "Resuming from checkpoint: $CHECKPOINT_PATH"
 else
-    echo "Checkpoint: None (training from scratch)"
+    echo "Training from scratch (no checkpoint)"
 fi
 echo "=================================================="
 
-# Build python command with optional checkpoint
-PYTHON_CMD="python3 -u train_diffusion_inpainting_ddp.py --config $CONFIG_PATH --mode satellite"
+# Build Python command dynamically
+PYTHON_CMD="python3 -u ../train_vae_ddp.py --config $CONFIG_PATH --mode semantic"
 if [ -n "$CHECKPOINT_PATH" ]; then
     PYTHON_CMD="$PYTHON_CMD --load_checkpoint $CHECKPOINT_PATH"
 fi
@@ -89,3 +90,12 @@ echo "=================================================="
 echo "Job finished at: $(date)"
 echo "Training exit code: $EXIT_CODE"
 echo "=================================================="
+
+# Only submit next job if training succeeded
+# if [ $EXIT_CODE -eq 0 ]; then
+#     echo "Training completed successfully. Submitting diffusion training..."
+#     sbatch train_semantic_diffusion_inpainting_ddp.sh --config $CONFIG_PATH
+# else
+#     echo "Training failed with exit code $EXIT_CODE. Skipping diffusion training."
+#     exit $EXIT_CODE
+# fi
