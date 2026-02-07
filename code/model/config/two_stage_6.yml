@@ -1,5 +1,5 @@
-# Configuration for Two-Stage Semantic Urban Inpainting
-# Stage 1: Generate semantic layouts (buildings/roads/vegetation/height) with LST control
+# Configuration for Two-Stage Urban Inpainting
+# Stage 1: Generate semantic layouts (e.g. buildings/roads/vegetation/height) with optional temperature control
 # Stage 2: Render satellite imagery from semantics
 
 # ===========================================================================
@@ -22,14 +22,15 @@ layers:
     type: 'binary'
     dice_loss:
       use_dice: True
-      weight: 0.5  # Dice loss for crisp edges and reduced salt-and-pepper noise
+      weight: 0.5  # Dice loss for crisp edges
+    min_coverage_percent: 7.0  # Ignore patches where not at least 7% buildings are present
     
   buildings_heights:
     layer: 'buildings_heights'
     type: 'continuous'
     normalize: 'minmax'
     mask_layer: 'buildings'  # Apply building mask to height values (dataset + loss)
-    mask_loss_weight: 5.0  # Focus loss on building regions (3.0-10.0 recommended)
+    mask_loss_weight: 5.0  # Focus loss on building regions
     
   streets:
     layer: 'streets'
@@ -54,7 +55,7 @@ layers:
     layer: 'ndvi'
     type: 'binary'
     filter:
-      gte: 0.7
+      gte: 0.7 # NDVI threshold for dense vegetation
       
   # Environmental layers
   ndvi:
@@ -104,38 +105,42 @@ dataset_params:
 
 # ===========================================================================
 # TEMPERATURE THRESHOLD CONTROL
-# Three-layer control stack for constraining generated layouts by max temperature
-# To-do: implement layer 2 and 3 into the sampling loop
+# Three-layer control stack for controlling generated layouts by max temperature
+# ===========================================================================
+# Phase 1: Scalar conditioning (via time embedding)
+# Phase 2: Soft gradient guidance using Latent temperature Predictor
+# Phase 3: Hard accept/reject check after sampling - TODO
 # ===========================================================================
 
-# temperature_control:
-#   # Layer 2: Soft guidance (optional)
-#   # Use trained LST predictor to guide sampling toward threshold
-#   guidance:
-#     enabled: false  # Set to true to enable predictor-based guidance
-#     scale: 0.5  # Guidance strength (0.0 = no guidance, 1.0+ = strong)
-#     predictor_checkpoint: "lst_predictor_ckpt.pth"  # Path relative to results dir
-#     eval_every_n_steps: 1  # Apply guidance every N denoising steps
+temperature_control:
+  lst_max: 80.0  # Maximum LST value in Celsius for normalization
+
+  guidance:
+    enabled: false # true to enable guidance
+    scale: 1.0  # Guidance strength (0.0 = no guidance, higher = stronger)
+    target_p95_celsius: 35.0  # Target max temperature in Celsius
+    eval_every_n_steps: 1  # Apply guidance every N denoising steps
+    warmup_fraction: 0.1  # Skip first 10% of steps (too noisy for guidance)
+    cooldown_fraction: 0.1  # Skip last 10% of steps (for quality)
   
-#   # Layer 3: Hard check (optional)
-#   # Reject samples that violate threshold, retry with stronger guidance
-#   hard_check:
-#     enabled: false  # Set to true to enable acceptance/retry logic
-#     max_tries: 4  # Maximum retry attempts
-#     accept_margin: 0.02  # Accept if predicted_p95 <= threshold + margin (normalized)
+  # Phase 3: Hard check (optional)
+  # Reject samples that violate threshold, retry with stronger guidance
+  hard_check:
+    enabled: false  # true to enable acceptance/retry logic
+    max_tries: 4  # Maximum retry attempts
+    accept_margin: 2.0  # Accept if predicted_p95 <= threshold + margin (Celsius)
+    guidance_scale_increase: 0.5  # Increase guidance scale per retry
 
 # ===========================================================================
 # GENERIC SCALAR CONTROLS
 # Flexible framework for multiple scalar conditioning (vegetation, heights, etc.)
 # 
 # USAGE:
-# 1. Define all available controls here with their configurations
-# 2. Enable specific controls per-stage using:
+# 1. Define all available controls here
+# 2. Then, enable specific controls per-stage:
 #    diffusion_stages:
 #      semantic:
 #        scalar_controls: ["temperature", "building_coverage"]  # List of control names
-# 
-# This allows different stages to use different controls flexibly.
 # ===========================================================================
 
 scalar_controls:
@@ -143,7 +148,7 @@ scalar_controls:
   controls:
     # Temperature control
     - name: "temperature"
-      keys: ["tmax"]  # Single scalar key
+      keys: ["tmax"]  # scalar key
       layer: "lst"
       statistic: "p95"
       region: "mask"
@@ -160,7 +165,7 @@ scalar_controls:
     - name: "vegetation_coverage"
       keys: ["veg_mean"]  # Or ["veg_min", "veg_max"] for range
       layer: "vegetation"
-      statistic: "mean"  # Coverage fraction [0,1]
+      statistic: "mean"
       region: "mask"
       training:
         strategy: "relative"
@@ -168,7 +173,6 @@ scalar_controls:
         unconditional_value: 0.5  # Neutral: 50% coverage
         drop_prob: 0.15
       conditioning:
-        # inject_mode: "time_embed"
         mlp_hidden: 128
     
     # Building coverage control
@@ -183,10 +187,9 @@ scalar_controls:
         unconditional_value: 0.5
         drop_prob: 0.15
       conditioning:
-        # inject_mode: "time_embed"
         mlp_hidden: 128
     
-    # Building height control (masked by building footprints)
+    # Building height control
     - name: "building_height"
       keys: ["height_p95"] # Or ["height_min", "height_max"] for range
       layer: "buildings_heights"
@@ -199,12 +202,11 @@ scalar_controls:
         unconditional_value: 0.0  # Low height baseline
         drop_prob: 0.15
       conditioning:
-        # inject_mode: "time_embed"
         mlp_hidden: 128
 
 # ===========================================================================
 # VAE GROUP CONFIGURATIONS
-# Each VAE specializes in encoding a semantic layer group
+# Each VAE specializes in encoding a layer group to latent space
 # ===========================================================================
 
 vae_groups:
@@ -272,15 +274,16 @@ diffusion_params:
   beta_end: 0.02
   
   # Beta schedule type (affects noise distribution across timesteps)
-  beta_schedule: 'linear'  # Options: 'linear' (scaled-linear, default) | 'cosine' (improved DDPM)
-  # Cosine: More gradual noise at early steps, better high-res quality, works with min-SNR
-  # Linear: Original DDPM, well-tested, slightly faster convergence
+  # Options: 
+  #   'linear' (scaled-linear): Original DDPM
+  #   'cosine': More gradual noise at early steps, better high-res quality
+  #   'laplace': Concentrates compute at medium noise (log(SNR)≈0), fastest convergence
+  beta_schedule: 'linear'
   
   # Prediction type (what the model learns to predict)
   prediction_type: 'epsilon'  # Options: 'epsilon' (noise, default) | 'v_prediction' (velocity)
-  # Epsilon: Standard DDPM, predicts noise ε. Well-tested, works great with min-SNR.
-  # V-prediction: Predicts velocity v = √ᾱ_t·ε - √(1-ᾱ_t)·x_0. More balanced gradients,
-  #               can improve quality 5-10% in some cases. Requires same training time.
+  # Epsilon: Standard DDPM, predicts noise ε. Works good with min-SNR.
+  # V-prediction: Predicts velocity v = √ᾱ_t·ε - √(1-ᾱ_t)·x_0. More balanced gradients.
 
   # Sampling algorithm (for inference)
   sampler: 'ddim'  # Options: 'ddpm' (1000 steps, slow), 'ddim' (50 steps, 20x faster - recommended)
@@ -293,9 +296,9 @@ diffusion_params:
 # ===========================================================================
 
 diffusion_stages:
-  # Stage 1: Generate semantic urban layout
+  # Stage 1: Generates semantic urban layouts
   semantic:
-    validate: true  # Enable validation sampling during training (disable for faster iteration)
+    validate: true  # Enable validation sampling during training
     scalar_controls: None # ["temperature", "building_coverage"]  # Enable temperature control for this stage
     prediction_group: 'semantic'
     
@@ -304,7 +307,7 @@ diffusion_stages:
       down_channels: [32, 64, 128, 256]
       mid_channels: [256, 256, 128]
       down_sample: [True, True, False]
-      attn_down: [True, True, False]
+      attn_down: [True, True, False]     # Use attention at higher resolutions
       time_emb_dim: 128
       norm_channels: 32
       num_heads: 4
@@ -331,19 +334,20 @@ diffusion_stages:
     # Inpainting configuration
     inpainting:
       mode: 'hard'  # or 'sdlike'
-      loss: 'weighted'  # Use weighted to learn full distribution # 'masked' for focusing only on missing regions
+      loss: 'weighted'  # 'weighted' to learn full distribution
       mask_loss_weight: 10.0
       outside_weight: 1.0  # Non-zero to learn context! --> for coherent generation
       
-      # Seam improvement strategy (optional)
-      # Options: None (default), 'dilate' (boundary ring loss), 'feather' (mask blurring), 'repaint' (reinjection)
-      seam: feather
-      seam_config:
-        ring_width_px: 1      # For 'dilate' mode: boundary ring width
-        ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
-        blur_radius: 3        # For 'feather' mode: mask blur radius
-        resample_steps: 10    # For 'repaint' mode: resample interval
-        jump_length: 3        # For 'repaint' mode: timesteps to jump back
+      # Seam improvement strategy (optional, separate for training and sampling)
+      seam:
+        training: feather      # 'dilate' (boundary ring loss) | 'feather' (mask blurring) | None
+        sampling: None         # 'dilate' | 'feather' | None
+        config:
+          ring_width_px: 1      # For 'dilate' mode: boundary ring width
+          ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
+          blur_radius: 3        # For 'feather' mode: mask blur radius
+          resample_steps: 10    # For 'repaint' like mode: resample interval
+          jump_length: 3        # For 'repaint' like mode: timesteps to jump back
       
       cfg:
         drop_prob: 0.2  # Higher for stronger CFG effect
@@ -361,7 +365,7 @@ diffusion_stages:
       down_channels: [32, 64, 128, 256]
       mid_channels: [256, 256, 128]
       down_sample: [True, True, False]
-      attn_down: [True, True, False]
+      attn_down: [True, True, False]     # Attention at higher resolutions
       time_emb_dim: 128
       norm_channels: 32
       num_heads: 4
@@ -386,23 +390,25 @@ diffusion_stages:
     # Inpainting configuration
     inpainting:
       mode: 'hard'  # or 'sdlike'
-      loss: 'weighted'  # Learn full distribution for realistic rendering # 'masked' to focus only on missing regions
+      loss: 'masked'  # 'masked' to focus on masked region, 'weighted' to learn full distribution
       mask_loss_weight: 8.0  # Lower weight for sdlike (model processes whole image)
       outside_weight: 1.0  # Learn photorealistic context
       
-      # Seam improvement strategy (optional)
-      # 'feather' recommended for sdlike mode to blend generated content smoothly
-      seam: 'feather'
-      seam_config:
-        ring_width_px: 1      # For 'dilate' mode: boundary ring width
-        ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
-        blur_radius: 2        # For 'feather' mode: mask blur radius (smaller for satellite to preserve detail)
-        resample_steps: 10    # For 'repaint' mode: resample interval
-        jump_length: 3        # For 'repaint' mode: timesteps to jump back
+      # Seam improvement strategy (optional, separate for training and sampling)
+      seam:
+        training: feather    # 'dilate' (boundary ring loss) | 'feather' (mask blurring) | None
+        sampling: None       # 'dilate' | 'feather' | None
+        config:
+          ring_width_px: 1      # For 'dilate' mode: boundary ring width
+          ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
+          blur_radius: 2        # For 'feather' mode: mask blur radius (smaller for satellite to preserve detail)
+          resample_steps: 10    # For 'repaint' like mode: resample interval
+          jump_length: 3        # For 'repaint' like mode: timesteps to jump back
       
       cfg:
         drop_prob: 0.15  # Higher for stronger CFG effect
         drop_groups: ['semantic', 'environmental']
+        # for rendering, keep semantic group inside mask
         sample_mask_groups: ['environmental']  # Apply inpainting mask to these groups during sampling only
 
 # ===========================================================================
@@ -413,7 +419,7 @@ train_params:
   seed: 45
   task_name: 'two_stage_6'
   
-  # Data augmentation for training (spatial transformations only)
+  # Data augmentation for training (applies to all modes)
   augmentation:
     enabled: False  # Toggle on/off (only applies to train split)
     horizontal_flip: True  # 50% chance horizontal flip
@@ -445,15 +451,15 @@ train_params:
       binary_channel_weight: 1.0
       continuous_channel_weight: 2.0  # Increase weight for buildings_heights to compete with 3 binary layers
       dice_weight: 0.5  # Default dice weight
-      perceptual_weight: 0.0  # Not useful for semantic binary masks
+      perceptual_weight: 0.0  # Not useful for semantic binary masks/height data/height data/height data
       disc_weight: 0.5  # Adversarial loss to enforce sharp edges
       # disc_start: 5000  # Start discriminator after 5k steps (~30 epochs at batch_size=4)
       use_discriminator: False
-      use_perceptual: False  # LPIPS not useful for binary/height data
-      tanh_activation: False  # Binary + continuous mixed
+      use_perceptual: False  # Not useful for semantic binary masks/height data
+      tanh_activation: False  # as Binary + continuous mixed
       img_save_steps: 64
       
-      # Per-layer weight overrides (optional - overrides binary/continuous defaults)
+      # Per-layer weight overrides
       # Use to balance importance of individual layers in latent representation
       layer_weights:
         buildings: 2.5        # Boost buildings (reduce sparse noise)
@@ -487,11 +493,11 @@ train_params:
       epochs: 300
       batch_size: 4
       gradient_accumulation_steps: 4  # Effective batch size: 16
-      lr: 0.0001  # Higher initial LR with scheduler
+      lr: 0.0001  # learning rate with scheduler
       lr_scheduler: 'cosine'  # Options: 'cosine', 'linear', 'constant'
       lr_warmup_steps: 1000  # Warmup for stable training start
       
-      # Exponential Moving Average - critical for stable high-quality samples
+      # Exponential Moving Average - for stable high-quality samples
       use_ema: True
       ema_decay: 0.9999  # Slow decay for better averaging
       
@@ -501,21 +507,21 @@ train_params:
       
       # Validation sampling during training
       val_sample_epochs: 10  # Sample every N epochs (0 to disable)
-      val_num_samples: 4  # Number of validation samples per epoch
-      val_sample_steps: 50  # DDIM steps for fast validation (20x faster than 1000 DDPM steps)
+      val_num_samples: 4  # Number of samples per epoch
+      val_sample_steps: 50  # DDIM steps for fast validation
       val_guidance_scale: 7.5  # CFG scale for validation (None to disable CFG)
       
       checkpoint_name: 'semantic_diffusion_ckpt.pth'
       
     satellite:
-      epochs: 400  # Satellite rendering is harder, needs more training
+      epochs: 400
       batch_size: 4
       gradient_accumulation_steps: 4  # Effective batch size: 16
-      lr: 0.0001  # Higher initial LR with scheduler
+      lr: 0.0001
       lr_scheduler: 'cosine'
       lr_warmup_steps: 1000
       
-      # EMA is especially important for photorealistic satellite imagery
+      # Exponential Moving Average for stable sampling
       use_ema: True
       ema_decay: 0.9999
       
@@ -524,7 +530,7 @@ train_params:
       min_snr_gamma: 5.0
       
       # Validation sampling
-      val_sample_epochs: 15  # Sample every N epochs (less frequent due to longer training)
+      val_sample_epochs: 15  # Sample every N epochs
       val_num_samples: 4
       val_sample_steps: 50  # DDIM steps for fast validation
       val_guidance_scale: 7.5
