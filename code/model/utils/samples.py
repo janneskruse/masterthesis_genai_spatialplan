@@ -1,6 +1,9 @@
 """
-Utility functions for visualizing and saving sample outputs during training/inference.
+==============================================================================
+Utility functions for visualizing 
+and saving sample outputs during training/inference.
 Shared between VAE reconstruction and diffusion sampling.
+==============================================================================
 """
 ###### import libraries ######
 # Standard libraries

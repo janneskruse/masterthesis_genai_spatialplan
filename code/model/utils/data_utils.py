@@ -1,3 +1,9 @@
+"""
+==============================================================================
+Utilities for data processing and transformations for the inpainting model.
+==============================================================================
+"""
+
 ###### import libraries ######
 # Standard libraries
 import random

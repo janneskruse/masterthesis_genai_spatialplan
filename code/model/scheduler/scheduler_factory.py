@@ -1,10 +1,12 @@
 """
+==============================================================================
 Scheduler Factory for Diffusion Sampling that centralizes scheduler creation.
 
 Supports:
 - DDPM (LinearNoiseScheduler): Standard diffusion, 1000 steps
 - DDIM (DDIMScheduler): Fast deterministic sampling, 50 steps (20x faster)
 - Inpainting Samplers: Standard, RePaint, LanPaint for boundary harmonization
+==
 """
 
 ###### import libraries ######

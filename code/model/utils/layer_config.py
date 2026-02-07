@@ -1,3 +1,14 @@
+"""
+================================================================================
+Layer configuration parsing and utilities for the inpainting model.
+Handles:
+- Parsing layer definitions from config (string vs dict)
+- Building mappings from VAE groups to layers and vice versa
+- Extracting channel information for layers
+- Validating configuration consistency
+================================================================================
+"""
+
 ###### import libraries ######
 # Standard libraries
 from typing import Dict, List, Tuple, Any, Optional

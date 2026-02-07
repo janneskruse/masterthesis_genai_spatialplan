@@ -1,6 +1,8 @@
 """
+==============================================================================
 Color utilities for visualization of different data layers.
 Provides consistent colormaps across training and validation scripts.
+=
 """
 ###### import libraries ######
 # Standard libraries
@@ -20,7 +22,6 @@ import seaborn as sns
 def get_colormap_for_layer(layer_name: str):
     """
     Get appropriate colormap for a layer based on its name.
-    Matches colormaps from validate_dataset.py for consistency.
     
     Args:
         layer_name: Name of the layer (e.g., 'temperature', 'ndvi', 'buildings_heights')

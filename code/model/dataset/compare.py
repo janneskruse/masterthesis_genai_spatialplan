@@ -1,4 +1,8 @@
-"""Module for comparing VAE training patches with current dataset patches"""
+"""
+===============================================================================
+Module for comparing VAE training patches with current dataset patches
+==
+"""
 
 ###### import libraries ######
 # Standard libraries

@@ -1,4 +1,13 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+"""
+===============================================================================
+Core Building Blocks for the UNet Architecture in the Latent Diffusion Models
+
+Adapted from
+https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+
+==============================================================================
+"""
+
 import torch
 import torch.nn as nn
 

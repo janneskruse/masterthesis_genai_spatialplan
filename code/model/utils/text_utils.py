@@ -1,6 +1,23 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/utils
+"""
+==============================================================================
+Utilities for text encoding and representation.
+
+Adapted from 
+https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/utils .
+
+This is for a potential future extension to text-conditioned generation.
+Not currently used in the main codebase.
+==============================================================================
+"""
+
+###### import libraries ######
+# Standard libraries
+
+# Data Science/ML
 import torch
-from transformers import DistilBertModel, DistilBertTokenizer, CLIPTokenizer, CLIPTextModel
+
+# Local imports
+from code.model.transformers import DistilBertModel, DistilBertTokenizer, CLIPTokenizer, CLIPTextModel
 
 
 def get_tokenizer_and_model(model_type, device, eval_mode=True):

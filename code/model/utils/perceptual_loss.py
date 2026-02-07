@@ -1,4 +1,5 @@
 """
+=============================================================================
 VAE-based perceptual loss for semantic diffusion training.
 
 Uses trained semantic VAE encoder to extract features and compare
@@ -8,7 +9,8 @@ Benefits:
 - Ideally captures semantic similarity (buildings, streets, vegetation patterns)
 - More robust to small spatial offsets than pixel MSE
 - Gets domain-specific knowledge from VAE training
-- No domain mismatch (ImageNet features don't understand urban layouts)
+- No domain mismatch since VAE trained on the same data
+==============================================================================
 """
 
 import torch

@@ -1,6 +1,10 @@
 """
-Validation script for Temperature predictor
-Creates prediction samples on validation set to assess Temperature predictor quality
+==============================================================================
+Validation script for the Temperature predictor
+
+Creates prediction samples on validation set 
+to assess Temperature predictor quality.
+==============================================================================
 """
 
 ###### import libraries ######

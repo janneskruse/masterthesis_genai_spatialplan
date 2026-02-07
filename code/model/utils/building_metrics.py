@@ -1,4 +1,5 @@
 """
+==============================================================================
 Building quality metrics for evaluating inpainting realism.
 
 Computes semantic metrics during sampling to track training progress:
@@ -6,6 +7,9 @@ Computes semantic metrics during sampling to track training progress:
 - Edge smoothness and shape realism
 - Size and aspect ratio distributions
 - Context coherence between inpainted and surrounding regions
+
+TO-DO: Use SSIM to assess visual quality of inpainted buildings compared to ground truth.
+==============================================================================
 """
 
 ###### import libraries ######

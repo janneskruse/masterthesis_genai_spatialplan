@@ -1,8 +1,10 @@
-# =============================================================================
-# LanPaint Mathematical Utilities
-# Ported from official implementation: https://github.com/scraed/LanPaint
-# File: src/LanPaint/utils.py
-# =============================================================================
+"""
+=============================================================================
+LanPaint Mathematical Utilities
+Adapted from official implementation: https://github.com/scraed/LanPaint
+File: src/LanPaint/utils.py
+=============================================================================
+"""
 
 ###### import libraries ######
 # Standard library

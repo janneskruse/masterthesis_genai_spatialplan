@@ -1,4 +1,8 @@
-""" Utility functions for distributed training setup"""
+"""
+==============================================================================
+Utility functions for distributed training setup across GPUs
+==============================================================================
+"""
 
 ###### import libraries ######
 # system libraries

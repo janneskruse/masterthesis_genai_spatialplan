@@ -1,4 +1,10 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/utils
+"""
+==============================================================================
+Utilities for building model configs from global config and stage-specific settings.
+==============================================================================
+"""
+
+# partially adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/utils
 
 # Local imports
 from model.utils.scalar_controls import parse_scalar_controls_config

@@ -1,6 +1,8 @@
 """
+==============================================================================
 Script to pre-generate cached patches for faster training.
 Run this once before training to prepare the cache.
+==============================================================================
 """
 
 ###### import libraries ######

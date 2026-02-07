@@ -1,6 +1,8 @@
 """
+===============================================================================
 Latent-space guidance utilities for diffusion sampling.
 Applies gradient-based guidance using LatentTemperaturePredictor directly on VAE latents.
+================================================================================
 """
 ###### import libraries ######
 # Data Science/ML libraries
@@ -23,7 +25,7 @@ def apply_latent_temperature_guidance(
     clamp_x0: float = 3.0,
 ) -> torch.Tensor:
     """
-    Apply Temperature predictor guidance directly in latent space (no VAE decode needed).
+    Apply Temperature predictor guidance directly in latent space.
     
     Uses classifier guidance approach: modify noise prediction based on gradient
     of the latent Temperature predictor w.r.t. the predicted x0.

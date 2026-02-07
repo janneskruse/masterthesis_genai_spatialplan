@@ -1,9 +1,13 @@
-# Utils for loading model checkpoints
+"""
+==============================================================================
+Utils for loading model checkpoints
+==============================================================================
+"""
 
 ###### import libraries ######
 # system libraries
 import os
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 
 # data science libraries
@@ -70,7 +74,8 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, device='cpu', is_mai
 
 @dataclass
 class ExistingPathsResult:
-    """Container for resolved existing paths from config.
+    """
+    Container for resolved existing paths from config.
     
     Attributes:
         skip_training: Whether to skip training entirely (diffusion checkpoint exists)

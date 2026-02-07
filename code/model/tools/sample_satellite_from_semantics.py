@@ -1,5 +1,7 @@
 """
+==============================================================================
 Sampling script for Stage 2: Satellite Rendering from Semantics
+==============================================================================
 """
 
 ###### import libraries ######
@@ -18,9 +20,9 @@ from torchvision.utils import make_grid, save_image
 
 # Local libraries
 from model.blocks.unet_cond_base import Unet
+from model.blocks.vae_registry import VAERegistry
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.utils.vae_registry import VAERegistry
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
 from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.utils.diffusion_utils import (

@@ -1,4 +1,18 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/blob/main/scheduler/linear_noise_scheduler.py
+"""
+==============================================================================
+Noise scheduler for DDPM with multiple beta schedule options and 
+optional Velocity schedule.
+
+Includes:
+- 'linear' (scaled-linear): Original DDPM schedule with sqrt scaling
+- 'cosine': Improved DDPM schedule (from "Improved Denoising Diffusion Probabilistic Models")
+- 'laplace': Laplace noise schedule (from "Improved Noise Schedule for Diffusion Training")
+  
+The scaled linear mode is Partially adapted from 
+https://github.com/explainingai-code/StableDiffusion-PyTorch/blob/main/scheduler/linear_noise_scheduler.py
+
+==============================================================================
+"""
 import torch
 import numpy as np
 

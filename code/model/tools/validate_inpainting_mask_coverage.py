@@ -1,8 +1,10 @@
 """
+==============================================================================
 Test script to check inpainting mask coverage statistics across dataset.
 
 Tests the mixed mask strategy with multiple methods (street_blocks, random_polygon, 
 random_rectangle, random_square) and visualizes samples from each type.
+==============================================================================
 """
 
 ###### import libraries ######

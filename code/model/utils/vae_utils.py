@@ -1,5 +1,7 @@
 """
+==============================================================================
 Utility functions for VAE training and inference.
+==============================================================================
 """
 ###### import libraries ######
 # Standard libraries
@@ -207,7 +209,7 @@ def compute_reconstruction_loss(
                     else:
                         mask = (mask > 0.5).float()
                     
-                    # Compute loss with mask weighting (NORMALIZED by mask coverage)
+                    # Compute loss with mask weighting (normalized by mask coverage)
                     if loss_type == 'l1':
                         loss_per_pixel = F.l1_loss(recon_ch, target_ch, reduction='none')
                     elif loss_type == 'smooth_l1':

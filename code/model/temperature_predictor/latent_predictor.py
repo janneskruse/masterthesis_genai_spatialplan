@@ -1,3 +1,10 @@
+"""
+==============================================================================
+CNN-based encoder-decoder class to predict Temperature from semantic features.
+
+Predicts Temperature statistics from VAE latent representations.
+==============================================================================
+"""
 ###### import libraries ######
 # Standard libraries
 import os

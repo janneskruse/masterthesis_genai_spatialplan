@@ -1,4 +1,5 @@
 """
+==============================================================================
 Inpainting Sampling Strategies for Latent Diffusion Models
 
 Implements different inpainting strategies that can be combined with
@@ -18,6 +19,7 @@ References:
   
 - LanPaint: https://arxiv.org/abs/2502.03491 (Zheng et al., 2025)
   "LanPaint: Training-Free Diffusion Inpainting with Asymptotically Exact and Fast Conditional Sampling"
+==============================================================================
 """
 
 ###### import libraries ######

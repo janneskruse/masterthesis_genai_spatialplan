@@ -1,4 +1,11 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+"""
+===============================================================================
+Learned Perceptual Image Patch Similarity (LPIPS) Metric.
+
+Adapted from
+https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+"""
+
 from __future__ import absolute_import
 from collections import namedtuple
 import torch

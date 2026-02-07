@@ -1,4 +1,15 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+"""
+===============================================================================
+PatchGAN Discriminator.
+
+Adapted from 
+https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+
+Optionally used to provide adversarial feedback to the UNet during training,
+encouraging sharper and more realistic outputs.
+===============================================================================
+"""
+
 import torch
 import torch.nn as nn
 

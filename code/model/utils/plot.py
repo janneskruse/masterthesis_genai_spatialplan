@@ -1,4 +1,8 @@
-# Utilities for plotting statistics
+"""
+==============================================================================
+Utilities for plotting statistics
+=============================================================================
+"""
 
 ###### import libraries ######
 # Standard libraries

@@ -1,5 +1,15 @@
+"""
+=============================================================================
+Utilities for loading CUDA and GDAL modules on HPC cluster,
+with fallback handling if not available.
+==============================================================================
+"""
+###### import libraries ######
+# Standard libraries
 import sys
 import os
+
+# Data Science/ML libraries
 import torch
 
 def load_cuda():

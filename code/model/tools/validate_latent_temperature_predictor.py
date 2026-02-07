@@ -1,6 +1,10 @@
 """
-Validation script for Latent Temperature predictor
-Creates prediction samples on validation set to assess latent-space Temperature predictor quality
+==============================================================================
+Validation script for the Latent Temperature predictor
+
+Creates prediction samples on validation set to assess 
+latent-space Temperature predictor quality.
+==============================================================================
 """
 ###### import libraries ######
 # Standard libraries
@@ -19,11 +23,11 @@ import matplotlib.pyplot as plt
 # Local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.temperature_predictor.latent_predictor import LatentTemperaturePredictor, load_latent_temperature_predictor
-from model.utils.data_utils import collate_fn
-from model.utils.vae_registry import VAERegistry
-from model.utils.checkpoint import check_existing_paths
+from model.blocks.vae_registry import VAERegistry
 from helpers.load_configs import load_configs, add_config_arguments
 from helpers.indexed_outputs import get_next_run_idx
+from model.utils.data_utils import collate_fn
+from model.utils.checkpoint import check_existing_paths
 from model.utils.statistics import compute_temperature_statistic
 from model.utils.samples import save_latent_visualization
 from model.utils.plot import save_temperature_error_histogram, save_temperature_prediction_scatter

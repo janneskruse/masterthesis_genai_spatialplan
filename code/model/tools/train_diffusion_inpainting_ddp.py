@@ -1,5 +1,7 @@
 """
+==============================================================================
 Training script for latent diffusion inpainting with DDP
+==============================================================================
 """
 
 ###### import libraries ######
@@ -23,7 +25,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 # local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.blocks.unet_cond_base import Unet
-from model.utils.vae_registry import VAERegistry
+from model.blocks.vae_registry import VAERegistry
 from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from model.scheduler.ddim_scheduler import DDIMScheduler
 from model.utils.data_utils import collate_fn

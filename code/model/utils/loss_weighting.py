@@ -1,4 +1,5 @@
 """
+=============================================================================
 Loss Weighting Strategies for Diffusion Training.
 
 Implements timestep-dependent loss weighting to improve convergence:
@@ -9,6 +10,7 @@ Implements timestep-dependent loss weighting to improve convergence:
 
 Min-SNR is particularly effective at preventing noisy timesteps from
 dominating training loss, leading to faster convergence and better quality.
+==============================================================================
 """
 
 ###### import libraries ######
@@ -41,7 +43,6 @@ def compute_loss_weights(
     
     1. **'simple'** (baseline):
        - Uniform weights = 1.0 for all timesteps
-       - Current behavior, no improvement
        
     2. **'snr'**:
        - weight = SNR(t) = alpha_t / (1 - alpha_t)
@@ -52,7 +53,7 @@ def compute_loss_weights(
        - weight = min(SNR(t), gamma) / SNR(t)
        - Clips very high SNR to prevent over-focus on easy timesteps
        - Balances all timesteps more evenly
-       - **Best for diffusion models** (used in Stable Diffusion)
+       - used in Stable Diffusion, Imagen, DALL-E
        - Typical gamma: 5.0
        
     4. **'v_loss'**:
@@ -79,7 +80,7 @@ def compute_loss_weights(
         >>> loss_per_sample = loss_per_sample.mean(dim=[1,2,3])  # [B]
         >>> 
         >>> # Apply timestep weighting
-        >>> weights = compute_loss_weights(t, scheduler, 'min_snr', gamma=5.0)
+        >>> weights = compute_loss_weights(t, scheduler, 'min_snr', min_snr_gamma=5.0)
         >>> weighted_loss = (loss_per_sample * weights).mean()
         
     References:
@@ -129,10 +130,6 @@ def compute_loss_weights(
     
     # Strategy 4: V-loss weighting
     if loss_type == 'v_loss':
-        # V-prediction parameterization
-        # v = sqrt(alpha_t) * noise - sqrt(1-alpha_t) * x0
-        # Loss weight: alpha_t * (1 - alpha_t)
-        
         weights = alpha_cum_prod * (1.0 - alpha_cum_prod)
         return weights
     

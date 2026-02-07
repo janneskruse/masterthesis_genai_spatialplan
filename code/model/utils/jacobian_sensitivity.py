@@ -1,8 +1,16 @@
-# Jacobian Sensitivity Analysis for VAE Latent Space
-# Computes how each latent channel contributes to each decoded layer
-# Used for class-balanced loss weighting in latent diffusion training
-#
-# Reference: ARD-VAE (arXiv:2501.10901v2) Jacobian-based relevance scoring
+"""
+==============================================================================
+Jacobian Sensitivity Analysis for VAE Latent Space
+Computes how each latent channel contributes to each decoded layer
+Used for class-balanced loss weighting in latent diffusion training
+
+Inspired by Jacobian-based relevance scoring from:
+    Saha, S., Joshi, S., & Whitaker, R. (2025). ARD-VAE: A Statistical Formulation 
+    to Find the Relevant Latent Dimensions of Variational Autoencoders. 
+    IEEE/CVF Winter Conference on Applications of Computer Vision (WACV) 2025.
+    arXiv:2501.10901v2. https://arxiv.org/abs/2501.10901
+=======================================================================
+"""
 
 ###### import libraries ######
 # Standard libraries

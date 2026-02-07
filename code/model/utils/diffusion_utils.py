@@ -1,4 +1,13 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/utils
+"""
+==============================================================================
+Utilities for diffusion model training and sampling, including:
+- Classifier-free guidance dropout for robust conditioning
+- Latent loading for faster training iterations
+- Seam improvement strategies for inpainting (boundary rings, mask feathering)
+- Enhanced loss computation with boundary-aware weighting
+==============================================================================
+"""
+
 ### import libraries ######
 # Standard libraries
 import pickle

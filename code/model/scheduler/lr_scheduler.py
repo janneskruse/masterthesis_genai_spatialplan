@@ -1,10 +1,12 @@
 """
+==============================================================================
 Learning Rate Scheduler with Warmup Support.
 
 Provides flexible LR scheduling for diffusion model training:
 - Cosine annealing for smooth decay
 - Linear decay for simple schedules
 - Constant LR with optional warmup
+==============================================================================
 """
 
 ###### import libraries ######

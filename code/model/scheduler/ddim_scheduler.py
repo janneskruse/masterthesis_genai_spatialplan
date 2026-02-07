@@ -1,4 +1,5 @@
 """
+==============================================================================
 DDIM (Denoising Diffusion Implicit Models) Scheduler.
 
 Fast sampling algorithm that produces high-quality samples in 50-100 steps
@@ -7,6 +8,7 @@ instead of 1000 steps. Up to 20x faster than DDPM with similar quality.
 Implementation based on:
     "Denoising Diffusion Implicit Models" (Song et al., 2020)
     https://arxiv.org/abs/2010.02502
+==============================================================================
 """
 
 ###### import libraries ######

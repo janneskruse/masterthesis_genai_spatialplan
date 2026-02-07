@@ -1,3 +1,9 @@
+"""
+===============================================================================
+Urban Layout Inpainting Dataset with Multi-Modal Conditioning and Caching
+===============================================================================
+"""
+
 ###### import libraries ######
 # Standard libraries
 import os

@@ -1,3 +1,9 @@
+"""
+==============================================================================
+Utilities for the scalar control implementation
+==============================================================================
+"""
+
 ###### import libraries ######
 # Standard libraries
 from typing import Dict, List, Optional, Union, Tuple

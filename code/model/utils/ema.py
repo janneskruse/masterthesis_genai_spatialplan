@@ -1,8 +1,10 @@
 """
+==============================================================================
 Exponential Moving Average (EMA) for model weights.
 
 Maintains a slow-moving average of model parameters for stable, high-quality inference.
 Critical for diffusion models to reduce sampling artifacts and improve consistency.
+==============================================================================
 """
 
 ###### import libraries ######

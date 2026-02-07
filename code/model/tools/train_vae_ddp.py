@@ -1,6 +1,9 @@
 """
+==============================================================================
 Training script for VAE model training with DDP to convert
-input data into latent space depending on the VAE group (e.g. satellite, semantic, environmental).
+input data into latent space depending on the VAE group 
+(e.g. satellite, semantic, environmental).
+==============================================================================
 """
 
 ###### import libraries ######

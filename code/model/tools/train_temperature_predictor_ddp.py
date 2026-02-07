@@ -1,5 +1,9 @@
-# Training script for Temperature predictor from semantic features
-# Predicts Land Surface Temperature from semantic layout (buildings/roads/vegetation/height)
+"""
+==============================================================================
+Training script for a Temperature predictor from semantic features
+Predicts Temperature from semantic layouts (buildings/roads/vegetation/height)
+==============================================================================
+"""
 
 ###### import libraries ######
 # Standard libraries

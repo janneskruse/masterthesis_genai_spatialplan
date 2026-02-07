@@ -1,6 +1,8 @@
 """
+==============================================================================
 Validation script for VAE training
 Creates reconstruction samples on validation set to assess VAE quality
+==============================================================================
 """
 
 ###### import libraries ######
@@ -14,11 +16,10 @@ from pathlib import Path
 
 # Data handling
 import torch
-from torchvision.utils import make_grid, save_image
 
 # Local libraries
 from model.dataset.dataset import UrbanInpaintingDataset
-from model.utils.vae_registry import VAERegistry
+from model.blocks.vae_registry import VAERegistry
 from model.utils.vae_utils import save_vae_reconstruction_samples
 from model.utils.layer_config import count_layer_channels, get_layer_info
 from helpers.load_configs import load_configs

@@ -1,5 +1,7 @@
 """
-Sampling script for semantic inpainting with Temperature guidance
+==============================================================================
+Sampling script for semantic inpainting with Temperature guidance.
+==============================================================================
 """
 
 ###### import libraries ######
@@ -18,11 +20,11 @@ from torchvision.utils import make_grid, save_image
 
 # Local libraries
 from model.blocks.unet_cond_base import Unet
+from model.blocks.vae_registry import VAERegistry
 from model.scheduler.scheduler_factory import get_scheduler, get_inpainting_sampler_for_stage
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
 from model.utils.layer_config import count_layer_channels
-from model.utils.vae_registry import VAERegistry
 from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.utils.diffusion_utils import make_uncond_input_keep_mask, feather_mask
 from model.utils.data_utils import normalize_scalar_like_layer

@@ -1,7 +1,10 @@
 """
+==============================================================================
 Inpainting mask generation utilities.
 
-Functions for creating various types of inpainting masks (random, center, street blocks).
+Functions for creating various types of inpainting masks
+(random, center, street blocks).
+==============================================================================
 """
 ###### import libraries ######
 # Standard libraries

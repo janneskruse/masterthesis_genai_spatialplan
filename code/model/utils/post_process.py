@@ -1,7 +1,9 @@
 """
+==============================================================================
 Post-processing utilities for diffusion model outputs.
 
 Functions for sharpening binary channels, thresholding, etc.
+==============================================================================
 """
 ###### import libraries ######
 # Data Science/ML

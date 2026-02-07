@@ -1,4 +1,13 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+"""
+===============================================================================
+UNet Architecture for the Latent Diffusion Models with Flexible Conditioning.
+
+Partially adapted from
+https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+
+==============================================================================
+"""
+
 # Import libraries
 # Data Science/ML
 import torch

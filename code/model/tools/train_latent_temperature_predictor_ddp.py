@@ -1,9 +1,12 @@
 """
-Training script for Latent Temperature predictor (DDP).
+==============================================================================
+Training script for a Latent Temperature predictor (DDP).
 
-Trains a predictor to estimate Temperature p95 (or config-specified statistic) from VAE latent representations.
-Can be used for Phase 2 (soft guidance) and Phase 3 (hard check) in diffusion sampling.
-
+Trains a predictor to estimate Temperature p95 (or config-specified statistic) 
+from VAE latent representations.
+Can be used for Phase 2 (soft guidance) and Phase 3 (hard check)
+in diffusion sampling.
+==============================================================================
 """
 
 ###### import libraries ######
@@ -35,7 +38,7 @@ from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.checkpoint import load_checkpoint, check_existing_paths
 from model.utils.statistics import compute_temperature_statistic
-from model.utils.vae_registry import VAERegistry
+from model.blocks.vae_registry import VAERegistry
 from model.temperature_predictor.latent_predictor import LatentTemperaturePredictor
 from helpers.load_configs import load_configs, add_config_arguments
 

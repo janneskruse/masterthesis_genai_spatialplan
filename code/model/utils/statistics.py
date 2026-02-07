@@ -1,4 +1,9 @@
-# Utilities for computing statistics
+"""
+==============================================================================
+Utilities for computing statistics
+==============================================================================
+"""
+ 
 
 ###### import libraries ######
 # Standard libraries

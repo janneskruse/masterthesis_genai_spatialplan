@@ -1,3 +1,12 @@
+"""
+==============================================================================
+Registry for managing multiple VAE models, each specializing in a layer group.
+Supports:
+- Loading multiple VAEs for different layer groups (rgb, landuse, environmental)
+- Encoding/decoding with automatic routing to correct VAE
+==============================================================================
+"""
+
 ###### import libraries ######
 # Standard libraries
 from pathlib import Path

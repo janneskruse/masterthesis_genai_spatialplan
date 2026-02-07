@@ -1,7 +1,9 @@
 """
-Validation sampling utilities for diffusion models.
+==============================================================================
+Validation sampling utilities for the diffusion models.
 
 Functions for generating validation samples during training.
+==============================================================================
 """
 ###### import libraries ######
 # Standard libraries

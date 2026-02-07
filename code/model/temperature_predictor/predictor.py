@@ -1,4 +1,9 @@
-# CNN-based encoder-decoder class to predict Temperature from semantic features
+"""
+==============================================================================
+CNN-based encoder-decoder class to predict Temperature from semantic features
+==============================================================================
+"""
+
 
 ###### import libraries ######
 # Data Science/ML libraries

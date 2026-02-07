@@ -1,3 +1,10 @@
+"""
+==============================================================================
+Utility to read nested values from YAML config files.
+==============================================================================
+"""
+###### import libraries ######
+# Standard libraries
 import sys
 import yaml
 

@@ -1,4 +1,13 @@
-# adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+"""
+===============================================================================
+Variational Autoencoder (VAE) for Latent Space Encoding.
+
+Adapted from
+https://github.com/explainingai-code/StableDiffusion-PyTorch/tree/main/models
+
+==============================================================================
+"""
+
 import torch
 import torch.nn as nn
 from model.blocks.blocks import DownBlock, MidBlock, UpBlock
