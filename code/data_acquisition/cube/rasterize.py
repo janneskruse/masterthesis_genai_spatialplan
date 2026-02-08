@@ -1,8 +1,14 @@
-######## Rasterization functions to convert vector data to an Xarray raster image cube #######
+"""
+==============================================================
+Geopandas Dataframe Accessor with 
+rasterization functions to convert vector data to an Xarray
+raster image cube.
+==============================================================
+"""
 
 ##### Import libraries ######
 # system
-import os
+# import os
 
 # data manipulation
 import json
@@ -24,7 +30,8 @@ def register_xarray_accessor():
     """
     if "to_raster" in pd.DataFrame._accessors:
         # in case you need to change the accessor function, this removes the old one
-        # you'd have to reassign old gdfs afterwards, however --> new_gdf = gpd.GeoDataFrame(old_gdf)
+        # one would have to reassign old gdfs afterwards, 
+        # however --> new_gdf = gpd.GeoDataFrame(old_gdf)
         pd.DataFrame._accessors.remove("to_raster")
         delattr(pd.DataFrame, "to_raster")
 
@@ -33,7 +40,7 @@ def register_xarray_accessor():
         def __init__(self, gdf: gpd.GeoDataFrame):
             self._gdf = gdf
 
-        def rasterize_gdf(self, bbox, image_size=1024, col=None, nodata=0):
+        def rasterize_gdf(self, bbox, image_width=1024, image_height=1024, col=None, nodata=0):
             """
             Rasterizes the GeoDataFrame with rio rasterize.
             
@@ -43,8 +50,10 @@ def register_xarray_accessor():
                 The GeoDataFrame to rasterize.
             bbox (tuple):
                 The bounding box of the area to rasterize (xmin, ymin, xmax, ymax).
-            image_size (int): 
-                The size of the output raster image.
+            image_width (int): 
+                The width of the output raster image.
+            image_height (int):
+                The height of the output raster image.
             col (str): 
                 Optional column name to use for rasterization values.
             nodata (int/float):
@@ -74,14 +83,14 @@ def register_xarray_accessor():
 
             return rasterize(
                 shapes,
-                out_shape=(image_size, image_size),
+                out_shape=(image_height, image_width),
                 fill=nodata,
-                transform=from_bounds(xmin, ymin, xmax, ymax, image_size, image_size),
+                transform=from_bounds(xmin, ymin, xmax, ymax, image_width, image_height),
                 all_touched=True,
                 dtype=np.float32
             )
 
-        def to_xr_dataarray(self, bbox, image_size, x_coords, y_coords, name="data", long_name=None, description=None, 
+        def to_xr_dataarray(self, bbox, image_width, image_height, x_coords, y_coords, name="data", long_name=None, description=None, 
                         mapping_col=None, output_path=None, crs="EPSG:4326", x_dim="lon", y_dim="lat", units="1", nodata=0):
         
             """
@@ -93,8 +102,10 @@ def register_xarray_accessor():
                 The GeoDataFrame to convert
             bbox (tuple):
                 The bounding box of the area to rasterize (xmin, ymin, xmax, ymax)
-            image_size (int):
-                The size of the output raster image
+            image_width (int):
+                The width of the output raster image
+            image_height (int):
+                The height of the output raster image
             x_coords (numpy.ndarray):
                 The x coordinate space
             y_coords (numpy.ndarray):
@@ -147,9 +158,9 @@ def register_xarray_accessor():
 
             raster = rasterize(
                 shapes,
-                out_shape=(image_size, image_size),
+                out_shape=(image_height, image_width),
                 fill=nodata,
-                transform=from_bounds(xmin, ymin, xmax, ymax, image_size, image_size),
+                transform=from_bounds(xmin, ymin, xmax, ymax, image_width, image_height),
                 all_touched=True,
                 dtype=np.float32
             )

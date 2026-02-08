@@ -25,6 +25,7 @@ from tqdm.auto import tqdm
 
 # local imports
 from data_acquisition.osm.request import fetch_overpass_data
+from data_acquisition.cube.rasterize import register_xarray_accessor
 
 
 ######## Constants ########
@@ -60,6 +61,9 @@ WATERWAY_BUFFER = {
     'stream': 1,
     'canal': 3,
 }
+
+# Register the XarrayAccessor for GeoDataFrames
+register_xarray_accessor()
 
 
 ######## Data Extraction Functions ########
@@ -105,7 +109,8 @@ def extract_features_grid(
 def process_streets(
     osm_gdf: gpd.GeoDataFrame,
     bbox: Tuple[float, float, float, float],
-    image_size: int,
+    image_width: int,
+    image_height: int,
     lon: np.ndarray,
     lat: np.ndarray,
     utm_crs: str,
@@ -120,8 +125,10 @@ def process_streets(
         OSM features GeoDataFrame
     bbox (Tuple):
         Bounding box (xmin, ymin, xmax, ymax)
-    image_size (int):
-        Output raster size
+    image_width (int):
+        Output raster width
+    image_height (int):
+        Output raster height
     lon (np.ndarray):
         Longitude coordinates
     lat (np.ndarray):
@@ -162,7 +169,8 @@ def process_streets(
     # Create rasterized dataarrays
     streets_xr = streets_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_size=image_size,
+        image_width=image_width,
+        image_height=image_height,
         x_coords=lon,
         y_coords=lat,
         name="streets",
@@ -177,7 +185,8 @@ def process_streets(
     
     streets_xr_surface = streets_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_size=image_size,
+        image_width=image_width,
+        image_height=image_height,
         x_coords=lon,
         y_coords=lat,
         name="streets_surface",
@@ -192,7 +201,8 @@ def process_streets(
     
     streets_xr_service = streets_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_size=image_size,
+        image_width=image_width,
+        image_height=image_height,
         x_coords=lon,
         y_coords=lat,
         name="streets_service",
@@ -218,7 +228,8 @@ def process_streets(
 def process_street_blocks(
     osm_gdf: gpd.GeoDataFrame,
     bbox: Tuple[float, float, float, float],
-    image_size: int,
+    image_width: int,
+    image_height: int,
     lon: np.ndarray,
     lat: np.ndarray,
     utm_crs: str,
@@ -233,8 +244,10 @@ def process_street_blocks(
         OSM features GeoDataFrame
     bbox (Tuple):
         Bounding box (xmin, ymin, xmax, ymax)
-    image_size (int):
-        Output raster size
+    image_width (int):
+        Output raster width
+    image_height (int):
+        Output raster height
     lon (np.ndarray):
         Longitude coordinates
     lat (np.ndarray):
@@ -272,7 +285,8 @@ def process_street_blocks(
     # Rasterize main streets
     streets_main_xr = streets_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_size=image_size,
+        image_width=image_width,
+        image_height=image_height,
         x_coords=lon,
         y_coords=lat,
         name="streets_main",
@@ -302,7 +316,8 @@ def process_street_blocks(
 def process_water_bodies(
     osm_gdf: gpd.GeoDataFrame,
     bbox: Tuple[float, float, float, float],
-    image_size: int,
+    image_width: int,
+    image_height: int,
     lon: np.ndarray,
     lat: np.ndarray,
     utm_crs: str,
@@ -317,8 +332,10 @@ def process_water_bodies(
         OSM features GeoDataFrame
     bbox (Tuple):
         Bounding box (xmin, ymin, xmax, ymax)
-    image_size (int):
-        Output raster size
+    image_width (int):
+        Output raster width
+    image_height (int):
+        Output raster height
     lon (np.ndarray):
         Longitude coordinates
     lat (np.ndarray):
@@ -366,7 +383,8 @@ def process_water_bodies(
     # Rasterize
     water_xr = water_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_size=image_size,
+        image_width=image_width,
+        image_height=image_height,
         x_coords=lon,
         y_coords=lat,
         name="water",
@@ -388,7 +406,8 @@ def process_water_bodies(
 def process_buildings(
     osm_gdf: gpd.GeoDataFrame,
     bbox: Tuple[float, float, float, float],
-    image_size: int,
+    image_width: int,
+    image_height: int,
     lon: np.ndarray,
     lat: np.ndarray,
     output_path: Optional[str] = None
@@ -402,8 +421,10 @@ def process_buildings(
         OSM features GeoDataFrame
     bbox (Tuple):
         Bounding box (xmin, ymin, xmax, ymax)
-    image_size (int):
-        Output raster size
+    image_width (int):
+        Output raster width
+    image_height (int):
+        Output raster height
     lon (np.ndarray):
         Longitude coordinates
     lat (np.ndarray):
@@ -424,7 +445,8 @@ def process_buildings(
     # Rasterize buildings
     buildings_xr = buildings_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_size=image_size,
+        image_width=image_width,
+        image_height=image_height,
         x_coords=lon,
         y_coords=lat,
         name="buildings",
@@ -438,7 +460,8 @@ def process_buildings(
     
     buildings_xr_service = buildings_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_size=image_size,
+        image_width=image_width,
+        image_height=image_height,
         x_coords=lon,
         y_coords=lat,
         name="buildings_service",
@@ -462,7 +485,8 @@ def process_buildings(
 
 def process_building_heights(
     bbox: Tuple[float, float, float, float],
-    image_size: int,
+    image_width: int,
+    image_height: int,
     lon: np.ndarray,
     lat: np.ndarray,
     region: str,
@@ -479,8 +503,10 @@ def process_building_heights(
     -----------
     bbox (Tuple):
         Bounding box (xmin, ymin, xmax, ymax)
-    image_size (int):
-        Output raster size
+    image_width (int):
+        Output raster width
+    image_height (int):
+        Output raster height
     lon (np.ndarray):
         Longitude coordinates
     lat (np.ndarray):
@@ -600,7 +626,8 @@ def process_building_heights(
     # Rasterize
     building_heights_xr = building_heights_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_size=image_size,
+        image_width=image_width,
+        image_height=image_height,
         x_coords=lon,
         y_coords=lat,
         name="buildings_heights",
@@ -622,7 +649,8 @@ def process_building_heights(
 def process_landuse(
     osm_gdf: gpd.GeoDataFrame,
     bbox: Tuple[float, float, float, float],
-    image_size: int,
+    image_width: int,
+    image_height: int,
     lon: np.ndarray,
     lat: np.ndarray,
     utm_crs: str,
@@ -637,8 +665,10 @@ def process_landuse(
         OSM features GeoDataFrame
     bbox (Tuple):
         Bounding box (xmin, ymin, xmax, ymax)
-    image_size (int):
-        Output raster size
+    image_width (int):
+        Output raster width
+    image_height (int):
+        Output raster height
     lon (np.ndarray):
         Longitude coordinates
     lat (np.ndarray):
@@ -708,7 +738,8 @@ def process_landuse(
     # Rasterize
     landuse_xr = landuse_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_size=image_size,
+        image_width=image_width,
+        image_height=image_height,
         x_coords=lon,
         y_coords=lat,
         name="landuse",

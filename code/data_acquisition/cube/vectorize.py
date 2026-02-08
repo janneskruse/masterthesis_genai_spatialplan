@@ -2,7 +2,8 @@
 ==============================================================
 Functions to vectorize raster data into vector data (e.g. GeoDataFrames)
 
-Mostly adapted from https://docs.digitalearthafrica.org/en/latest/sandbox/notebooks/Frequently_used_code/Rasterise_vectorise.html
+Mostly adapted from 
+https://docs.digitalearthafrica.org/en/latest/sandbox/notebooks/Frequently_used_code/Rasterise_vectorise.html
 Huge Thank you! 
 ================================================================
 """

@@ -80,6 +80,10 @@ try:
     is_south = zone_letter < 'N'  # True for southern hemisphere
     utm_crs = CRS.from_dict({'proj': 'utm', 'zone': int(zone_number), 'south': is_south})
     print(f"UTM CRS: {utm_crs.to_authority()} with zone {zone_number}{zone_letter}")
+    
+    bbox_utm = bbox_gdf.to_crs(utm_crs).total_bounds
+    width_m = bbox_utm[2] - bbox_utm[0]
+    height_m = bbox_utm[3] - bbox_utm[1]
 
     # Create a grid for multithreaded OSM requests
     grid = create_grid(bbox_gdf, length=0.03, width=0.03)
@@ -139,13 +143,12 @@ try:
     ######### Create the rasterized datasets #########
     print("Creating rasterized datasets from OSM data...")
     
-    # Register the XarrayAccessor for GeoDataFrames
-    register_xarray_accessor()
-    
     # Create the lat/lon coordinates and transform for the raster
-    image_size = config["osm_query"].get("image_size", 5500)
-    lat = np.linspace(ymax, ymin, image_size)  # Inverted for rasterio affine transform
-    lon = np.linspace(xmin, xmax, image_size)
+    resolution = config["osm_query"].get("resolution", 1)
+    image_width = int(width_m / resolution)
+    image_height = int(height_m / resolution)
+    lat = np.linspace(ymax, ymin, image_height)  # Inverted for rasterio affine transform
+    lon = np.linspace(xmin, xmax, image_width)
     bbox = (xmin, ymin, xmax, ymax)
     
     # Setup output folder
@@ -157,38 +160,38 @@ try:
     streets_zarr_name = f"{types_folder_path}/rasterized_streets.zarr"
     
     if not os.path.exists(streets_zarr_name):
-        process_streets(osm_gdf, bbox, image_size, lon, lat, utm_crs, streets_zarr_name)
+        process_streets(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, streets_zarr_name)
     
     print("Processing street blocks...")
     street_blocks_zarr_name = f"{types_folder_path}/rasterized_street_blocks.zarr"
     
     if not os.path.exists(street_blocks_zarr_name):
-        process_street_blocks(osm_gdf, bbox, image_size, lon, lat, utm_crs, street_blocks_zarr_name)
+        process_street_blocks(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, street_blocks_zarr_name)
     
     print("Processing water bodies...")
     water_zarr_name = f"{types_folder_path}/rasterized_water.zarr"
     
     if not os.path.exists(water_zarr_name):
-        process_water_bodies(osm_gdf, bbox, image_size, lon, lat, utm_crs, water_zarr_name)
+        process_water_bodies(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, water_zarr_name)
     
     print("Processing buildings...")
     buildings_zarr_name = f"{types_folder_path}/rasterized_buildings.zarr"
     
     if not os.path.exists(buildings_zarr_name):
-        process_buildings(osm_gdf, bbox, image_size, lon, lat, buildings_zarr_name)
+        process_buildings(osm_gdf, bbox, image_width, image_height, lon, lat, buildings_zarr_name)
     
     print("Processing 3D building heights from Yangzi Che et al. (2024)...")
     building_heights_zarr_name = f"{types_folder_path}/rasterized_building_heights.zarr"
     
     if not os.path.exists(building_heights_zarr_name):
         gdf_path = f"{big_data_storage_path}/che_etal/{region.lower()}/building_heights.parquet"
-        process_building_heights(bbox, image_size, lon, lat, region, repo_dir, building_heights_zarr_name, gdf_path=gdf_path)
+        process_building_heights(bbox, image_width, image_height, lon, lat, region, repo_dir, building_heights_zarr_name, gdf_path=gdf_path)
     
     print("Processing landuse...")
     landuse_zarr_name = f"{types_folder_path}/rasterized_landuse.zarr"
     
     if not os.path.exists(landuse_zarr_name):
-        process_landuse(osm_gdf, bbox, image_size, lon, lat, utm_crs, landuse_zarr_name)
+        process_landuse(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, landuse_zarr_name)
     
     ##### Merge all datasets ######
     print("Merging all datasets into a single xarray dataset...")
