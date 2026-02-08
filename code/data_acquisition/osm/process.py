@@ -6,6 +6,7 @@ OSM data processing functions for rasterization
 ##### Import libraries ######
 # system
 import os
+import time
 from typing import Tuple, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -90,16 +91,32 @@ def extract_features_grid(
         DataFrame with extracted OSM features
     """
     features = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(fetch_overpass_data, row.geometry.bounds, tags): row 
-            for _, row in grid.iterrows()
-        }
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Extracting OSM features"):
+    delay_between_requests = 5  # seconds between requests to avoid Overpass rate limiting
+    
+    if max_workers <= 1:
+        # Sequential with rate limiting
+        for _, row in tqdm(grid.iterrows(), total=len(grid), desc="Extracting OSM features"):
             try:
-                features.append(future.result())
+                result = fetch_overpass_data(row.geometry.bounds, tags)
+                if result is not None:
+                    features.append(result)
+                time.sleep(delay_between_requests)
             except Exception as e:
                 print(f"Error extracting features: {e}")
+    else:
+        # Parallel (though Overpass may throttle aggressively)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(fetch_overpass_data, row.geometry.bounds, tags): row 
+                for _, row in grid.iterrows()
+            }
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Extracting OSM features"):
+                try:
+                    result = future.result()
+                    if result is not None:
+                        features.append(result)
+                except Exception as e:
+                    print(f"Error extracting features: {e}")
     
     return pd.concat(features, ignore_index=True)
 
