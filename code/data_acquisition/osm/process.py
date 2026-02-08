@@ -1,7 +1,11 @@
-######## OSM data processing functions for rasterization #######
-
+"""
+===============================================================================
+OSM data processing functions for rasterization
+================================================================================
+"""
 ##### Import libraries ######
 # system
+import os
 from typing import Tuple, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -463,6 +467,7 @@ def process_building_heights(
     lat: np.ndarray,
     region: str,
     repo_dir: str,
+    gdf_path: Optional[str] = None,
     output_path: Optional[str] = None
 ) -> xr.DataArray:
     """
@@ -492,93 +497,105 @@ def process_building_heights(
     xr.DataArray:
         DataArray with rasterized building heights
     """
-    xmin, ymin, xmax, ymax = bbox
     
-    # Initialize DuckDB spatial extension
-    duckdb.sql("""
-        INSTALL spatial;
-        LOAD spatial;
-        SET enable_geoparquet_conversion = false;
-    """)
+    if not gdf_path:
+        gdf_path = f"{repo_dir}/data/che_etal/building_heights_{region}.parquet"
     
-    # Query within bbox and sort by Hilbert curve
-    duckdb.sql(f"""
-        CREATE TEMP TABLE tmp_buildings_{region} AS
-        SELECT
-            Height AS height,
-            ST_AsWKB(ST_GeomFromWKB("GEOMETRY")) AS geom
-        FROM read_parquet('{repo_dir}/data/che_etal/Germany_Hungary_Iceland/building_heights_germany.parquet', 
-                          filename=true, hive_partitioning=1)
-        WHERE ST_Within(
-            ST_GeomFromWKB("GEOMETRY"),
-            ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})
+    if not os.path.exists(gdf_path):
+    
+        xmin, ymin, xmax, ymax = bbox
+        
+        # Initialize DuckDB spatial extension
+        duckdb.sql("""
+            INSTALL spatial;
+            LOAD spatial;
+            SET enable_geoparquet_conversion = false;
+            SET enable_progress_bar = true;
+        """)
+        
+        # Query within bbox and sort by Hilbert curve
+        duckdb.sql(f"""
+            CREATE TEMP TABLE tmp_buildings_{region} AS
+            SELECT
+                Height AS height,
+                ST_AsWKB(ST_GeomFromWKB("GEOMETRY")) AS geom
+            FROM read_parquet('{repo_dir}/data/che_etal/Germany_Hungary_Iceland/building_heights_germany.parquet', 
+                            filename=true, hive_partitioning=1)
+            WHERE ST_Within(
+                ST_GeomFromWKB("GEOMETRY"),
+                ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})
+            )
+            ORDER BY ST_Hilbert(ST_GeomFromWKB("GEOMETRY"), 
+                            ST_Extent(ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})))
+        """)
+        
+        # Fetch results
+        building_heights_table = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}").arrow()
+        building_heights_df = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}").df()
+        
+        # Drop temp table
+        duckdb.sql(f"DROP TABLE tmp_buildings_{region}")
+        
+        # Convert WKB to GeoDataFrame using geoarrow
+        wkb_list = building_heights_table['geom'].to_pylist()
+        
+        # Collect coordinates for geoarrow
+        poly_ring_offsets = [0]
+        ring_coord_offsets = [0]
+        xs_list = []
+        ys_list = []
+        n_rings = 0
+        n_coords = 0
+        
+        for wkb_blob in wkb_list:
+            geom = wkb.loads(wkb_blob)
+            
+            if geom.is_empty:
+                poly_ring_offsets.append(n_rings)
+                continue
+            
+            if geom.geom_type == "Polygon":
+                polys = [geom]
+            elif geom.geom_type == "MultiPolygon":
+                polys = list(geom.geoms)
+            else:
+                poly_ring_offsets.append(n_rings)
+                continue
+            
+            for poly in polys:
+                rings = [poly.exterior, *poly.interiors]
+                for ring in rings:
+                    coords = np.asarray(ring.coords, dtype=np.float64)
+                    xs_list.extend(coords[:, 0].tolist())
+                    ys_list.extend(coords[:, 1].tolist())
+                    n_coords += len(coords)
+                    ring_coord_offsets.append(n_coords)
+                    n_rings += 1
+            
+            poly_ring_offsets.append(n_rings)
+        
+        # Create geoarrow polygon array
+        ring_offsets_buf = array('i', poly_ring_offsets)
+        coord_offsets_buf = array('i', ring_coord_offsets)
+        xs_buf = array('d', xs_list)
+        ys_buf = array('d', ys_list)
+        
+        polygon_array = ga.polygon().from_geobuffers(
+            None, ring_offsets_buf, coord_offsets_buf, xs_buf, ys_buf
         )
-        ORDER BY ST_Hilbert(ST_GeomFromWKB("GEOMETRY"), 
-                           ST_Extent(ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})))
-    """)
-    
-    # Fetch results
-    building_heights_table = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}").arrow()
-    building_heights_df = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}").df()
-    
-    # Drop temp table
-    duckdb.sql(f"DROP TABLE tmp_buildings_{region}")
-    
-    # Convert WKB to GeoDataFrame using geoarrow
-    wkb_list = building_heights_table['geom'].to_pylist()
-    
-    # Collect coordinates for geoarrow
-    poly_ring_offsets = [0]
-    ring_coord_offsets = [0]
-    xs_list = []
-    ys_list = []
-    n_rings = 0
-    n_coords = 0
-    
-    for wkb_blob in wkb_list:
-        geom = wkb.loads(wkb_blob)
         
-        if geom.is_empty:
-            poly_ring_offsets.append(n_rings)
-            continue
+        gdf = ga.to_geopandas(polygon_array)
         
-        if geom.geom_type == "Polygon":
-            polys = [geom]
-        elif geom.geom_type == "MultiPolygon":
-            polys = list(geom.geoms)
-        else:
-            poly_ring_offsets.append(n_rings)
-            continue
+        building_heights_gdf = gpd.GeoDataFrame(
+            building_heights_df.reset_index(drop=True),
+            geometry=gdf.geometry,
+            crs="EPSG:4326"
+        ).drop(columns=['geom'])
         
-        for poly in polys:
-            rings = [poly.exterior, *poly.interiors]
-            for ring in rings:
-                coords = np.asarray(ring.coords, dtype=np.float64)
-                xs_list.extend(coords[:, 0].tolist())
-                ys_list.extend(coords[:, 1].tolist())
-                n_coords += len(coords)
-                ring_coord_offsets.append(n_coords)
-                n_rings += 1
-        
-        poly_ring_offsets.append(n_rings)
-    
-    # Create geoarrow polygon array
-    ring_offsets_buf = array('i', poly_ring_offsets)
-    coord_offsets_buf = array('i', ring_coord_offsets)
-    xs_buf = array('d', xs_list)
-    ys_buf = array('d', ys_list)
-    
-    polygon_array = ga.polygon().from_geobuffers(
-        None, ring_offsets_buf, coord_offsets_buf, xs_buf, ys_buf
-    )
-    
-    gdf = ga.to_geopandas(polygon_array)
-    
-    building_heights_gdf = gpd.GeoDataFrame(
-        building_heights_df.reset_index(drop=True),
-        geometry=gdf.geometry,
-        crs="EPSG:4326"
-    ).drop(columns=['geom'])
+        # save as geoparquet
+        building_heights_gdf.to_parquet(gdf_path, index=False)
+    else:
+        building_heights_gdf = gpd.read_parquet(gdf_path)
     
     # Rasterize
     building_heights_xr = building_heights_gdf.to_raster.to_xr_dataarray(

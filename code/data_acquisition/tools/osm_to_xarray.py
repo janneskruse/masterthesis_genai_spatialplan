@@ -1,4 +1,9 @@
-######## Script to aquire and pre-process OSM data for the region to an Xarray raster image cube #######
+"""
+================================================================================
+Script to aquire and pre-process OSM data for the region to an Xarray 
+raster image cube, saved as a Zarr file. 
+=================================================================================
+"""
 
 ##### Import libraries ######
 # system
@@ -15,6 +20,7 @@ from pyproj import CRS
 
 # local imports
 from helpers.bbox import create_grid
+from helpers.load_configs import load_configs
 from data_acquisition.osm.process import (
     extract_features_grid,
     process_streets, process_street_blocks, process_water_bodies,
@@ -32,18 +38,10 @@ def exit_with_error(message):
     exit(1)
 
 ###### setup config variables #######
-repo_name = 'masterthesis_genai_spatialplan'
-if not repo_name in os.getcwd():
-    os.chdir(repo_name)
+config = load_configs()
+repo_dir = config.get("repo_dir", ".")
 
-p=os.popen('git rev-parse --show-toplevel')
-repo_dir = p.read().strip()
-p.close()
-
-config = {}
-with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
-    config = yaml.safe_load(stream)
-    
+total_cpus = int(os.getenv("TOTAL_CPUS", 1))
     
 ####### Get the region to process #######
 try:
@@ -183,7 +181,8 @@ try:
     building_heights_zarr_name = f"{types_folder_path}/rasterized_building_heights.zarr"
     
     if not os.path.exists(building_heights_zarr_name):
-        process_building_heights(bbox, image_size, lon, lat, region, repo_dir, building_heights_zarr_name)
+        gdf_path = f"{big_data_storage_path}/che_etal/{region.lower()}/building_heights.parquet"
+        process_building_heights(bbox, image_size, lon, lat, region, repo_dir, building_heights_zarr_name, gdf_path=gdf_path)
     
     print("Processing landuse...")
     landuse_zarr_name = f"{types_folder_path}/rasterized_landuse.zarr"
