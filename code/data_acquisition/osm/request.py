@@ -35,26 +35,30 @@ def create_query(bbox, tags):
     south, west, north, east = bbox[1], bbox[0], bbox[3], bbox[2]
 
     for tag, value in tags.items():
-        osm_graph_type = "wr"  # nwr, node, way, etc.
+        osm_graph_types = ["wr"]  # nwr, node, way, etc.
         
-        if tag in {"building","highway","railway","waterway"}:
-            osm_graph_type = "way"
-            
-        if value is True:
-            # If true, use tag
-            query_parts.append(f'{osm_graph_type}["{tag}"]({south},{west},{north},{east});')
-        elif isinstance(value, list):
-            # If list, use a regex match for multiple possible values
-            vals = [str(v) for v in value]
-            if len(vals) == 1:
-                v = vals[0]
-                query_parts.append(f'{osm_graph_type}["{tag}"="{v}"]({south},{west},{north},{east});')
+        if tag in {"building:part","highway","railway","waterway"}:
+            osm_graph_types = ["way"]
+        
+        if tag in {"building"}:
+            osm_graph_types = ["way", "relation"]
+        
+        for osm_graph_type in osm_graph_types:
+            if value is True:
+                # If true, use tag
+                query_parts.append(f'{osm_graph_type}["{tag}"]({south},{west},{north},{east});')
+            elif isinstance(value, list):
+                # If list, use a regex match for multiple possible values
+                vals = [str(v) for v in value]
+                if len(vals) == 1:
+                    v = vals[0]
+                    query_parts.append(f'{osm_graph_type}["{tag}"="{v}"]({south},{west},{north},{east});')
+                else:
+                    pat = "|".join(re.escape(v) for v in vals)
+                    query_parts.append(f'{osm_graph_type}["{tag}"~"{pat}"]({south},{west},{north},{east});')
             else:
-                pat = "|".join(re.escape(v) for v in vals)
-                query_parts.append(f'{osm_graph_type}["{tag}"~"{pat}"]({south},{west},{north},{east});')
-        else:
-            # If single string, use an exact match
-            query_parts.append(f'{osm_graph_type}["{tag}"="{value}"]({south},{west},{north},{east});')
+                # If single string, use an exact match
+                query_parts.append(f'{osm_graph_type}["{tag}"="{value}"]({south},{west},{north},{east});')
 
             
     #join to a single query
