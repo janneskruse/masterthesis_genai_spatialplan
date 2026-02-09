@@ -573,11 +573,14 @@ def process_building_heights(
         """)
         
         # Fetch results
-        building_heights_table = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}").arrow()
+        building_heights_table = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}").fetch_arrow_table()
         building_heights_df = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}").df()
         
         # Drop temp table
         duckdb.sql(f"DROP TABLE tmp_buildings_{region}")
+        
+        # close duckdb connection
+        duckdb.close()
         
         # Convert WKB to GeoDataFrame using geoarrow
         wkb_list = building_heights_table['geom'].to_pylist()
@@ -636,6 +639,7 @@ def process_building_heights(
         ).drop(columns=['geom'])
         
         # save as geoparquet
+        os.makedirs(os.path.dirname(gdf_path), exist_ok=True)
         building_heights_gdf.to_parquet(gdf_path, index=False)
     else:
         building_heights_gdf = gpd.read_parquet(gdf_path)
