@@ -552,6 +552,124 @@ def process_building_heights(
         duckdb.sql("""
             INSTALL spatial;
             LOAD spatial;
+            SET enable_progress_bar = true;
+            SET enable_geoparquet_conversion = false;
+            
+            CALL register_geoarrow_extensions();
+        """)
+        
+        # Query within bbox, convert WKB geometry explicitly, and sort by Hilbert curve
+        duckdb.sql(f"""
+            CREATE TEMP TABLE tmp_buildings_{region} AS
+            SELECT
+                Height AS height,
+                ST_GeomFromWKB(GEOMETRY) AS geometry
+            FROM read_parquet('{repo_dir}/data/che_etal/Germany_Hungary_Iceland/building_heights_germany.parquet', 
+                            filename=true, hive_partitioning=1)
+            WHERE ST_Within(
+                ST_GeomFromWKB(GEOMETRY),
+                ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})
+            )
+            ORDER BY ST_Hilbert(ST_GeomFromWKB(GEOMETRY), 
+                            ST_Extent(ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax})))
+        """)
+        
+        result = duckdb.sql(f"SELECT * FROM tmp_buildings_{region}")
+        
+        # Fetch results
+        gdf = gpd.GeoDataFrame.from_arrow(result)
+        
+        # Drop temp table
+        duckdb.sql(f"DROP TABLE tmp_buildings_{region}")
+        
+        # Close duckdb connection
+        duckdb.close()
+        
+        # set CRS
+        if not gdf.crs:
+            gdf.set_crs(epsg=4326, inplace=True)
+        
+        # save as geoparquet
+        os.makedirs(os.path.dirname(gdf_path), exist_ok=True)
+        gdf.to_parquet(gdf_path, index=False)
+    else:
+        gdf = gpd.read_parquet(gdf_path)
+    
+    # Rasterize
+    building_heights_xr = gdf.to_raster.to_xr_dataarray(
+        bbox=bbox,
+        image_width=image_width,
+        image_height=image_height,
+        x_coords=lon,
+        y_coords=lat,
+        name="buildings_heights",
+        long_name="Buildings Heights OSM",
+        description="Rasterized building heights from Che et al. (2024)",
+        mapping_col="height",
+        crs="EPSG:4326",
+        x_dim="lon",
+        y_dim="lat",
+        units="1",
+    )
+    
+    if output_path:
+        building_heights_xr.to_zarr(output_path, mode="w", consolidated=True, compute=True)
+    
+    return building_heights_xr
+
+
+def process_building_heights_deprecated(
+    bbox: Tuple[float, float, float, float],
+    image_width: int,
+    image_height: int,
+    lon: np.ndarray,
+    lat: np.ndarray,
+    region: str,
+    repo_dir: str,
+    gdf_path: Optional[str] = None,
+    output_path: Optional[str] = None
+) -> xr.DataArray:
+    """
+    Process 3D building heights from Yangzi Che et al. (2024) dataset.
+    
+    Uses DuckDB for efficient spatial filtering of large parquet files.
+    
+    Parameters:
+    -----------
+    bbox (Tuple):
+        Bounding box (xmin, ymin, xmax, ymax)
+    image_width (int):
+        Output raster width
+    image_height (int):
+        Output raster height
+    lon (np.ndarray):
+        Longitude coordinates
+    lat (np.ndarray):
+        Latitude coordinates
+    region (str):
+        Region name for temporary table naming
+    repo_dir (str):
+        Repository directory path
+    output_path (str, optional):
+        Path to save output zarr file
+        
+    Returns:
+    --------
+    xr.DataArray:
+        DataArray with rasterized building heights
+    """
+    
+    if not gdf_path:
+        gdf_path = f"{repo_dir}/data/che_etal/building_heights_{region}.parquet"
+    
+    if not os.path.exists(gdf_path):
+    
+        xmin, ymin, xmax, ymax = bbox
+        
+        # Initialize DuckDB spatial extension
+        duckdb.sql("""
+            INSTALL spatial;
+            LOAD spatial;
             SET enable_geoparquet_conversion = false;
             SET enable_progress_bar = true;
         """)
