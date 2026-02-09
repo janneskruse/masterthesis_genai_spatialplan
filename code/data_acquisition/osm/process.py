@@ -491,7 +491,7 @@ def process_buildings(
         units="1",
     )
     
-    buildings_ds = xr.merge([buildings_xr, buildings_xr_service])
+    buildings_ds = xr.merge([buildings_xr, buildings_xr_service], compat="override")
     buildings_ds.attrs.update(buildings_xr.attrs)
     
     if output_path:
@@ -826,6 +826,6 @@ def merge_osm_datasets(types_folder_path: str) -> xr.Dataset:
         cleaned_datasets.append(ds)
     
     # Merge all datasets
-    merged_xr = xr.merge(cleaned_datasets)
+    merged_xr = xr.merge(cleaned_datasets, compat="override")
     
     return merged_xr
