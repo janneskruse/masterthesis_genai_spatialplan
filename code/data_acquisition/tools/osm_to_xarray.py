@@ -183,7 +183,17 @@ def main(args):
         
         if not os.path.exists(building_heights_zarr_name):
             gdf_path = f"{big_data_storage_path}/che_etal/{region.lower()}/building_heights.parquet"
-            process_building_heights(bbox, image_width, image_height, lon, lat, region, repo_dir, building_heights_zarr_name, gdf_path=gdf_path)
+            process_building_heights(
+                bbox=bbox, 
+                image_width=image_width, 
+                image_height=image_height, 
+                lon=lon, 
+                lat=lat, 
+                region=region, 
+                repo_dir=repo_dir, 
+                gdf_path=gdf_path,
+                output_path=building_heights_zarr_name
+            )
         
         print("Processing landuse...")
         landuse_zarr_name = f"{types_folder_path}/rasterized_landuse.zarr"
@@ -191,6 +201,7 @@ def main(args):
         if not os.path.exists(landuse_zarr_name):
             process_landuse(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, landuse_zarr_name)
         
+        exit(0)  # Exit early for testing purposes
         ##### Merge all datasets ######
         print("Merging all datasets into a single xarray dataset...")
         merged_xr = merge_osm_datasets(types_folder_path)
