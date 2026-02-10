@@ -874,10 +874,10 @@ def process_building_shapes(
 
     shapes_gdf = classify_building_shapes(
         osm_gdf=osm_gdf,
-        shapes_gdf=shapes_gdf,
         building_heights_gdf=building_heights_gdf,
         street_blocks_gdf=street_blocks_gdf,
-        buildings_xr=buildings_xr,
+        shapes_gdf=shapes_gdf,
+        utm_crs=utm_crs
     )
     
     # save to geoparquet
