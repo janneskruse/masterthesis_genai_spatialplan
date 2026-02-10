@@ -10,6 +10,7 @@ raster image cube, saved as a Zarr file.
 import argparse
 import os
 import time
+import traceback
 
 # data manipulation
 import yaml
@@ -248,6 +249,10 @@ def main(args):
 
     except Exception as e:
         print(f"An error occurred: {e}")
+        
+        # print full stack trace for debugging
+        traceback.print_exc()
+        
         exit_with_error(f"An error occurred: {e}")
     
 if __name__ == "__main__":
