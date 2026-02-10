@@ -181,9 +181,9 @@ def main(args):
         
         print("Processing 3D building heights from Yangzi Che et al. (2024)...")
         building_heights_zarr_name = f"{types_folder_path}/rasterized_building_heights.zarr"
+        building_heights_gdf_path = f"{big_data_storage_path}/che_etal/{region.lower()}/building_heights.parquet"
         
         if not os.path.exists(building_heights_zarr_name):
-            building_heights_gdf_path = f"{big_data_storage_path}/che_etal/{region.lower()}/building_heights.parquet"
             process_building_heights(
                 bbox=bbox, 
                 image_width=image_width, 
