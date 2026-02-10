@@ -13,8 +13,6 @@ import time
 import traceback
 
 # data manipulation
-import yaml
-import json
 import numpy as np
 import geopandas as gpd
 import utm
@@ -48,7 +46,7 @@ def main(args):
         
     ####### Get the region to process #######
     region = args.REGION
-    total_cpus = int(args.TOTAL_CPUS)
+    # total_cpus = int(args.TOTAL_CPUS)
 
     # setup folders
     print(config)
@@ -69,10 +67,7 @@ def main(args):
                 
         ############ Define the bbox ############ 
         bbox_gdf = get_region_bbox(region=region, repo_dir=repo_dir)
-        bbox_polygon=json.loads(bbox_gdf.to_json())['features'][0]['geometry']
         bbox = bbox_gdf.total_bounds
-        coordinates=json.loads(bbox_gdf.geometry.to_json())["features"][0]["geometry"]["coordinates"]
-        
         # Define UTM CRS for the region (e.g. 33N)
         easting, northing, zone_number, zone_letter = utm.from_latlon(bbox_gdf.geometry.centroid.y.values[0], bbox_gdf.geometry.centroid.x.values[0])
         is_south = zone_letter < 'N'  # True for southern hemisphere
@@ -262,7 +257,7 @@ if __name__ == "__main__":
     add_config_arguments(parser)
     
     parser.add_argument('--REGION', type=str, required=True, help='Metropolitan region to process (e.g. Berlin, London, New York)')
-    parser.add_argument('--TOTAL_CPUS', type=int, default=1, help='Total number of CPUs available for processing (default: 1)')
+    # parser.add_argument('--TOTAL_CPUS', type=int, default=1, help='Total number of CPUs available for processing (default: 1)')
     
     args = parser.parse_args()
     
