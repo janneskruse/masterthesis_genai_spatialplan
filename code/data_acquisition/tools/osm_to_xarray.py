@@ -24,11 +24,11 @@ from helpers.bbox import create_grid
 from helpers.load_configs import add_config_arguments, load_configs
 from data_acquisition.osm.process import (
     extract_features_grid,
+    process_building_shapes,
     process_streets, process_street_blocks, process_water_bodies,
     process_buildings, process_building_heights, process_landuse,
-    merge_osm_datasets
 )
-from data_acquisition.cube.rasterize import register_xarray_accessor
+from data_acquisition.cube.combine import merge_datasets
 from data_acquisition.cube.metropolitan_regions import get_region_bbox
 
 
@@ -62,7 +62,7 @@ def main(args):
 
     ######## Try except OSM data processing ########
     try:
-        if not os.path.exists(osm_zarr_name):
+        if os.path.exists(osm_zarr_name):
             print(f"OSM data already exists at {osm_zarr_name}, skipping processing.")
             exit(0)
                 
@@ -182,7 +182,7 @@ def main(args):
         building_heights_zarr_name = f"{types_folder_path}/rasterized_building_heights.zarr"
         
         if not os.path.exists(building_heights_zarr_name):
-            gdf_path = f"{big_data_storage_path}/che_etal/{region.lower()}/building_heights.parquet"
+            building_heights_gdf_path = f"{big_data_storage_path}/che_etal/{region.lower()}/building_heights.parquet"
             process_building_heights(
                 bbox=bbox, 
                 image_width=image_width, 
@@ -191,8 +191,28 @@ def main(args):
                 lat=lat, 
                 region=region, 
                 repo_dir=repo_dir, 
-                gdf_path=gdf_path,
+                gdf_path=building_heights_gdf_path,
                 output_path=building_heights_zarr_name
+            )
+        
+        print("Processing building shapes and classifying them...")
+        building_shapes_zarr_name = f"{types_folder_path}/rasterized_building_shapes.zarr"
+        building_shapes_gdf_path = f"{big_data_storage_path}/osm/{region.lower()}/building_shapes.parquet"
+        
+        if not os.path.exists(building_shapes_zarr_name):
+            process_building_shapes(
+                osm_gdf=osm_gdf,
+                building_heights_gdf_path=building_heights_gdf_path,
+                street_blocks_xr_path=street_blocks_zarr_name,
+                buildings_xr_path=buildings_zarr_name,
+                bbox=bbox,
+                image_width=image_width,
+                image_height=image_height,
+                lon=lon,
+                lat=lat,
+                utm_crs=utm_crs,
+                gdf_path=building_shapes_gdf_path,
+                output_path=building_shapes_zarr_name
             )
         
         print("Processing landuse...")
@@ -200,11 +220,21 @@ def main(args):
         
         if not os.path.exists(landuse_zarr_name):
             process_landuse(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, landuse_zarr_name)
-        
-        exit(0)  # Exit early for testing purposes
+
         ##### Merge all datasets ######
         print("Merging all datasets into a single xarray dataset...")
-        merged_xr = merge_osm_datasets(types_folder_path)
+        
+        merged_xr = merge_datasets(
+            [
+                streets_zarr_name,
+                street_blocks_zarr_name,
+                water_zarr_name,
+                buildings_zarr_name,
+                building_heights_zarr_name,
+                building_shapes_zarr_name,
+                landuse_zarr_name
+            ]
+        )
         
         # Add spatial ref and rename coordinates
         merged_xr = merged_xr.rio.write_crs(merged_xr.attrs["spatial_ref"], inplace=True)

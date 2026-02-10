@@ -3,7 +3,6 @@
 import os
 
 # data manipulation
-import yaml
 import numpy as np
 import geopandas as gpd
 from rasterio.enums import Resampling
@@ -207,3 +206,37 @@ def combine_region_datasets(region, big_data_storage_path, repo_dir, region_file
     urban_mask.close()
     
     return
+
+def merge_datasets(dataset_paths: list[str]) -> xr.Dataset:
+    """
+    Merge all OSM rasterized datasets into a single dataset.
+    
+    Parameters:
+    -----------
+    dataset_paths (list[str]):
+        List of paths to individual zarr files
+        
+    Returns:
+    --------
+    xr.Dataset:
+        Merged dataset with all OSM features
+    """
+    # Load all datasets
+    
+    datasets = []
+    for path in dataset_paths:
+        ds = xr.open_zarr(path, consolidated=True, decode_times=False)
+        datasets.append(ds)
+    
+    # Remove spatial_ref coordinate if present (keep as attribute only)
+    cleaned_datasets = []
+    
+    for ds in datasets:
+        if 'spatial_ref' in ds.coords:
+            ds = ds.drop_vars('spatial_ref')
+        cleaned_datasets.append(ds)
+    
+    # Merge all datasets
+    merged_xr = xr.merge(cleaned_datasets, compat="override")
+    
+    return merged_xr

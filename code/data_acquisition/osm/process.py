@@ -4,13 +4,13 @@ OSM data processing functions for rasterization
 ================================================================================
 """
 ##### Import libraries ######
-# system
+# System
 import os
 import time
 from typing import Tuple, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# data manipulation
+# Data handling
 from array import array
 import duckdb
 import numpy as np
@@ -21,13 +21,17 @@ from shapely.geometry import Polygon
 from shapely import wkb
 import geoarrow.pyarrow as ga
 
-# visualization
+# Data Science/ML
+from scipy.ndimage import label
+
+# Visualization
 from tqdm.auto import tqdm
 
-# local imports
+# Local imports
 from data_acquisition.osm.request import fetch_overpass_data
+from data_acquisition.osm.classify import classify_building_shapes
 from data_acquisition.cube.rasterize import register_xarray_accessor
-
+from data_acquisition.cube.vectorize import xr_vectorize, vectorize_array
 
 ######## Constants ########
 
@@ -785,6 +789,161 @@ def process_building_heights_deprecated(
     return building_heights_xr
 
 
+def process_building_shapes(
+    osm_gdf: gpd.GeoDataFrame,
+    building_heights_gdf_path: str,
+    street_blocks_xr_path: str,
+    buildings_xr_path: str,
+    bbox: Tuple[float, float, float, float],
+    image_width: int,
+    image_height: int,
+    lon: np.ndarray,
+    lat: np.ndarray,
+    utm_crs: str,
+    gdf_path: Optional[str] = None,
+    output_path: Optional[str] = None
+) -> xr.DataArray:
+    """
+    Processes buildings into shapes and
+    classifies them to structural types.
+    
+    Parameters:
+    -----------
+    osm_gdf (gpd.GeoDataFrame):
+        OSM features GeoDataFrame
+    building_heights_gdf_path (str):
+        Path to GeoDataFrame with building heights from Che et al. (2024)
+    street_blocks_xr_path (str):
+        Path to street blocks xarray zarr file
+    buildings_xr_path (str):
+        Path to buildings xarray zarr file
+    bbox (Tuple):
+        Bounding box (xmin, ymin, xmax, ymax)
+    image_width (int):
+        Output raster width
+    image_height (int):
+        Output raster height
+    lon (np.ndarray):
+        Longitude coordinates
+    lat (np.ndarray):
+        Latitude coordinates
+    utm_crs (str):
+        UTM CRS for buffering operations
+    output_path (str, optional):
+        Path to save output zarr file
+    gdf_path (str, optional):
+        Path to save intermediate GeoDataFrame with building shapes
+    
+    Returns:
+    --------    xr.Dataset:
+        Dataset with building shapes and structural types
+    """
+    
+
+    # set bounding box coordinates
+    xmin, ymin, xmax, ymax = bbox
+    
+    # =============================
+    # load the datasets
+    # =============================
+    buildings_xr= xr.open_zarr(buildings_xr_path, consolidated=True)
+    building_heights_gdf = gpd.read_parquet(building_heights_gdf_path)
+    
+    street_blocks_xr = xr.open_zarr(street_blocks_xr_path, consolidated=True)
+    street_blocks_gdf = xr_vectorize(
+        street_blocks_xr.street_blocks,
+        attribute_col="block",
+        crs=utm_crs,
+        dtype="float32",
+    )
+    street_blocks_gdf = street_blocks_gdf[street_blocks_gdf["block"]==1]
+    
+    # =============================
+    # Process building shapes
+    # =============================
+
+    # label the building shapes
+    labeled_array, num_features = label(buildings_xr.values)
+
+    # vectorize the labeled array to get building shapes as polygons
+    shapes_gdf = vectorize_array(
+        labeled_array,
+        bounds=(xmin, ymin, xmax, ymax),
+        crs="EPSG:4326",
+    )
+
+    shapes_gdf = classify_building_shapes(
+        osm_gdf=osm_gdf,
+        shapes_gdf=shapes_gdf,
+        building_heights_gdf=building_heights_gdf,
+        street_blocks_gdf=street_blocks_gdf,
+        buildings_xr=buildings_xr,
+    )
+    
+    # save to geoparquet
+    if gdf_path:
+        os.makedirs(os.path.dirname(gdf_path), exist_ok=True)
+        shapes_gdf.to_parquet(gdf_path, index=False)
+    
+    # rasterize building shapes
+    building_shapes_xr = shapes_gdf.to_raster.to_xr_dataarray(
+        bbox=bbox,
+        image_width=image_width,
+        image_height=image_height,
+        x_coords=lon,
+        y_coords=lat,
+        name="building_shapes",
+        long_name="Building Shapes OSM",
+        description="Rasterized building shapes from OSM data",
+        crs="EPSG:4326",
+        x_dim="lon",
+        y_dim="lat",
+        units="1",
+    )
+    
+    # rasterize structural types
+    structural_types_xr = shapes_gdf.to_raster.to_xr_dataarray(
+        bbox=bbox,
+        image_width=image_width,
+        image_height=image_height,
+        x_coords=lon,
+        y_coords=lat,
+        name="building_shapes_structural_types",
+        long_name="Building Shapes Structural Types OSM",
+        description="Rasterized building shapes classified to structural types from OSM data",
+        mapping_col="structural_type",
+        crs="EPSG:4326",
+        x_dim="lon",
+        y_dim="lat",
+        units="1",
+    )
+    
+    # rasterize elongation attribute
+    elongation_xr = shapes_gdf.to_raster.to_xr_dataarray(
+        bbox=bbox,
+        image_width=image_width,
+        image_height=image_height,
+        x_coords=lon,
+        y_coords=lat,
+        name="building_shapes_elongation",
+        long_name="Building shapes Elongation OSM",
+        description="Rasterized building shapes elongation attribute from OSM data",
+        mapping_col="elongation",
+        crs="EPSG:4326",
+        x_dim="lon",
+        y_dim="lat",
+        units="1",
+    )
+    
+    # merge datasets
+    building_shapes_ds = xr.merge([building_shapes_xr, structural_types_xr, elongation_xr], compat="override")
+    building_shapes_ds.attrs.update(building_shapes_xr.attrs)
+    if output_path:
+        building_shapes_ds.to_zarr(output_path, mode="w", consolidated=True, compute=True)
+    
+    return building_shapes_ds
+    
+
 def process_landuse(
     osm_gdf: gpd.GeoDataFrame,
     bbox: Tuple[float, float, float, float],
@@ -895,59 +1054,3 @@ def process_landuse(
         landuse_xr.to_zarr(output_path, mode="w", consolidated=True, compute=True)
     
     return landuse_xr
-
-
-def merge_osm_datasets(types_folder_path: str) -> xr.Dataset:
-    """
-    Merge all OSM rasterized datasets into a single dataset.
-    
-    Parameters:
-    -----------
-    types_folder_path (str):
-        Path to folder containing individual zarr files
-        
-    Returns:
-    --------
-    xr.Dataset:
-        Merged dataset with all OSM features
-    """
-    # Load all datasets
-    building_heights_xr = xr.open_zarr(
-        f"{types_folder_path}/rasterized_building_heights.zarr", 
-        consolidated=True, decode_times=False
-    )
-    streets_xr = xr.open_zarr(
-        f"{types_folder_path}/rasterized_streets.zarr", 
-        consolidated=True, decode_times=False
-    )
-    street_blocks_xr = xr.open_zarr(
-        f"{types_folder_path}/rasterized_street_blocks.zarr", 
-        consolidated=True, decode_times=False
-    )
-    buildings_xr = xr.open_zarr(
-        f"{types_folder_path}/rasterized_buildings.zarr", 
-        consolidated=True, decode_times=False
-    )
-    landuse_xr = xr.open_zarr(
-        f"{types_folder_path}/rasterized_landuse.zarr", 
-        consolidated=True, decode_times=False
-    )
-    water_xr = xr.open_zarr(
-        f"{types_folder_path}/rasterized_water.zarr", 
-        consolidated=True, decode_times=False
-    )
-    
-    # Remove spatial_ref coordinate if present (keep as attribute only)
-    datasets = [streets_xr, street_blocks_xr, buildings_xr, 
-                building_heights_xr, landuse_xr, water_xr]
-    cleaned_datasets = []
-    
-    for ds in datasets:
-        if 'spatial_ref' in ds.coords:
-            ds = ds.drop_vars('spatial_ref')
-        cleaned_datasets.append(ds)
-    
-    # Merge all datasets
-    merged_xr = xr.merge(cleaned_datasets, compat="override")
-    
-    return merged_xr
