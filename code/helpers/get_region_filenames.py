@@ -1,21 +1,19 @@
-########## get unique dates from landsat zarr file and convert to filenames ##########
+"""
+=================================
+Extract the filenames per region
+from the data configuration file.
+=================================
+"""
+## Import libraries
+# system
 import os
-import sys
-import yaml
 import json
 
-def get_region_filenames(config_path):
-    
-    print("Getting region filenames from config...")
-    
-    if not config_path:
-        p=os.popen('git rev-parse --show-toplevel')
-        repo_dir = p.read().strip()
-        p.close()
-        config_path = f"{repo_dir}/code/data_acquisition/config.yml"
+# local imports
+from helpers.load_configs import load_configs
 
-    with open(config_path, 'r') as stream:
-        config = yaml.safe_load(stream)
+def get_region_filenames(config: dict) -> dict:
+    
 
     regions = config.get("regions", [])
     big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
@@ -53,10 +51,10 @@ def get_region_filenames(config_path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: get_region_filenames.py <config_path>")
-        sys.exit(1)
-    config_path = sys.argv[1]
-    filenames = get_region_filenames(config_path)
+    
+    config = load_configs()
+    config = config.get("data_config", {})
+
+    filenames = get_region_filenames(config)
     print(json.dumps(filenames))
         

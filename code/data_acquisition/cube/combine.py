@@ -1,6 +1,13 @@
+"""
+=================================
+Functions to combine the region datasets 
+and general utilities xarray dataset merging.
+=================================
+"""
 ## Import libraries
 # system
 import os
+import time
 
 # data manipulation
 import numpy as np
@@ -17,7 +24,11 @@ from data_acquisition.cube.reproject import reproject_ds
 from data_acquisition.cube.metropolitan_regions import get_region_bbox
 
 # combine function
-def combine_region_datasets(region, big_data_storage_path, repo_dir, region_filenames_json) -> xr.Dataset:
+def combine_region_datasets(
+    region: str,
+    repo_dir: str,
+    filenames: dict
+    ) -> xr.Dataset:
     """
     Combine Planet, OSM, and Landsat datasets into a single xarray Dataset.
     Aligns datasets spatially and temporally.
@@ -25,20 +36,18 @@ def combine_region_datasets(region, big_data_storage_path, repo_dir, region_file
     
     Args:
         region (str): Region name to process. Defaults to the first region in the config.
-        big_data_storage_path (str): Path to the big data storage directory.
         repo_dir (str): Path to the repository directory.
-        region_filenames_json (dict): JSON object containing filenames for the region.
+        filenames (dict): Dictionary containing filenames for the region.
     
     Returns:
         xr.Dataset: Combined dataset with Planet, OSM, and Landsat data.
     """
     
-    # setup folders
-    processed_region_folder = f"{big_data_storage_path}/processed/{region.lower()}"
-    os.makedirs(processed_region_folder, exist_ok=True)
-    filenames = region_filenames_json[region]
     processed_zarr_name = filenames['processed_zarr_name']
     processed_zarr_name_clipped = processed_zarr_name.replace(".zarr", "_clipped.zarr")
+
+    print("Processing region:", region, "at", time.strftime("%Y-%m-%d %H:%M:%S"), "to produce zarr file:", processed_zarr_name, "and clipped zarr file:", processed_zarr_name_clipped)
+
 
     if os.path.exists(processed_zarr_name) and os.path.exists(processed_zarr_name_clipped):
         print(f"Processed Zarr file already exists at {processed_zarr_name}. Skipping processing.")

@@ -1,119 +1,79 @@
-## Combine all datasets of all region to a single zarr file
-
+"""
+================================================================================
+Script combine all datasets (Landsat, Planet, OSM) 
+for a given region into a single xarray Dataset and save it as a Zarr file. 
+=================================================================================
+"""
 ## Import libraries
 # system
 import os
 import time
-from dotenv import load_dotenv
+import argparse
+import traceback
 
-# data manipulation
-import json
-import yaml
-import rasterio as rio # needed for xarray.rio to work
-import xarray as xr
+# data manipulation 
+import numpy as np
+import rasterio as rio # (rio imports needed for rio to work on xarray)
 import rioxarray as rxr
+import xarray as xr
 
-# visualization
-from tqdm import tqdm
+# local imports
+from helpers.load_configs import add_config_arguments, load_configs
+from helpers.get_region_filenames import get_region_filenames
+from data_acquisition.cube.combine import combine_region_datasets
 
-##### Function to exit on error ######
+#### Function to exit on error ######
 def exit_with_error(message):
     print(message)
     print("Finishing due to error at", time.strftime("%Y-%m-%d %H:%M:%S"))
     exit(1)
 
-###### setup config variables #######
-repo_name = 'masterthesis_genai_spatialplan'
-if not repo_name in os.getcwd():
-    os.chdir(repo_name)
-
-p=os.popen('git rev-parse --show-toplevel')
-repo_dir = p.read().strip()
-p.close()
-
-# import helper functions
-# sys.path.append(f"{repo_dir}/code/helpers")
-
-with open(f"{repo_dir}/code/data_acquisition/config.yml", 'r') as stream:
-    config = yaml.safe_load(stream)
-
-# setup folders
-big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
-processed_folder = f"{big_data_storage_path}/processed"
-os.makedirs(processed_folder, exist_ok=True)
-
-try:
-    if "REGION_FILENAMES_JSON" in os.environ:
-        region_filenames_json = os.environ["REGION_FILENAMES_JSON"]
-    else:
-        exit_with_error(f"Region filenames JSON not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-except Exception as e:
-    print("Error getting region filenames JSON from environment:", e)
-    exit_with_error(f"Region filenames JSON not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+def main(args):
     
-# Parse the JSON string to a Python dictionary
-try:
-    region_filenames_json = json.loads(region_filenames_json)
-except json.JSONDecodeError as e:
-    print("Error decoding JSON from environment variable REGION_FILENAMES_JSON:", e)
-    exit_with_error(f"Invalid JSON format for region filenames, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    try: 
+        ####### Get the region to process #######
+        region = args.REGION
 
-# retrieve landsat zarr name from first entry
-try:
-    landsat_zarr_name = list(region_filenames_json.values())[0]["landsat_zarr_name"]
-except KeyError as e:
-    print("Error retrieving landsat zarr name from region filenames JSON:", e)
-    exit_with_error(f"Landsat Zarr name not found in region filenames JSON, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        ###### setup config variables #######
+        config = load_configs()
+        repo_dir = config.get("repo_dir", ".")
+        config = config.get("data_config", {})
+        region_filenames_json = get_region_filenames(config)
+        
+        # setup folders
+        big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
+        processed_region_folder = f"{big_data_storage_path}/processed/{region.lower()}"
+        os.makedirs(processed_region_folder, exist_ok=True)
 
-##### get the config variables from the landsat zarr name ######
-try:
-    landsat_zarr_name_noext = os.path.splitext(os.path.basename(landsat_zarr_name.split("/").pop()))[0]
-    parts = landsat_zarr_name_noext.split("_")
-    min_temperature = int([x for x in parts if x.startswith("ge")][0].replace("ge", ""))
-    max_cloud_cover = int([x for x in parts if x.startswith("cc")][0].replace("cc", ""))
-    years = [x for x in parts if x.isdigit() and len(x) == 4]
-    start_year = years[0]
-    end_year = years[1]
-    
-    if not min_temperature or not max_cloud_cover or not start_year or not end_year:
-        exit_with_error(f"Landsat Zarr name does not contain all required parts (min_temperature, max_cloud_cover, start_year, end_year), finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-except Exception as e:
-    print("Error parsing landsat zarr name:", e)
-    exit_with_error(f"Landsat Zarr name not set in environment, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        # setup folders
+        filenames = region_filenames_json[region]
 
-processed_zarr_name = f"{processed_folder}/input_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
+        ###### Combine datasets for the region #######
+        combined_ds = combine_region_datasets(
+            region=region,
+            repo_dir=repo_dir,
+            filenames=filenames,
+        )
 
-print("Combining datasets... at", time.strftime("%Y-%m-%d %H:%M:%S"), "to store at", processed_zarr_name)
-# exit(0)  # Exit early for testing purposes
 
-if os.path.exists(processed_zarr_name):
-    print(f"Processed data already exists at {processed_zarr_name}, skipping processing.")
-    exit(0)
-
-####### read the zarr files from all regions #######
-print("Reading zarr files from all regions...")
-
-processed_zarr_names = []
-for region, filenames in region_filenames_json.items():
-    processed_zarr_names.append(filenames.get("processed_zarr_name"))
-    
-xds_list = []
-for zarr_name in processed_zarr_names:
-    print("Reading", zarr_name)
-    try:
-        xr_data = xr.open_zarr(zarr_name, consolidated=True)
-        xds_list.append(xr_data)
     except Exception as e:
-        print("Error reading", zarr_name, ":", e)
+        print(f"An error occurred: {e}")
         
+        # print full stack trace for debugging
+        traceback.print_exc()
         
-if not xds_list:
-    exit_with_error(f"No valid xarray datasets found in the provided filenames, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    
-# Concatenate along time dimension
-print("Concatenating datasets along time dimension...")
-xds = xr.concat(xds_list, dim="time")
+        exit_with_error(f"An error occurred: {e}")
 
-# Write to zarr
-print("Writing combined dataset to", processed_zarr_name)
-xds.to_zarr(processed_zarr_name, mode='w', consolidated=True)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Train VAE DDP for Urban Inpainting')
+    
+    # Add config file arguments
+    add_config_arguments(parser)
+    
+    parser.add_argument('--REGION', type=str, required=True, help='Metropolitan region to process (e.g. Berlin, London, New York)')
+    # parser.add_argument('--TOTAL_CPUS', type=int, default=1, help='Total number of CPUs available for processing (default: 1)')
+    
+    args = parser.parse_args()
+    
+    main(args)
