@@ -17,7 +17,7 @@ import momepy
 
 def classify_building_shapes(
     osm_gdf: gpd.GeoDataFrame,
-    buildings_xr: xr.DataArray,
+    building_heights_gdf: gpd.GeoDataFrame,
     street_blocks_gdf: gpd.GeoDataFrame,
     shapes_gdf: gpd.GeoDataFrame,
     utm_crs: str
@@ -27,7 +27,7 @@ def classify_building_shapes(
     
     Parameters:
     - osm_gdf: GeoDataFrame containing OSM data with building and street information.
-    - buildings_xr: xarray DataArray containing building shapes.
+    - building_heights_gdf: GeoDataFrame containing building heights.
     - street_blocks_gdf: GeoDataFrame containing street block information.
     - shapes_gdf: GeoDataFrame containing building shape geometries.
     - utm_crs: Coordinate reference system to use for spatial operations (e.g., "EPSG:32633").
