@@ -863,7 +863,7 @@ def process_building_shapes(
     # =============================
 
     # label the building shapes
-    labeled_array, num_features = label(buildings_xr.values)
+    labeled_array, num_features = label(buildings_xr.buildings.values)
 
     # vectorize the labeled array to get building shapes as polygons
     shapes_gdf = vectorize_array(
