@@ -166,7 +166,7 @@ def process_streets(
     """
     # Filter streets
     streets_gdf = osm_gdf[osm_gdf["highway"].notnull()].copy()
-    streets_gdf = streets_gdf[streets_gdf.geometry.type == "LineString"]
+    streets_gdf = streets_gdf[streets_gdf.geometry.type == "LineString"].copy()
     
     # Remove columns with more than 50% NaNs
     streets_gdf = streets_gdf.dropna(axis=1, thresh=len(streets_gdf) * 0.5)
@@ -237,7 +237,7 @@ def process_streets(
     )
     
     # Merge datasets
-    streets_ds = xr.merge([streets_xr, streets_xr_surface, streets_xr_service])
+    streets_ds = xr.merge([streets_xr, streets_xr_surface, streets_xr_service], compat="override")
     streets_ds.attrs.update(streets_xr.attrs)
     
     if output_path:
