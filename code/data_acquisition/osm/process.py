@@ -853,7 +853,7 @@ def process_building_shapes(
     street_blocks_gdf = xr_vectorize(
         street_blocks_xr.street_blocks,
         attribute_col="block",
-        crs=utm_crs,
+        crs="EPSG:4326",
         dtype="float32",
     )
     street_blocks_gdf = street_blocks_gdf[street_blocks_gdf["block"]==1]
