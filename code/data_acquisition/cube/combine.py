@@ -27,6 +27,7 @@ from data_acquisition.cube.metropolitan_regions import get_region_bbox
 def combine_region_datasets(
     region: str,
     repo_dir: str,
+    big_data_storage_path: str,
     filenames: dict
     ) -> xr.Dataset:
     """
@@ -37,6 +38,7 @@ def combine_region_datasets(
     Args:
         region (str): Region name to process. Defaults to the first region in the config.
         repo_dir (str): Path to the repository directory.
+        big_data_storage_path (str): Path to the big data storage directory.
         filenames (dict): Dictionary containing filenames for the region.
     
     Returns:
@@ -64,7 +66,14 @@ def combine_region_datasets(
     bbox_gdf = bbox_gdf.to_crs(utm_crs)
 
     # define urban areas
-    urban_mask = define_urban_areas(region=region, utm_crs=utm_crs, max_distance=20, bbox_gdf=bbox_gdf)
+    urban_mask = define_urban_areas(
+        region=region, 
+        utm_crs=utm_crs, 
+        max_distance=20, 
+        bbox_gdf=bbox_gdf,
+        big_data_storage_path=big_data_storage_path,
+        repo_dir=repo_dir,
+    )
 
     drop_vars = ['qa_pixel',
     'stac_id',

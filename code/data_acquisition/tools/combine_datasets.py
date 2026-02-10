@@ -52,7 +52,8 @@ def main(args):
         combined_ds = combine_region_datasets(
             region=region,
             repo_dir=repo_dir,
-            filenames=filenames,
+            big_data_storage_path=big_data_storage_path,
+            filenames=filenames
         )
 
 
