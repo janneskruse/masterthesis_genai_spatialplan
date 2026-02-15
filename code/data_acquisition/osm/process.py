@@ -1006,14 +1006,19 @@ def process_landuse(
     xr.DataArray:
         DataArray with rasterized landuse
     """
-    # Filter out streets, buildings, and water
-    landuse_gdf = osm_gdf[
-        ~osm_gdf["building"].notnull() & 
-        ~osm_gdf["highway"].notnull() & 
-        ~osm_gdf["railway"].notnull() & 
-        ~osm_gdf["water"].isin(["lake", "river", "canal"]) & 
-        ~osm_gdf["waterway"].isin(["river", "stream", "canal"])
-    ].copy()
+    # Filter out streets, buildings, and water (only filter columns that exist)
+    mask = pd.Series(True, index=osm_gdf.index)
+    if "building" in osm_gdf.columns:
+        mask &= ~osm_gdf["building"].notnull()
+    if "highway" in osm_gdf.columns:
+        mask &= ~osm_gdf["highway"].notnull()
+    if "railway" in osm_gdf.columns:
+        mask &= ~osm_gdf["railway"].notnull()
+    if "water" in osm_gdf.columns:
+        mask &= ~osm_gdf["water"].isin(["lake", "river", "canal"])
+    if "waterway" in osm_gdf.columns:
+        mask &= ~osm_gdf["waterway"].isin(["river", "stream", "canal"])
+    landuse_gdf = osm_gdf[mask].copy()
     
     # Select available columns
     required_columns = ["id", "geometry"]
