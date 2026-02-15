@@ -33,6 +33,9 @@ def main(args):
     try: 
         ####### Get the region to process #######
         region = args.REGION
+        
+        # ensure sentencase case for region name to match GHSL data
+        region = region.title()
 
         ###### setup config variables #######
         config = load_configs()
