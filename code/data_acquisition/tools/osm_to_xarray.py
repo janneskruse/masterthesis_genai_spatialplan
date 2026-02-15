@@ -154,25 +154,62 @@ def main(args):
         streets_zarr_name = f"{types_folder_path}/rasterized_streets.zarr"
         
         if not os.path.exists(streets_zarr_name):
-            process_streets(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, streets_zarr_name)
+            process_streets(
+                osm_gdf=osm_gdf, 
+                bbox=bbox, 
+                image_width=image_width, 
+                image_height=image_height, 
+                lon=lon, 
+                lat=lat, 
+                utm_crs=utm_crs, 
+                output_path=streets_zarr_name, 
+                use_main_streets=True,
+                save_additional_layers=True
+            )
         
         print("Processing street blocks...")
         street_blocks_zarr_name = f"{types_folder_path}/rasterized_street_blocks.zarr"
         
         if not os.path.exists(street_blocks_zarr_name):
-            process_street_blocks(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, street_blocks_zarr_name)
+            process_street_blocks(
+                osm_gdf=osm_gdf, 
+                bbox=bbox, 
+                image_width=image_width, 
+                image_height=image_height, 
+                lon=lon, 
+                lat=lat, 
+                utm_crs=utm_crs, 
+                output_path=street_blocks_zarr_name
+            )
         
         print("Processing water bodies...")
         water_zarr_name = f"{types_folder_path}/rasterized_water.zarr"
         
         if not os.path.exists(water_zarr_name):
-            process_water_bodies(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, water_zarr_name)
+            process_water_bodies(
+                osm_gdf=osm_gdf, 
+                bbox=bbox, 
+                image_width=image_width, 
+                image_height=image_height, 
+                lon=lon, 
+                lat=lat, 
+                utm_crs=utm_crs, 
+                output_path=water_zarr_name
+            )
         
         print("Processing buildings...")
         buildings_zarr_name = f"{types_folder_path}/rasterized_buildings.zarr"
         
         if not os.path.exists(buildings_zarr_name):
-            process_buildings(osm_gdf, bbox, image_width, image_height, lon, lat, buildings_zarr_name)
+            process_buildings(
+                osm_gdf=osm_gdf, 
+                bbox=bbox, 
+                image_width=image_width, 
+                image_height=image_height, 
+                lon=lon, 
+                lat=lat, 
+                output_path=buildings_zarr_name
+            )
         
         print("Processing 3D building heights from Yangzi Che et al. (2024)...")
         building_heights_zarr_name = f"{types_folder_path}/rasterized_building_heights.zarr"
@@ -215,7 +252,16 @@ def main(args):
         landuse_zarr_name = f"{types_folder_path}/rasterized_landuse.zarr"
         
         if not os.path.exists(landuse_zarr_name):
-            process_landuse(osm_gdf, bbox, image_width, image_height, lon, lat, utm_crs, landuse_zarr_name)
+            process_landuse(
+                osm_gdf=osm_gdf, 
+                bbox=bbox, 
+                image_width=image_width, 
+                image_height=image_height, 
+                lon=lon, 
+                lat=lat, 
+                utm_crs=utm_crs, 
+                output_path=landuse_zarr_name
+            )
 
         ##### Merge all datasets ######
         print("Merging all datasets into a single xarray dataset...")

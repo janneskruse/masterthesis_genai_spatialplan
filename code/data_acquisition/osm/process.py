@@ -135,7 +135,9 @@ def process_streets(
     lon: np.ndarray,
     lat: np.ndarray,
     utm_crs: str,
-    output_path: Optional[str] = None
+    output_path: Optional[str] = None,
+    use_main_streets: bool = False,
+    save_additional_layers: bool = False
 ) -> xr.Dataset:
     """
     Process street features from OSM data and create rasterized dataset.
@@ -167,6 +169,14 @@ def process_streets(
     # Filter streets
     streets_gdf = osm_gdf[osm_gdf["highway"].notnull()].copy()
     streets_gdf = streets_gdf[streets_gdf.geometry.type == "LineString"].copy()
+    
+    if use_main_streets:
+        # Filter main streets (exclude pedestrian paths, cycleways, etc.)
+        exclude_types = ['cycleway', 'path', 'pedestrian', 'service', 'footway', 
+                        'construction', 'track', 'steps', 'bridleway', 'corridor', 
+                        'elevator', 'platform']
+        
+        streets_gdf = streets_gdf[~streets_gdf["highway"].isin(exclude_types)]
     
     # Remove columns with more than 50% NaNs
     streets_gdf = streets_gdf.dropna(axis=1, thresh=len(streets_gdf) * 0.5)
@@ -204,40 +214,45 @@ def process_streets(
         units="1",
     )
     
-    streets_xr_surface = streets_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_width=image_width,
-        image_height=image_height,
-        x_coords=lon,
-        y_coords=lat,
-        name="streets_surface",
-        long_name="Streets OSM surface",
-        description="Rasterized streets with surface types from OSM data",
-        mapping_col='surface',
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
+    if save_additional_layers:
     
-    streets_xr_service = streets_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_width=image_width,
-        image_height=image_height,
-        x_coords=lon,
-        y_coords=lat,
-        name="streets_service",
-        long_name="Streets OSM service",
-        description="Rasterized streets with service types from OSM data",
-        mapping_col='highway',
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
+        streets_xr_surface = streets_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_width=image_width,
+            image_height=image_height,
+            x_coords=lon,
+            y_coords=lat,
+            name="streets_surface",
+            long_name="Streets OSM surface",
+            description="Rasterized streets with surface types from OSM data",
+            mapping_col='surface',
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
+        
+        streets_xr_service = streets_gdf.to_raster.to_xr_dataarray(
+            bbox=bbox,
+            image_width=image_width,
+            image_height=image_height,
+            x_coords=lon,
+            y_coords=lat,
+            name="streets_service",
+            long_name="Streets OSM service",
+            description="Rasterized streets with service types from OSM data",
+            mapping_col='highway',
+            crs="EPSG:4326",
+            x_dim="lon",
+            y_dim="lat",
+            units="1",
+        )
     
-    # Merge datasets
-    streets_ds = xr.merge([streets_xr, streets_xr_surface, streets_xr_service], compat="override")
+        # Merge datasets
+        streets_ds = xr.merge([streets_xr, streets_xr_surface, streets_xr_service], compat="override")
+    else:
+        streets_ds = streets_xr.to_dataset(name="streets")
+        
     streets_ds.attrs.update(streets_xr.attrs)
     
     if output_path:
@@ -283,42 +298,21 @@ def process_street_blocks(
     xr.DataArray:
         DataArray with rasterized street blocks
     """
-    # Filter main streets (exclude pedestrian paths, cycleways, etc.)
-    exclude_types = ['cycleway', 'path', 'pedestrian', 'service', 'footway', 
-                     'construction', 'track', 'steps', 'bridleway', 'corridor', 
-                     'elevator', 'platform']
     
-    streets_gdf = osm_gdf[osm_gdf["highway"].notnull()].copy()
-    streets_gdf = streets_gdf[~streets_gdf["highway"].isin(exclude_types)]
-    
-    # Apply width classification
-    streets_gdf['buffer_width'] = streets_gdf['highway'].apply(
-        lambda x: STREET_WIDTHS.get(x, 5.5)
-    )
-    
-    # Convert to projected coordinates and buffer
-    streets_gdf = streets_gdf.to_crs(utm_crs)
-    streets_gdf["geometry"] = streets_gdf.apply(
-        lambda row: row['geometry'].buffer(row['buffer_width']), axis=1
-    )
-    streets_gdf = streets_gdf.to_crs(epsg=4326)
-    
-    # Rasterize main streets
-    streets_main_xr = streets_gdf.to_raster.to_xr_dataarray(
+    streets_main_ds = process_streets(
+        osm_gdf=osm_gdf,
         bbox=bbox,
         image_width=image_width,
         image_height=image_height,
-        x_coords=lon,
-        y_coords=lat,
-        name="streets_main",
-        long_name="Main Streets OSM",
-        description="Rasterized main streets from OSM data",
-        mapping_col=None,
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
+        lon=lon,
+        lat=lat,
+        utm_crs=utm_crs,
+        use_main_streets=True,
+        save_additional_layers=False
     )
+    
+    # Rasterize main streets
+    streets_main_xr = streets_main_ds["streets"]
     
     # Invert to get street blocks
     street_blocks_xr = xr.where(streets_main_xr == 0, 1, 0)
