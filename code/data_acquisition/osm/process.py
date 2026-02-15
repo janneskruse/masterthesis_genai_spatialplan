@@ -877,9 +877,10 @@ def process_building_shapes(
         )
     else:
         street_blocks_xr_high_res = xr.open_zarr(street_blocks_xr_high_res_path, consolidated=True)
+        street_blocks_xr_high_res = street_blocks_xr_high_res.street_blocks
     
     street_blocks_gdf = xr_vectorize(
-        street_blocks_xr_high_res.street_blocks,
+        street_blocks_xr_high_res,
         attribute_col="block",
         crs="EPSG:4326",
         dtype="float32",
