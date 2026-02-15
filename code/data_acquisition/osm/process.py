@@ -838,6 +838,11 @@ def process_building_shapes(
     lon = np.linspace(xmin, xmax, image_width)
     bbox = (xmin, ymin, xmax, ymax)
     
+    target_image_width = int(width_m / target_resolution)
+    target_image_height = int(height_m / target_resolution)
+    target_lat = np.linspace(ymax, ymin, target_image_height)  # Inverted for rasterio affine transform
+    target_lon = np.linspace(xmin, xmax, target_image_width)
+    
     # =============================
     # load/create the datasets
     # =============================
@@ -904,57 +909,29 @@ def process_building_shapes(
         utm_crs=utm_crs
     )
     
-    labeled_low_res_array, _ = label(buildings_xr.buildings.values)
-    shapes_gdf_low_res = vectorize_array(
-        labeled_low_res_array,
-        bounds=(xmin, ymin, xmax, ymax),
-        crs="EPSG:4326",
-    )
-    
-    # merge high-res classified attributes into low-res shapes via spatial join
-    shapes_points = shapes_gdf.copy()
-    shapes_points.loc[:, "geometry"] = shapes_points.geometry.sample_points(size=1, rng=42)
-    
-    # spatial join: find which low-res shape each high-res point falls in
-    merged = gpd.sjoin(
-        shapes_gdf_low_res[["geometry", "label"]],
-        shapes_points[["geometry", "structural_type", "elongation"]],
-        how="left",
-        predicate="intersects",
-    )
-    # keep only the first high-res match per low-res shape
-    merged = merged.drop_duplicates(subset="label", keep="first")
-    
-    # transfer attributes back to low-res shapes (preserving low-res geometry)
-    shapes_gdf = shapes_gdf_low_res.merge(
-        merged[["label", "structural_type", "elongation"]],
-        on="label",
-        how="left",
-    )
-    
-    # rasterize building shapes
-    building_shapes_xr = shapes_gdf.to_raster.to_xr_dataarray(
-        bbox=bbox,
-        image_width=image_width,
-        image_height=image_height,
-        x_coords=lon,
-        y_coords=lat,
-        name="building_shapes",
-        long_name="Building Shapes OSM",
-        description="Rasterized building shapes from OSM data",
-        crs="EPSG:4326",
-        x_dim="lon",
-        y_dim="lat",
-        units="1",
-    )
+    # # rasterize building shapes
+    # building_shapes_xr = shapes_gdf.to_raster.to_xr_dataarray(
+    #     bbox=bbox,
+    #     image_width=target_image_width,
+    #     image_height=target_image_height,
+    #     x_coords=target_lon,
+    #     y_coords=target_lat,
+    #     name="building_shapes",
+    #     long_name="Building Shapes OSM",
+    #     description="Rasterized building shapes from OSM data",
+    #     crs="EPSG:4326",
+    #     x_dim="lon",
+    #     y_dim="lat",
+    #     units="1",
+    # )
     
     # rasterize structural types
     structural_types_xr = shapes_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_width=image_width,
-        image_height=image_height,
-        x_coords=lon,
-        y_coords=lat,
+        image_width=target_image_width,
+        image_height=target_image_height,
+        x_coords=target_lon,
+        y_coords=target_lat,
         name="building_shapes_structural_types",
         long_name="Building Shapes Structural Types OSM",
         description="Rasterized building shapes classified to structural types from OSM data",
@@ -968,10 +945,10 @@ def process_building_shapes(
     # rasterize elongation attribute
     elongation_xr = shapes_gdf.to_raster.to_xr_dataarray(
         bbox=bbox,
-        image_width=image_width,
-        image_height=image_height,
-        x_coords=lon,
-        y_coords=lat,
+        image_width=target_image_width,
+        image_height=target_image_height,
+        x_coords=target_lon,
+        y_coords=target_lat,
         name="building_shapes_elongation",
         long_name="Building shapes Elongation OSM",
         description="Rasterized building shapes elongation attribute from OSM data",
@@ -983,8 +960,8 @@ def process_building_shapes(
     )
     
     # merge datasets
-    building_shapes_ds = xr.merge([building_shapes_xr, structural_types_xr, elongation_xr], compat="override")
-    building_shapes_ds.attrs.update(building_shapes_xr.attrs)
+    building_shapes_ds = xr.merge([structural_types_xr, elongation_xr], compat="override")
+    building_shapes_ds.attrs.update(structural_types_xr.attrs)
     if output_path:
         building_shapes_ds.to_zarr(output_path, mode="w", consolidated=True, compute=True)
     
