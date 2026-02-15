@@ -32,6 +32,7 @@ from data_acquisition.osm.request import fetch_overpass_data
 from data_acquisition.osm.classify import classify_building_shapes
 from data_acquisition.cube.rasterize import register_xarray_accessor
 from data_acquisition.cube.vectorize import xr_vectorize, vectorize_array
+from zarr import config
 
 ######## Constants ########
 
@@ -786,14 +787,11 @@ def process_building_heights_deprecated(
 def process_building_shapes(
     osm_gdf: gpd.GeoDataFrame,
     building_heights_gdf_path: str,
-    street_blocks_xr_path: str,
     buildings_xr_path: str,
-    bbox: Tuple[float, float, float, float],
-    image_width: int,
-    image_height: int,
-    lon: np.ndarray,
-    lat: np.ndarray,
+    street_blocks_xr_path: str,
+    bbox_gdf: gpd.GeoDataFrame,
     utm_crs: str,
+    target_resolution: float = 3.0,
     gdf_path: Optional[str] = None,
     output_path: Optional[str] = None
 ) -> xr.DataArray:
@@ -811,41 +809,72 @@ def process_building_shapes(
         Path to street blocks xarray zarr file
     buildings_xr_path (str):
         Path to buildings xarray zarr file
-    bbox (Tuple):
-        Bounding box (xmin, ymin, xmax, ymax)
-    image_width (int):
-        Output raster width
-    image_height (int):
-        Output raster height
-    lon (np.ndarray):
-        Longitude coordinates
-    lat (np.ndarray):
-        Latitude coordinates
+    bbox_gdf (gpd.GeoDataFrame):
+        Bounding box as GeoDataFrame for the area of interest
     utm_crs (str):
         UTM CRS for buffering operations
-    output_path (str, optional):
-        Path to save output zarr file
+    target_resolution (float):
+        Target resolution in meters for rasterization (default: 3.0)
     gdf_path (str, optional):
         Path to save intermediate GeoDataFrame with building shapes
+    output_path (str, optional):
+        Path to save output zarr file
     
     Returns:
     --------    xr.Dataset:
         Dataset with building shapes and structural types
     """
     
-
-    # set bounding box coordinates
-    xmin, ymin, xmax, ymax = bbox
+    bbox_utm = bbox_gdf.to_crs(utm_crs).total_bounds
+    width_m = bbox_utm[2] - bbox_utm[0]
+    height_m = bbox_utm[3] - bbox_utm[1]
+    
+    xmin, ymin, xmax, ymax = bbox_gdf.total_bounds
+    
+    resolution = 1
+    image_width = int(width_m / resolution)
+    image_height = int(height_m / resolution)
+    lat = np.linspace(ymax, ymin, image_height)  # Inverted for rasterio affine transform
+    lon = np.linspace(xmin, xmax, image_width)
+    bbox = (xmin, ymin, xmax, ymax)
     
     # =============================
-    # load the datasets
+    # load/create the datasets
     # =============================
     buildings_xr= xr.open_zarr(buildings_xr_path, consolidated=True)
     building_heights_gdf = gpd.read_parquet(building_heights_gdf_path)
     
-    street_blocks_xr = xr.open_zarr(street_blocks_xr_path, consolidated=True)
+    buildings_xr_high_res_path = buildings_xr_path.replace(".zarr", f"_high_res_{target_resolution}m.zarr")
+    if not os.path.exists(buildings_xr_high_res_path):
+        buildings_xr_high_res = process_buildings(
+            osm_gdf=osm_gdf,
+            bbox=bbox,
+            image_width=image_width,
+            image_height=image_height,
+            lon=lon,
+            lat=lat,
+            output_path=buildings_xr_high_res_path
+        )
+    else:
+        buildings_xr_high_res = xr.open_zarr(buildings_xr_high_res_path, consolidated=True)
+    
+    street_blocks_xr_high_res_path = street_blocks_xr_path.replace(".zarr", f"_high_res_{target_resolution}m.zarr")
+    if not os.path.exists(street_blocks_xr_high_res_path):
+        street_blocks_xr_high_res = process_street_blocks(
+            osm_gdf=osm_gdf,
+            bbox=bbox,
+            image_width=image_width,
+            image_height=image_height,
+            lon=lon,
+            lat=lat,
+            utm_crs=utm_crs,
+            output_path=street_blocks_xr_high_res_path
+        )
+    else:
+        street_blocks_xr_high_res = xr.open_zarr(street_blocks_xr_high_res_path, consolidated=True)
+    
     street_blocks_gdf = xr_vectorize(
-        street_blocks_xr.street_blocks,
+        street_blocks_xr_high_res.street_blocks,
         attribute_col="block",
         crs="EPSG:4326",
         dtype="float32",
@@ -857,7 +886,7 @@ def process_building_shapes(
     # =============================
 
     # label the building shapes
-    labeled_array, num_features = label(buildings_xr.buildings.values)
+    labeled_array, num_features = label(buildings_xr_high_res.buildings.values)
 
     # vectorize the labeled array to get building shapes as polygons
     shapes_gdf = vectorize_array(
@@ -868,16 +897,40 @@ def process_building_shapes(
 
     shapes_gdf = classify_building_shapes(
         osm_gdf=osm_gdf,
+        gdf_path=gdf_path,
         building_heights_gdf=building_heights_gdf,
         street_blocks_gdf=street_blocks_gdf,
         shapes_gdf=shapes_gdf,
         utm_crs=utm_crs
     )
     
-    # save to geoparquet
-    if gdf_path:
-        os.makedirs(os.path.dirname(gdf_path), exist_ok=True)
-        shapes_gdf.to_parquet(gdf_path, index=False)
+    labeled_low_res_array, _ = label(buildings_xr.buildings.values)
+    shapes_gdf_low_res = vectorize_array(
+        labeled_low_res_array,
+        bounds=(xmin, ymin, xmax, ymax),
+        crs="EPSG:4326",
+    )
+    
+    # merge high-res classified attributes into low-res shapes via spatial join
+    shapes_points = shapes_gdf.copy()
+    shapes_points.loc[:, "geometry"] = shapes_points.geometry.sample_points(size=1, rng=42)
+    
+    # spatial join: find which low-res shape each high-res point falls in
+    merged = gpd.sjoin(
+        shapes_gdf_low_res[["geometry", "label"]],
+        shapes_points[["geometry", "structural_type", "elongation"]],
+        how="left",
+        predicate="intersects",
+    )
+    # keep only the first high-res match per low-res shape
+    merged = merged.drop_duplicates(subset="label", keep="first")
+    
+    # transfer attributes back to low-res shapes (preserving low-res geometry)
+    shapes_gdf = shapes_gdf_low_res.merge(
+        merged[["label", "structural_type", "elongation"]],
+        on="label",
+        how="left",
+    )
     
     # rasterize building shapes
     building_shapes_xr = shapes_gdf.to_raster.to_xr_dataarray(

@@ -138,7 +138,7 @@ def main(args):
         print("Creating rasterized datasets from OSM data...")
         
         # Create the lat/lon coordinates and transform for the raster
-        resolution = config["osm_query"].get("resolution", 1)
+        resolution = config["osm_query"].get("resolution", 3)
         image_width = int(width_m / resolution)
         image_height = int(height_m / resolution)
         lat = np.linspace(ymax, ymin, image_height)  # Inverted for rasterio affine transform
