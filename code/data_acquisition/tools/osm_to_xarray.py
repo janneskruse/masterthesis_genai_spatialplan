@@ -48,6 +48,9 @@ def main(args):
     region = args.REGION
     # total_cpus = int(args.TOTAL_CPUS)
 
+    # ensure sentencase case for region name to match GHSL data
+    region = region.title()
+
     # setup folders
     print(config)
     big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")

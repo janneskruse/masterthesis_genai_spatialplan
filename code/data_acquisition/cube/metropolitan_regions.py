@@ -67,7 +67,7 @@ def get_region_bbox(
     region_data = ghsl_df[ghsl_df["region_name"] == region]
     
     if region_data.empty:
-        available_regions = sorted(ghsl_df["region_name"].unique().tolist())
+        available_regions = sorted([r for r in ghsl_df["region_name"].unique().tolist() if r is not None])
         raise ValueError(
             f"Region '{region}' not found in GHSL data. "
             f"Available regions: {', '.join(available_regions)}"
