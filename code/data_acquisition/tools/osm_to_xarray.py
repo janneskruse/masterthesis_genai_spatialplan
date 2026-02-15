@@ -236,14 +236,11 @@ def main(args):
             process_building_shapes(
                 osm_gdf=osm_gdf,
                 building_heights_gdf_path=building_heights_gdf_path,
-                street_blocks_xr_path=street_blocks_zarr_name,
                 buildings_xr_path=buildings_zarr_name,
-                bbox=bbox,
-                image_width=image_width,
-                image_height=image_height,
-                lon=lon,
-                lat=lat,
+                street_blocks_xr_path=street_blocks_zarr_name,
+                bbox_gdf=bbox_gdf,
                 utm_crs=utm_crs,
+                target_resolution=resolution,
                 gdf_path=building_shapes_gdf_path,
                 output_path=building_shapes_zarr_name
             )
