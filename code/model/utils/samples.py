@@ -21,7 +21,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # Local imports
-from model.utils.colors import get_colormap_for_layer, apply_colormap_to_tensor
+from model.utils.colors import get_colormap_for_layer, apply_colormap_to_tensor, get_categorical_colormap
+from model.utils.layer_config import is_categorical_layer
 
 
 def normalize_channel_for_visualization(
@@ -32,8 +33,11 @@ def normalize_channel_for_visualization(
     """
     Normalize a single channel for visualization based on layer type.
     
+    For categorical layers, pass the full [B, num_classes, H, W] tensor.
+    Returns [B, 1, H, W] class index map normalized to [0, 1].
+    
     Args:
-        channel: Channel tensor [B, 1, H, W]
+        channel: Channel tensor [B, 1, H, W] or [B, num_classes, H, W] for categorical
         layer_info: Layer configuration dict from registry
         is_reconstruction: If True, channel is VAE reconstruction (may be logits for binary)
         
@@ -42,7 +46,24 @@ def normalize_channel_for_visualization(
     """
     layer_type = layer_info.get('type', 'continuous')
     
-    if layer_type == 'binary':
+    if layer_type == 'categorical':
+        num_classes = layer_info.get('num_classes', 1)
+        
+        if is_reconstruction:
+            # Reconstruction is logits [B, num_classes, H, W] -> softmax -> argmax
+            class_indices = torch.softmax(channel, dim=1).argmax(dim=1, keepdim=True)  # [B, 1, H, W]
+        else:
+            # Input is one-hot [B, num_classes, H, W] -> argmax
+            class_indices = channel.argmax(dim=1, keepdim=True)  # [B, 1, H, W]
+        
+        # Normalize class indices to [0, 1] for colormap application
+        if num_classes > 1:
+            channel_vis = class_indices.float() / (num_classes - 1)
+        else:
+            channel_vis = class_indices.float()
+        return channel_vis
+    
+    elif layer_type == 'binary':
         # Binary channels
         if is_reconstruction:
             # Reconstruction is logits - apply sigmoid
@@ -190,6 +211,58 @@ def save_comparison_visualization(
     save_image(grid, save_path)
 
 
+def _overlay_mask_border(
+    channel_vis: torch.Tensor,
+    mask: torch.Tensor,
+    n_samples: int
+) -> torch.Tensor:
+    """
+    Overlay red border on visualization at mask boundaries.
+    
+    Args:
+        channel_vis: Visualization tensor [B, C, H, W] (1 or 3 channels)
+        mask: Binary mask [B, 1, H, W]
+        n_samples: Number of samples to process
+        
+    Returns:
+        Tensor with red border overlay [B, 3, H, W]
+    """
+    # Upsample mask to match channel resolution
+    mask_upsampled = F.interpolate(
+        mask[:n_samples],
+        size=(channel_vis.shape[2], channel_vis.shape[3]),
+        mode='nearest'
+    )
+    
+    # Convert grayscale to RGB for red border overlay
+    if channel_vis.shape[1] == 1:
+        channel_vis = channel_vis.repeat(1, 3, 1, 1)  # [B, 3, H, W]
+    
+    # Compute mask boundary (edge detection)
+    mask_tensor = mask_upsampled.float()  # [B, 1, H, W]
+    
+    # Create erosion kernel (3x3 all ones) on same device as mask
+    kernel = torch.ones(1, 1, 3, 3, device=mask_tensor.device)
+    
+    # Erode the mask (shrink it inward)
+    mask_eroded = F.conv2d(mask_tensor, kernel, padding=1)
+    mask_eroded = (mask_eroded == 9).float()  # Only keep pixels where all 9 neighbors were 1
+    
+    # Boundary = original mask - eroded mask (pixels on the edge)
+    mask_boundary = mask_tensor - mask_eroded
+    mask_boundary = (mask_boundary > 0).float()
+    
+    # Ensure mask_boundary is on same device as channel_vis
+    mask_boundary = mask_boundary.to(channel_vis.device)
+    
+    # Apply red border (set R=1, G=0, B=0 where boundary)
+    channel_vis[:, 0:1, :, :] = torch.where(mask_boundary > 0, torch.ones_like(channel_vis[:, 0:1, :, :]), channel_vis[:, 0:1, :, :])
+    channel_vis[:, 1:2, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(channel_vis[:, 1:2, :, :]), channel_vis[:, 1:2, :, :])
+    channel_vis[:, 2:3, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(channel_vis[:, 2:3, :, :]), channel_vis[:, 2:3, :, :])
+    
+    return channel_vis
+
+
 def save_layerwise_samples(
     tensor: torch.Tensor,
     layer_names: List[str],
@@ -205,6 +278,8 @@ def save_layerwise_samples(
     Save each layer of a multi-channel tensor as separate visualizations.
     
     This is the main function for diffusion sampling visualization.
+    Handles categorical layers by aggregating their one-hot channels into
+    a single class-index visualization with a discrete colormap.
     
     Args:
         tensor: Multi-channel tensor [B, C, H, W]
@@ -219,13 +294,55 @@ def save_layerwise_samples(
     """
     
     n_samples = min(n_samples, tensor.shape[0])
+    categorical_processed = set()
     
-    for ch_idx, layer_name in enumerate(layer_names):
+    ch_idx = 0
+    while ch_idx < len(layer_names):
         if ch_idx >= tensor.shape[1]:
             break
         
-        channel = tensor[:, ch_idx:ch_idx+1, :, :]
+        layer_name = layer_names[ch_idx]
         layer_info = layers_registry.get(layer_name, {})
+        layer_type = layer_info.get('type', 'continuous')
+        
+        # Handle categorical layers: aggregate all num_classes channels
+        if is_categorical_layer(layer_info) and layer_name not in categorical_processed:
+            categorical_processed.add(layer_name)
+            num_classes = layer_info.get('num_classes', 1)
+            
+            # Extract all channels for this categorical layer
+            cat_channels = tensor[:, ch_idx:ch_idx+num_classes, :, :]  # [B, num_classes, H, W]
+            
+            # Normalize: argmax to class index map [B, 1, H, W]
+            channel_vis = normalize_channel_for_visualization(
+                cat_channels, layer_info, is_reconstruction
+            )
+            
+            # Apply discrete categorical colormap
+            if use_colormaps:
+                cmap = get_categorical_colormap(num_classes)
+                channel_vis = apply_colormap_to_tensor(channel_vis, cmap)
+            
+            # Overlay mask border if provided
+            if mask is not None:
+                channel_vis = _overlay_mask_border(channel_vis, mask, n_samples)
+            
+            # Save this categorical layer as single visualization
+            save_path = os.path.join(save_dir, f'{filename_prefix}_{layer_name}.png')
+            save_channel_visualization(
+                channel_vis, save_path, n_samples=n_samples,
+                normalize=False, apply_colormap=False
+            )
+            
+            ch_idx += num_classes
+            continue
+        
+        # Skip channels belonging to already-processed categorical layer
+        if is_categorical_layer(layer_info) and layer_name in categorical_processed:
+            ch_idx += 1
+            continue
+        
+        channel = tensor[:, ch_idx:ch_idx+1, :, :]
         
         # Normalize channel for visualization
         channel_vis = normalize_channel_for_visualization(
@@ -233,7 +350,6 @@ def save_layerwise_samples(
         )
         
         # Determine if we should apply colormap
-        layer_type = layer_info.get('type', 'continuous')
         apply_cmap = (
             use_colormaps and 
             layer_type != 'binary' and 
@@ -253,38 +369,7 @@ def save_layerwise_samples(
         
         # Overlay red mask border if mask is provided
         if mask is not None:
-            # Upsample mask to match channel resolution
-            mask_upsampled = F.interpolate(
-                mask[:n_samples],
-                size=(channel_vis.shape[2], channel_vis.shape[3]),
-                mode='nearest'
-            )
-            
-            # Convert grayscale to RGB for red border overlay
-            if channel_vis.shape[1] == 1:
-                channel_vis = channel_vis.repeat(1, 3, 1, 1)  # [B, 3, H, W]
-            
-            # Compute mask boundary (edge detection)
-            mask_tensor = mask_upsampled.float()  # [B, 1, H, W]
-            
-            # Create erosion kernel (3x3 all ones) on same device as mask
-            kernel = torch.ones(1, 1, 3, 3, device=mask_tensor.device)
-            
-            # Erode the mask (shrink it inward)
-            mask_eroded = F.conv2d(mask_tensor, kernel, padding=1)
-            mask_eroded = (mask_eroded == 9).float()  # Only keep pixels where all 9 neighbors were 1
-            
-            # Boundary = original mask - eroded mask (pixels on the edge)
-            mask_boundary = mask_tensor - mask_eroded
-            mask_boundary = (mask_boundary > 0).float()
-            
-            # Ensure mask_boundary is on same device as channel_vis
-            mask_boundary = mask_boundary.to(channel_vis.device)
-            
-            # Apply red border (set R=1, G=0, B=0 where boundary)
-            channel_vis[:, 0:1, :, :] = torch.where(mask_boundary > 0, torch.ones_like(channel_vis[:, 0:1, :, :]), channel_vis[:, 0:1, :, :])
-            channel_vis[:, 1:2, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(channel_vis[:, 1:2, :, :]), channel_vis[:, 1:2, :, :])
-            channel_vis[:, 2:3, :, :] = torch.where(mask_boundary > 0, torch.zeros_like(channel_vis[:, 2:3, :, :]), channel_vis[:, 2:3, :, :])
+            channel_vis = _overlay_mask_border(channel_vis, mask, n_samples)
         
         # Save this layer
         save_path = os.path.join(save_dir, f'{filename_prefix}_{layer_name}.png')
@@ -296,6 +381,8 @@ def save_layerwise_samples(
             apply_colormap=apply_cmap,
             colormap_name=cmap_name
         )
+        
+        ch_idx += 1
 
 
 def save_layerwise_comparisons(
@@ -314,11 +401,12 @@ def save_layerwise_comparisons(
     Save input vs reconstruction comparisons for each layer.
     
     This is the main function for VAE reconstruction visualization.
+    Handles categorical layers by aggregating their one-hot channels.
     
     Args:
         input_tensor: Input tensor [B, C, H, W]
-        recon_tensor: Reconstruction tensor [B, C, H, W] (logits for binary)
-        channel_names: List of channel names (e.g., ['rgb:red', 'buildings'])
+        recon_tensor: Reconstruction tensor [B, C, H, W] (logits for binary/categorical)
+        channel_names: List of channel names (e.g., ['rgb:red', 'buildings', 'building_shapes:class_0'])
         layer_names: List of layer names for each channel
         layers_registry: Layer configuration registry
         save_dir: Directory to save images
@@ -329,22 +417,58 @@ def save_layerwise_comparisons(
     """
     
     n_samples = min(n_samples, input_tensor.shape[0])
+    categorical_processed = set()
     
-    for ch_idx, (channel_name, layer_name) in enumerate(zip(channel_names, layer_names)):
+    ch_idx = 0
+    while ch_idx < len(channel_names):
         if ch_idx >= input_tensor.shape[1]:
             break
         
+        channel_name = channel_names[ch_idx]
+        layer_name = layer_names[ch_idx]
+        layer_info = layers_registry.get(layer_name, {})
+        layer_type = layer_info.get('type', 'continuous')
+        
+        # Handle categorical layers: aggregate all num_classes channels
+        if is_categorical_layer(layer_info) and layer_name not in categorical_processed:
+            categorical_processed.add(layer_name)
+            num_classes = layer_info.get('num_classes', 1)
+            
+            # Extract all channels for this categorical layer
+            input_cat = input_tensor[:, ch_idx:ch_idx+num_classes, :, :]  # [B, num_classes, H, W]
+            recon_cat = recon_tensor[:, ch_idx:ch_idx+num_classes, :, :]  # [B, num_classes, H, W]
+            
+            # Normalize to class index maps [B, 1, H, W]
+            input_vis = normalize_channel_for_visualization(input_cat, layer_info, is_reconstruction=False)
+            recon_vis = normalize_channel_for_visualization(recon_cat, layer_info, is_reconstruction=True)
+            
+            # Apply discrete categorical colormap
+            cmap = get_categorical_colormap(num_classes)
+            
+            # Save comparison
+            save_path = os.path.join(save_dir, f'{filename_prefix}_{layer_name}.png')
+            save_comparison_visualization(
+                input_vis, recon_vis, save_path,
+                n_samples=n_samples, normalize=False,
+                apply_colormap=True, colormap_name=cmap, mask=mask
+            )
+            
+            ch_idx += num_classes
+            continue
+        
+        # Skip channels belonging to already-processed categorical layer
+        if is_categorical_layer(layer_info) and layer_name in categorical_processed:
+            ch_idx += 1
+            continue
+        
         input_ch = input_tensor[:, ch_idx:ch_idx+1, :, :]
         recon_ch = recon_tensor[:, ch_idx:ch_idx+1, :, :]
-        
-        layer_info = layers_registry.get(layer_name, {})
         
         # Normalize both input and reconstruction
         input_vis = normalize_channel_for_visualization(input_ch, layer_info, is_reconstruction=False)
         recon_vis = normalize_channel_for_visualization(recon_ch, layer_info, is_reconstruction=True)
         
         # Determine if we should apply colormap
-        layer_type = layer_info.get('type', 'continuous')
         apply_cmap = (
             use_colormaps and 
             layer_type != 'binary' and 
@@ -368,6 +492,8 @@ def save_layerwise_comparisons(
             colormap_name=cmap_name,
             mask=mask
         )
+        
+        ch_idx += 1
 
 
 def save_rgb_composite(

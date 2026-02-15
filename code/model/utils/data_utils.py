@@ -15,7 +15,7 @@ import numpy as np
 import torchvision.transforms.functional as TF
 
 # Local imports
-from model.utils.layer_config import is_binary_layer
+from model.utils.layer_config import is_binary_layer, is_categorical_layer
 
 # ===========================================================================
 # LAYER TRANSFORMATION UTILITIES
@@ -100,6 +100,52 @@ def apply_filter(data, layer_config: Dict):
             return mask.astype(np.float32)
         else:
             return np.where(mask, data, 0.0)
+
+
+def one_hot_encode(data, num_classes: int):
+    """
+    Convert integer class labels to one-hot encoding.
+    
+    Handles both torch.Tensor and numpy arrays.
+    
+    Args:
+        data: Integer class labels, shape [H, W] or [1, H, W]
+              Values should be integers in range [0, num_classes-1]
+        num_classes: Number of classes
+        
+    Returns:
+        One-hot encoded data:
+        - torch.Tensor: [num_classes, H, W] float32
+        - numpy array: [num_classes, H, W] float32
+    """
+    is_torch = isinstance(data, torch.Tensor)
+    
+    if is_torch:
+        # Squeeze channel dim if present: [1, H, W] -> [H, W]
+        if data.ndim == 3 and data.shape[0] == 1:
+            data = data.squeeze(0)
+        
+        # Clamp to valid range and convert to long
+        labels = data.long().clamp(0, num_classes - 1)  # [H, W]
+        
+        # One-hot encode: [H, W] -> [H, W, C] -> [C, H, W]
+        one_hot = torch.nn.functional.one_hot(labels, num_classes)  # [H, W, C]
+        one_hot = one_hot.permute(2, 0, 1).float()  # [C, H, W]
+        return one_hot
+    else:
+        # NumPy path
+        # Squeeze channel dim if present: [1, H, W] -> [H, W]
+        if data.ndim == 3 and data.shape[0] == 1:
+            data = data.squeeze(0)
+        
+        # Clamp to valid range
+        labels = np.clip(data.astype(np.int64), 0, num_classes - 1)  # [H, W]
+        
+        # One-hot encode: [H, W] -> [C, H, W]
+        one_hot = np.eye(num_classes, dtype=np.float32)[labels]  # [H, W, C]
+        one_hot = one_hot.transpose(2, 0, 1)  # [C, H, W]
+        return one_hot
+
         
 def check_min_coverage(
     data: torch.Tensor,
@@ -153,15 +199,24 @@ def apply_layer_transform(data, layer_config, layer_statistics=None, mask_data=N
         
     Returns:
         Transformed data (same type as input)
+        For categorical layers: returns one-hot encoded [num_classes, H, W] array
     """
     is_torch = isinstance(data, torch.Tensor)
     is_binary = is_binary_layer(layer_config)
+    is_categorical = is_categorical_layer(layer_config)
     filter_config = layer_config.get('filter', {})
     
     coverage_ok = check_min_coverage(data, layer_config)
     if not coverage_ok:
         return None  # Skip layer if minimum coverage not met
     
+    # Categorical layers: convert integer class labels to one-hot encoding
+    # No filtering, binary conversion, or normalization needed
+    if is_categorical:
+        num_classes = layer_config.get('num_classes', None)
+        if num_classes is None:
+            raise ValueError("Categorical layer must define 'num_classes' in config")
+        return one_hot_encode(data, num_classes)
     
     # Step 1: Apply filters (thresholding, range filtering)
     if filter_config:
@@ -230,8 +285,8 @@ def normalize_layer(data, layer_config, layer_statistics=None):
     is_torch = isinstance(data, torch.Tensor)
     normalize_method = layer_config.get('normalize', None)
     
-    # No normalization needed
-    if normalize_method is None:
+    # No normalization needed (binary layers, categorical layers, etc.)
+    if normalize_method is None or is_categorical_layer(layer_config):
         return data
     
     # Handle NaN values

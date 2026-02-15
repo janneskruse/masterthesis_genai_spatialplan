@@ -68,10 +68,18 @@ def count_layer_channels(layer_config: Dict) -> int:
         layer_config: Layer configuration from registry
         
     Returns:
-        Number of channels (1 for most layers, 3+ for multi-channel like RGB)
+        Number of channels:
+        - Multi-channel layers (e.g., RGB): len(channels)
+        - Categorical layers: num_classes (one-hot encoded)
+        - All other layers: 1
     """
     if 'channels' in layer_config:
         return len(layer_config['channels'])
+    if is_categorical_layer(layer_config):
+        num_classes = layer_config.get('num_classes', None)
+        if num_classes is None:
+            raise ValueError("Categorical layer must define 'num_classes' in config")
+        return num_classes
     return 1
 
 
@@ -83,9 +91,22 @@ def is_binary_layer(layer_config: Dict) -> bool:
         layer_config: Layer configuration
         
     Returns:
-        True if binary, False if continuous
+        True if binary, False otherwise
     """
     return layer_config.get('type', 'continuous') == 'binary'
+
+
+def is_categorical_layer(layer_config: Dict) -> bool:
+    """
+    Check if layer contains categorical data (multi-class, one-hot encoded).
+    
+    Args:
+        layer_config: Layer configuration
+        
+    Returns:
+        True if categorical, False otherwise
+    """
+    return layer_config.get('type', 'continuous') == 'categorical'
 
 
 def get_layer_source(layer_config: Dict) -> str:
@@ -263,6 +284,7 @@ def get_channel_names(layer_name: str, layer_config: Dict) -> List[str]:
     Examples:
         get_channel_names('buildings', {'type': 'binary'}) -> ['buildings']
         get_channel_names('rgb', {'channels': ['red', 'green', 'blue']}) -> ['rgb:red', 'rgb:green', 'rgb:blue']
+        get_channel_names('building_shapes', {'type': 'categorical', 'num_classes': 5}) -> ['building_shapes:class_0', ..., 'building_shapes:class_4']
     """
     if 'channels' in layer_config:
         channels = layer_config['channels']
@@ -272,6 +294,10 @@ def get_channel_names(layer_name: str, layer_config: Dict) -> List[str]:
         else:
             # Multiple channels: use layer:channel format
             return [f"{layer_name}:{ch}" for ch in channels]
+    elif is_categorical_layer(layer_config):
+        # Categorical layers are one-hot encoded: one channel per class
+        num_classes = layer_config.get('num_classes', 1)
+        return [f"{layer_name}:class_{i}" for i in range(num_classes)]
     else:
         # No channels specified: single channel layer
         return [layer_name]

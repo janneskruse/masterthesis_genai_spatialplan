@@ -15,7 +15,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision.utils import save_image, make_grid
 
 # Local imports
-from model.utils.layer_config import is_binary_layer, get_layer_dice_config
+from model.utils.layer_config import is_binary_layer, is_categorical_layer, get_layer_dice_config
 from model.utils.colors import get_colormap_for_layer, apply_colormap_to_tensor
 from model.utils.samples import save_layerwise_comparisons, save_rgb_comparison
 
@@ -93,7 +93,7 @@ def save_vae_reconstruction_samples(
 def compute_reconstruction_loss(
     recon, target, channel_names, layer_names,
     layers_registry,
-    binary_weight=1.0, continuous_weight=1.0, 
+    binary_weight=1.0, continuous_weight=1.0, categorical_weight=1.0,
     layer_dice_config=None, posw_ema=None,
     all_channels_tensor=None,  # Full tensor with all channels for mask lookup
     layer_weights=None  # Per-layer weight overrides
@@ -103,28 +103,31 @@ def compute_reconstruction_loss(
     
     Handles:
     - Binary layers: BCE with logits + optional Dice loss
+    - Categorical layers: Cross-entropy loss (logits vs one-hot targets)
     - Continuous layers: MSE/L1/Smooth-L1 loss (configurable per layer)
     - RGB layers: MSE/L1 loss (perceptual loss handled externally)
     - Masked layers: Loss weighted by mask layer (e.g., buildings_heights masked by buildings)
     
     Args:
-        recon: Reconstructed tensor [B, C, H, W] (logits for binary channels, values for continuous)
-        target: Target tensor [B, C, H, W]
-        channel_names: List of channel names (e.g., ['rgb:red', 'buildings', 'temperature'])
-        layer_names: List of layer names for each channel (e.g., ['rgb', 'buildings', 'temperature'])
+        recon: Reconstructed tensor [B, C, H, W] (logits for binary/categorical, values for continuous)
+        target: Target tensor [B, C, H, W] (one-hot for categorical)
+        channel_names: List of channel names (e.g., ['rgb:red', 'buildings', 'building_shapes:class_0'])
+        layer_names: List of layer names for each channel (e.g., ['rgb', 'buildings', 'building_shapes'])
         layers_registry: Global layers configuration dict
         binary_weight: Weight for binary channel losses (default weight)
         continuous_weight: Weight for continuous channel losses (default weight)
+        categorical_weight: Weight for categorical channel losses (default weight)
         layer_dice_config: Optional dict mapping layer names to dice config overrides
         posw_ema: Optional PosWeightEMA tracker for stable class weighting (indexed by binary channel index)
         all_channels_tensor: Full input/target tensor with all channels (for mask layer lookup)
-        layer_weights: Optional dict mapping layer names to custom weights (overrides binary/continuous defaults)
+        layer_weights: Optional dict mapping layer names to custom weights (overrides defaults)
         
     Layer Config Options:
-        - loss_type: 'mse' (default), 'l1', or 'smooth_l1'
+        - loss_type: 'mse' (default), 'l1', 'smooth_l1', or 'cross_entropy' (categorical)
           * 'mse': Better convergence, standard for VAE
           * 'l1': Better edge preservation, robust to outliers (recommended for RGB)
           * 'smooth_l1': Hybrid approach, robust to outliers with smooth gradients
+          * 'cross_entropy': For categorical multi-class layers
         - mask_layer: Name of binary layer to use as loss mask (e.g., 'buildings' for 'buildings_heights')
         - mask_loss_weight: Weight boost for masked regions (default: 1.0, recommend 3.0-5.0)
         
@@ -135,20 +138,61 @@ def compute_reconstruction_loss(
     losses = {}
     binary_loss = 0.0
     continuous_loss = 0.0
+    categorical_loss = 0.0
     
     binary_count = 0
     continuous_count = 0
+    categorical_count = 0
     binary_ch_idx = 0  # Separate index for binary channels only
     
-    for idx, (channel_name, layer_name) in enumerate(zip(channel_names, layer_names)):
-        recon_ch = recon[:, idx:idx+1, :, :]
-        target_ch = target[:, idx:idx+1, :, :]
+    # Build set of categorical layers and their channel ranges to skip individual processing
+    # Categorical layers span multiple channels (num_classes) and must be processed as a group
+    categorical_processed = set()
+    
+    idx = 0
+    while idx < len(channel_names):
+        channel_name = channel_names[idx]
+        layer_name = layer_names[idx]
         
         # Get layer configuration
         layer_info = layers_registry.get(layer_name, {})
         is_binary = is_binary_layer(layer_info)
+        is_categorical = is_categorical_layer(layer_info)
         
-        # Binary channels use BCE with logits + optional Dice loss
+        # === CATEGORICAL LAYERS: process all num_classes channels at once ===
+        if is_categorical and layer_name not in categorical_processed:
+            categorical_processed.add(layer_name)
+            num_classes = layer_info.get('num_classes', 1)
+            
+            # Extract all channels for this categorical layer
+            recon_cat = recon[:, idx:idx+num_classes, :, :]  # [B, num_classes, H, W] logits
+            target_cat = target[:, idx:idx+num_classes, :, :]  # [B, num_classes, H, W] one-hot
+            
+            # Convert one-hot target to class indices for cross-entropy
+            target_indices = target_cat.argmax(dim=1)  # [B, H, W] long
+            
+            # Compute cross-entropy loss
+            loss = F.cross_entropy(recon_cat, target_indices, reduction='mean')
+            losses[f'{layer_name}_ce'] = loss.item()
+            
+            # Apply per-layer weight if specified, otherwise use default
+            layer_weight = layer_weights.get(layer_name, categorical_weight) if layer_weights else categorical_weight
+            categorical_loss += loss * layer_weight
+            categorical_count += 1
+            
+            # Skip ahead past all channels of this categorical layer
+            idx += num_classes
+            continue
+        
+        # Skip channels that belong to an already-processed categorical layer
+        if is_categorical and layer_name in categorical_processed:
+            idx += 1
+            continue
+        
+        recon_ch = recon[:, idx:idx+1, :, :]
+        target_ch = target[:, idx:idx+1, :, :]
+        
+        # === BINARY LAYERS: BCE with logits + optional Dice loss ===
         if is_binary:
             # Clamp target to valid range (recon_ch is logits, no clamping)
             target_ch = target_ch.clamp(0.0, 1.0)
@@ -187,7 +231,7 @@ def compute_reconstruction_loss(
             binary_count += 1
             binary_ch_idx += 1  # Increment binary channel index
             
-        # Continuous channels use MSE or L1 loss based on config
+        # === CONTINUOUS LAYERS: MSE or L1 loss based on config ===
         else:
             # Get loss type from config (default: 'mse')
             # Options: 'mse' (L2), 'l1' (MAE), 'smooth_l1'
@@ -259,18 +303,25 @@ def compute_reconstruction_loss(
             layer_weight = layer_weights.get(layer_name, continuous_weight) if layer_weights else continuous_weight
             continuous_loss += loss * layer_weight
             continuous_count += 1
+        
+        idx += 1
     
     # Normalize by channel count
     if binary_count > 0:
         binary_loss = binary_loss / binary_count
     if continuous_count > 0:
         continuous_loss = continuous_loss / continuous_count
+    if categorical_count > 0:
+        categorical_loss = categorical_loss / categorical_count
     
     losses['binary_avg'] = binary_loss.item() if isinstance(binary_loss, torch.Tensor) else binary_loss
     losses['continuous_avg'] = continuous_loss.item() if isinstance(continuous_loss, torch.Tensor) else continuous_loss
-    losses['total_recon'] = (binary_loss + continuous_loss).item() if isinstance(binary_loss + continuous_loss, torch.Tensor) else 0.0
+    losses['categorical_avg'] = categorical_loss.item() if isinstance(categorical_loss, torch.Tensor) else categorical_loss
     
-    return losses, binary_loss + continuous_loss
+    total = binary_loss + continuous_loss + categorical_loss
+    losses['total_recon'] = total.item() if isinstance(total, torch.Tensor) else 0.0
+    
+    return losses, total
 
 
 def bce_with_logits_pos_weight(logits, targets, pos_weight=None, eps=1e-6):

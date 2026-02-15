@@ -52,6 +52,35 @@ def get_colormap_for_layer(layer_name: str):
         return 'gray'
 
 
+def get_categorical_colormap(num_classes: int):
+    """
+    Get a discrete colormap for categorical (multi-class) layers.
+    
+    Uses qualitative color palettes that maximize perceptual distinctness
+    between classes (no implied ordering).
+    
+    Args:
+        num_classes: Number of distinct classes
+        
+    Returns:
+        matplotlib ListedColormap with exactly num_classes colors
+    """
+    if num_classes <= 10:
+        # Use tab10 for up to 10 classes (perceptually distinct)
+        base_cmap = plt.get_cmap('tab10')
+        colors = [base_cmap(i / 10) for i in range(num_classes)]
+    elif num_classes <= 20:
+        # Use tab20 for up to 20 classes
+        base_cmap = plt.get_cmap('tab20')
+        colors = [base_cmap(i / 20) for i in range(num_classes)]
+    else:
+        # Fall back to evenly spaced hues for large class counts
+        base_cmap = plt.get_cmap('hsv')
+        colors = [base_cmap(i / num_classes) for i in range(num_classes)]
+    
+    return ListedColormap(colors, name=f'categorical_{num_classes}')
+
+
 def apply_colormap_to_tensor(tensor: torch.Tensor, cmap: Union[str, object]) -> torch.Tensor:
     """
     Apply matplotlib colormap to a tensor.

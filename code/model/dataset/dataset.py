@@ -1106,12 +1106,13 @@ class UrbanInpaintingDataset(Dataset):
             # [H,W] -> [1,H,W]
             arr = arr[None, ...]
         elif arr.ndim == 3:
-            # assume either [C,H,W] (planetscope) or [H,W,C] --> safe check
-            H, W = arr.shape[-2], arr.shape[-1]
-            if arr.shape[0] not in (1,3) and arr.shape[-1] in (1,3) and arr.shape[-2] == H:
+            # assume either [C,H,W] (planetscope, one-hot categorical) or [H,W,C] --> safe check
+            # For one-hot categorical layers, shape is [num_classes, H, W] where num_classes > 3
+            # Only treat as HWC if first dim is NOT small AND last dim IS small (1 or 3)
+            if arr.shape[0] not in (1,3) and arr.shape[-1] in (1,3) and arr.shape[0] > arr.shape[-1]:
                 # looks like HWC -> CHW
                 arr = arr.transpose(2,0,1)
-            # else: already CHW
+            # else: already CHW (includes one-hot categorical with num_classes channels)
         else:
             raise ValueError(f"Unexpected shape {arr.shape}, need 2D or 3D")
 
