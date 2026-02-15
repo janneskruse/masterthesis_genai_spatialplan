@@ -177,7 +177,7 @@ def process_streets(
                         'construction', 'track', 'steps', 'bridleway', 'corridor', 
                         'elevator', 'platform']
         
-        streets_gdf = streets_gdf[~streets_gdf["highway"].isin(exclude_types)]
+        streets_gdf = streets_gdf[~streets_gdf["highway"].isin(exclude_types)].copy()
     
     # Remove columns with more than 50% NaNs
     streets_gdf = streets_gdf.dropna(axis=1, thresh=len(streets_gdf) * 0.5)
