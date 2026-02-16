@@ -445,8 +445,8 @@ diffusion_stages:
           
       # Latent-space conditioning (encoded through respective VAEs)
       latent_space:
-        - group: 'environmental'
-          layers: ['temperature', 'ndvi']
+        # - group: 'environmental'
+        #   layers: ['temperature', 'ndvi']
           
         # - group: 'semantic'
         #   layers: ['street_blocks']  # Optional: constrain to valid blocks
