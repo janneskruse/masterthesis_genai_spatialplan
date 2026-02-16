@@ -70,11 +70,11 @@ def build_unet_condition_config(stage_config, vae_groups_config, global_config=N
     }
     
     # Compute pixel-space conditioning channels
-    pixel_space_specs = conditioning.get('pixel_space', [])
+    pixel_space_specs = conditioning.get('pixel_space') or []
     pixel_channels = len(pixel_space_specs)  # Each spec = 1 channel (e.g., inpainting_mask)
     
     # Compute latent-space conditioning channels
-    latent_space_specs = conditioning.get('latent_space', [])
+    latent_space_specs = conditioning.get('latent_space') or []
     latent_channels = 0
     for spec in latent_space_specs:
         group_name = spec.get('group')
