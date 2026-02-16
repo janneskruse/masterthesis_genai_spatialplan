@@ -410,6 +410,7 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
     ########## Load Conditioning VAEs for on-the-fly encoding #############
     # If conditioning latents aren't pre-computed, encode full-res images on-the-fly
     cond_latent_groups = cvae_config.get('conditioning', {}).get('latent_space', [])
+    vae_registry = None
     
     if cond_latent_groups:
         if is_main:
