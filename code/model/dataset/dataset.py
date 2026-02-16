@@ -179,13 +179,13 @@ class UrbanInpaintingDataset(Dataset):
 
         # Compute patch and latent sizes using mode-specific configs
         # use_latents=True for diffusion mode (always works in latent space)
-        use_latents_for_sizing = (self.mode_type == 'diffusion')
+        # use_latents_for_sizing = (self.mode_type == 'diffusion')
         ldm_cfg = unet_config if self.mode_type != 'cvae' else None
         patch_size, latent_size, vae_downsample_factor, unet_downsample_factor, total_divisor = compute_patch_and_latent_sizes(
-            dataset_config,
-            vae_config,
+            dataset_config=dataset_config,
+            autoencoder_config=vae_config,
             ldm_config=ldm_cfg,
-            use_latents=use_latents_for_sizing,
+            # use_latents=use_latents_for_sizing,
             self=self
         )
         
