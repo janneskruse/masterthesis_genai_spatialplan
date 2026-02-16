@@ -431,7 +431,7 @@ def train(mode: str = 'semantic', load_checkpoint_path: str = None):
         vae.eval()
         
         # Load conditioning VAEs for latent-space conditioning groups
-        latent_space_specs = conditioning_config.get('latent_space', [])
+        latent_space_specs = conditioning_config.get('latent_space') or []
         for spec in latent_space_specs:
             cond_group = spec.get('group')
             if cond_group and cond_group in vae_groups:

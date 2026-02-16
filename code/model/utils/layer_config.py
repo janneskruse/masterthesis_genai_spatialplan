@@ -251,7 +251,7 @@ def get_conditioning_layers(stage_config: Dict) -> Dict[str, List[str]]:
         }
     """
     conditioning = stage_config.get('conditioning', {})
-    latent_cond = conditioning.get('latent_space', [])
+    latent_cond = conditioning.get('latent_space') or []
     
     grouped_layers = {}
     
@@ -356,7 +356,7 @@ def validate_layer_config(config: Dict) -> None:
         
         # Check conditioning groups
         conditioning = stage_config.get('conditioning', {})
-        for cond_spec in conditioning.get('latent_space', []):
+        for cond_spec in (conditioning.get('latent_space') or []):
             cond_group = cond_spec.get('group')
             if cond_group not in vae_groups:
                 raise ValueError(f"Stage '{stage_name}' references unknown conditioning group: {cond_group}")

@@ -650,7 +650,7 @@ class UrbanInpaintingDataset(Dataset):
         self.group_latents[pred_group] = pred_latents
         
         # Load conditioning latents (latent-space conditioning)
-        latent_cond_groups = conditioning_config.get('latent_space', [])
+        latent_cond_groups = conditioning_config.get('latent_space') or []
         
         if latent_cond_groups:
             print(f"\nLoading {len(latent_cond_groups)} latent-space conditioning groups...")
@@ -1277,7 +1277,7 @@ class UrbanInpaintingDataset(Dataset):
             pixel_cond_list = []
             pixel_cond_names = []
             
-            for cond_spec in conditioning_config.get('pixel_space', []):
+            for cond_spec in (conditioning_config.get('pixel_space') or []):
                 layer_name = cond_spec.get('layer')
                 interpolation_mode = cond_spec.get('interpolation', 'nearest')  # Default to nearest
                 
@@ -1314,7 +1314,7 @@ class UrbanInpaintingDataset(Dataset):
             latent_group_names = []
             
             # Add latent-space conditioning (load from pre-loaded group latents)
-            for cond_spec in conditioning_config.get('latent_space', []):
+            for cond_spec in (conditioning_config.get('latent_space') or []):
                 group_name = cond_spec['group']
                 
                 if group_name in self.group_latents and self.group_latents[group_name] is not None:

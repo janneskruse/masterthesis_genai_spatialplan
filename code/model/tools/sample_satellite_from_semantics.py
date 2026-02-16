@@ -177,7 +177,7 @@ def render_satellite_from_semantics(
     pred_vae = vae_registry.get_vae(pred_group)
     
     # Load conditioning VAEs (semantic, environmental) - use existing_vae_paths if available
-    latent_cond_groups = conditioning_config.get('latent_space', [])
+    latent_cond_groups = conditioning_config.get('latent_space') or []
     for cond_spec in latent_cond_groups:
         cond_group = cond_spec['group']
         cond_vae_config = vae_groups[cond_group]
@@ -249,7 +249,7 @@ def render_satellite_from_semantics(
         pixel_cond_list = []
         pixel_cond_names = []
         
-        for cond_spec in conditioning_config.get('pixel_space', []):
+        for cond_spec in (conditioning_config.get('pixel_space') or []):
             layer_name = cond_spec.get('layer')
             interpolation_mode = cond_spec.get('interpolation', 'nearest')
             
@@ -601,7 +601,7 @@ def infer(args, config):
     
     # Also check VAE paths for conditioning groups (semantic, environmental)
     conditioning_config = stage_config.get('conditioning', {})
-    latent_cond_groups = conditioning_config.get('latent_space', [])
+    latent_cond_groups = conditioning_config.get('latent_space') or []
     
     existing_vae_paths = existing_vae_satellite.vae_checkpoints.copy()
     for cond_spec in latent_cond_groups:
