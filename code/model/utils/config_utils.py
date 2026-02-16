@@ -50,6 +50,38 @@ def get_config_value(config, key, default_value):
     return config[key] if key in config else default_value
 
 
+def compute_cvae_cond_channels(cvae_config, vae_groups_config):
+    """
+    Auto-compute CVAE decoder conditioning channels from config.
+    
+    cond_channels = 1 (mask) + sum(z_channels for each latent conditioning group)
+    cond_projected_channels = int(cond_channels * cond_channel_scale)
+    
+    Args:
+        cvae_config: CVAE stage config dict (e.g. config['cvae_inpainting']['semantic'])
+        vae_groups_config: VAE groups configuration dict (config['vae_groups'])
+        
+    Returns:
+        Tuple of (cond_channels, cond_projected_channels)
+    """
+    # Always start with 1 for the binary inpainting mask
+    cond_channels = 1
+    
+    # Add z_channels for each latent-space conditioning group
+    cond_latent_groups = cvae_config.get('conditioning', {}).get('latent_space', [])
+    for spec in cond_latent_groups:
+        group_name = spec.get('group')
+        if group_name in vae_groups_config:
+            z_channels = vae_groups_config[group_name].get('z_channels', 0)
+            cond_channels += z_channels
+    
+    # Scale to get projected channels
+    cond_channel_scale = cvae_config.get('cond_channel_scale', 2.0)
+    cond_projected_channels = max(int(cond_channels * cond_channel_scale), cond_channels)
+    
+    return cond_channels, cond_projected_channels
+
+
 def build_unet_condition_config(stage_config, vae_groups_config, global_config=None):
     """
     Build U-Net condition_config from diffusion stage conditioning configuration.
@@ -167,44 +199,58 @@ def get_default_configs(vae_groups: dict, diffusion_stages: dict) -> tuple[dict,
 def compute_patch_and_latent_sizes(
     dataset_config: dict,
     autoencoder_config: dict,
-    ldm_config: dict,
-    use_latents: bool = False,
+    ldm_config: dict = None,
     self=None
 ) -> tuple[int, int, int, int, int]:
     """
     Compute properly aligned patch and latent sizes.
     
-    Ensures patch size is divisible by both VAE and U-Net downsampling factors
-    to prevent dimension mismatches in skip connections.
+    Ensures patch size is divisible by the VAE spatial downsample factor and,
+    when applicable, by the U-Net downsample factor as well.
+    
+    Supports three standalone modes (and combinations):
+      - VAE-only:  patch divisible by VAE factor
+      - LDM mode:  patch divisible by VAE factor × U-Net factor
+      - CVAE mode: patch divisible by VAE factor (no U-Net)
+      - LDM + CVAE: patch divisible by VAE factor × U-Net factor
     
     Args:
         dataset_config: Dataset configuration with 'patch_size_m' and 'res'
         autoencoder_config: VAE config with 'down_sample'
-        ldm_config: U-Net config with 'down_channels',
-        self: optional UrbanInpaintingDataset instance for setting latent_downsample_factor
+        ldm_config: U-Net / diffusion config with 'down_channels' (optional)
+        self: optional UrbanInpaintingDataset instance for setting vae_downsample_factor
     
     Returns:
         tuple: (patch_size, latent_size, vae_factor, unet_factor, total_divisor)
     """
+    
     # Initial calculation
     pixel_size = dataset_config.get('patch_size_m', 650)
     im_res = dataset_config.get('res', 3)
     patch_size = int(pixel_size / im_res) # compute patch size in pixels
     patch_size = patch_size - (patch_size % 8) # make patch size divisible by 8
     
-    # VAE downsampling factor
-    if use_latents:
-        vae_downsample_factor = 2 ** sum([1 for ds in autoencoder_config.get('down_sample', [True, True, True]) if ds])
-    else:
-        vae_downsample_factor = 1
-        
+    # VAE spatial downsample factor (from encoder architecture)
+    # Always computed from the autoencoder config — the CVAE/VAE encoder
+    # needs the input to be spatially divisible by this factor.
+    vae_downsample_factor = 2 ** sum(
+        1 for ds in autoencoder_config.get('down_sample', [True, True, True]) if ds
+    )
+    
+    # Ensure patch is divisible by VAE factor (needed for all modes)
     patch_size = patch_size - (patch_size % vae_downsample_factor)
     
-    # U-Net downsampling factor
-    num_down_layers = len(ldm_config.get('down_channels', [64, 128, 256, 512]))
-    unet_downsample_factor = 2 ** num_down_layers
+    # U-Net / LDM additional downsample factor
+    unet_downsample_factor = 1
+    if ldm_config:
+        num_down_layers = len(ldm_config.get('down_channels', [64, 128, 256, 512]))
+        unet_downsample_factor = 2 ** num_down_layers
     
-    # Total divisibility requirement
+    # CVAE mode adds no extra spatial constraints beyond the VAE factor
+    # (the CVAE operates at full resolution; its internal encoder/decoder
+    # share the same architecture as the base VAE)
+    
+    # Combined divisor — must satisfy all components
     total_divisor = vae_downsample_factor * unet_downsample_factor
     patch_size = patch_size - (patch_size % total_divisor)
     
@@ -214,9 +260,11 @@ def compute_patch_and_latent_sizes(
     if self is not None:
         self.vae_downsample_factor = vae_downsample_factor
     
-    print(f"Using patch size: {patch_size} pixels ({patch_size*im_res} m at {im_res} m resolution)")
+    # Summary
+    print(f"Using patch size: {patch_size} pixels ({patch_size * im_res} m at {im_res} m resolution)")
     print(f"  VAE downsample factor: {vae_downsample_factor}")
-    print(f"  U-Net downsample factor: {unet_downsample_factor}")
+    if ldm_config:
+        print(f"  U-Net downsample factor: {unet_downsample_factor}")
     print(f"  Total divisor: {total_divisor}")
     
     return (
@@ -226,3 +274,30 @@ def compute_patch_and_latent_sizes(
         unet_downsample_factor,
         total_divisor
     )
+    
+def build_scalar_specs(config: dict, cvae_config: dict) -> dict:
+    """
+    Build scalar_specs dict for ConditionalVAE from config.
+    
+    Args:
+        config: Full config dict
+        cvae_config: CVAE inpainting config section for target group
+        
+    Returns:
+        Dict mapping scalar keys to spec dicts with 'mlp_hidden'
+    """
+    scalar_control_names = cvae_config.get('scalar_controls', [])
+    if not scalar_control_names:
+        return {}
+    
+    control_specs = parse_scalar_controls_config(config, stage_control_names=scalar_control_names)
+    
+    scalar_specs = {}
+    for spec in control_specs:
+        conditioning_cfg = spec.get('conditioning', {})
+        for key in spec['keys']:
+            scalar_specs[key] = {
+                'mlp_hidden': conditioning_cfg.get('mlp_hidden', 128)
+            }
+    
+    return scalar_specs

@@ -399,3 +399,26 @@ class PosWeightEMA:
             self.val[ch_idx] = self.m * self.val[ch_idx] + (1 - self.m) * pw
         return self.val[ch_idx].detach().clone()  # Return detached value as snapshot that won't change later
 
+def get_kl_weight(epoch: int, kl_config: dict) -> float:
+    """
+    Compute KL weight with optional linear annealing.
+    
+    Args:
+        epoch: Current epoch index (0-based)
+        kl_config: Dict with keys: enabled, start_weight, end_weight, warmup_epochs
+        
+    Returns:
+        KL weight for current epoch
+    """
+    if not kl_config.get('enabled', False):
+        return kl_config.get('end_weight', 0.001)
+    
+    start_w = kl_config.get('start_weight', 0.0001)
+    end_w = kl_config.get('end_weight', 0.001)
+    warmup = kl_config.get('warmup_epochs', 20)
+    
+    if warmup <= 0 or epoch >= warmup:
+        return end_w
+    
+    # Linear interpolation
+    return start_w + (end_w - start_w) * (epoch / warmup)

@@ -88,11 +88,11 @@ class UrbanInpaintingDataset(Dataset):
         # Validate mode format
         if mode != 'default':
             mode_parts = mode.split(':')
-            if len(mode_parts) != 2 or mode_parts[0] not in ['vae', 'diffusion', 'temperature']:
+            if len(mode_parts) != 2 or mode_parts[0] not in ['vae', 'diffusion', 'temperature', 'cvae']:
                 raise ValueError(
                     f"Invalid mode: '{mode}'. Must be 'default', 'vae:<group_name>', "
-                    f"'diffusion:<stage_name>', or 'temperature:<group_name>'. "
-                    f"Examples: 'vae:satellite', 'diffusion:semantic', 'temperature:semantic'"
+                    f"'diffusion:<stage_name>', 'temperature:<group_name>', or 'cvae:<group_name>'. "
+                    f"Examples: 'vae:satellite', 'diffusion:semantic', 'temperature:semantic', 'cvae:semantic'"
                 )
             self.mode_type = mode_parts[0]  # 'vae', 'diffusion', or 'temperature'
             self.mode_target = mode_parts[1]  # 'satellite', 'semantic', etc.
@@ -145,6 +145,23 @@ class UrbanInpaintingDataset(Dataset):
             latent_scaling_config = stage_config.get('latent_scaling', {})
             use_latent_scaling = latent_scaling_config.get('enabled', False)
             self.latent_scale_factor = latent_scaling_config.get('scale_factor', 1.0) if use_latent_scaling else 1.0
+        
+        elif self.mode_type == 'cvae':
+            # CVAE inpainting mode: use the target VAE group's config
+            if self.mode_target not in self.vae_groups:
+                raise ValueError(
+                    f"VAE group '{self.mode_target}' not found in config. "
+                    f"Available groups: {list(self.vae_groups.keys())}"
+                )
+            vae_config = self.vae_groups[self.mode_target]
+            unet_config = {}  # CVAE mode has no U-Net
+            
+            # Store CVAE inpainting config
+            self.cvae_config = config.get('cvae_inpainting', {}).get(self.mode_target, {})
+            if not self.cvae_config:
+                print(f"Warning: No cvae_inpainting config found for '{self.mode_target}'. "
+                      f"Using defaults.")
+            self.latent_scale_factor = 1.0
             
         else:
             # Default mode: use first available configs or defaults
@@ -163,10 +180,11 @@ class UrbanInpaintingDataset(Dataset):
         # Compute patch and latent sizes using mode-specific configs
         # use_latents=True for diffusion mode (always works in latent space)
         use_latents_for_sizing = (self.mode_type == 'diffusion')
+        ldm_cfg = unet_config if self.mode_type != 'cvae' else None
         patch_size, latent_size, vae_downsample_factor, unet_downsample_factor, total_divisor = compute_patch_and_latent_sizes(
             dataset_config,
             vae_config,
-            unet_config,
+            ldm_config=ldm_cfg,
             use_latents=use_latents_for_sizing,
             self=self
         )
@@ -265,6 +283,9 @@ class UrbanInpaintingDataset(Dataset):
         # Load latents for Temperature predictor mode
         elif self.mode_type == 'temperature':
             self._load_temperature_latents()
+        # Load conditioning latents for CVAE inpainting mode
+        elif self.mode_type == 'cvae':
+            self._load_cvae_latents()
         
         # Final summary
         self._print_summary()
@@ -673,6 +694,35 @@ class UrbanInpaintingDataset(Dataset):
         print(f"\n✓ Successfully loaded latents for {len(self.group_latents)} VAE groups")
         print(f"{'='*60}\n")
         
+    
+    def _load_cvae_latents(self):
+        """
+        Load conditioning latents for CVAE mode.
+        
+        Loads environmental latents for spatial conditioning in the CVAE decoder.
+        The target semantic channels are loaded from patches (full resolution),
+        not from latents.
+        """
+        if self.mode_type != 'cvae':
+            return
+        
+        cvae_config = getattr(self, 'cvae_config', {})
+        cond_latent_groups = cvae_config.get('conditioning', {}).get('latent_space', [])
+        
+        if cond_latent_groups:
+            print(f"\n{'='*60}")
+            print(f"Loading conditioning latents for CVAE '{self.mode_target}'")
+            print(f"{'='*60}")
+            
+            for cond_spec in cond_latent_groups:
+                cond_group = cond_spec['group']
+                print(f"\nConditioning group: '{cond_group}'")
+                
+                cond_latents = self._load_group_latents(cond_group, reconcile=True)
+                self.group_latents[cond_group] = cond_latents
+            
+            print(f"\n✓ Loaded conditioning latents for {len(self.group_latents)} groups")
+            print(f"{'='*60}\n")
     
     def _load_temperature_latents(self):
         """
@@ -1518,6 +1568,149 @@ class UrbanInpaintingDataset(Dataset):
                 # Mark that this is full-res image needing encoding
                 cond['meta']['needs_encoding'] = True
                 return pred_image, cond
+        
+        elif self.mode_type == 'cvae':
+            # CVAE mode: returns (target, conditioning_dict)
+            # Target: full-resolution semantic channels [C, H, W]
+            # Conditioning: mask, environmental latent, scalar controls
+            vae_config = self.vae_groups[self.mode_target]
+            target_layers = vae_config.get('layers', [])
+            
+            if len(target_layers) == 0:
+                raise ValueError(
+                    f"VAE group '{self.mode_target}' has no layers defined"
+                )
+            
+            # Extract target channels (same as VAE mode)
+            target_indices = []
+            target_channel_names = []
+            target_layer_names = []
+            
+            for target_layer in target_layers:
+                layer_matches = get_layer_channels_from_names(channel_names, target_layer)
+                if len(layer_matches) == 0:
+                    raise ValueError(
+                        f"CVAE inpainting group '{self.mode_target}' requires layer '{target_layer}', "
+                        f"but it was not found in patch. Available: {set(layer_names)}"
+                    )
+                for idx, name in layer_matches:
+                    target_indices.append(idx)
+                    target_channel_names.append(name)
+                    target_layer_names.append(layer_names[idx])
+            
+            target = unified_image[target_indices]  # [C_target, H, W]
+            
+            # Generate inpainting mask (same as diffusion mode)
+            H, W = target.shape[-2:]
+            inpainting_config = self.config.get('inpainting_params', {})
+            seed = inpainting_config.get('seed', 42)
+            
+            # Extract street_blocks layer for mask generation
+            street_blocks_layer = None
+            sb_matches = get_layer_channels_from_names(channel_names, 'street_blocks')
+            if sb_matches:
+                sb_idx = sb_matches[0][0]
+                street_blocks_layer = unified_image[sb_idx].numpy()
+            
+            mask_np = create_inpainting_mask(
+                H, W,
+                hole_config=inpainting_config,
+                street_blocks_layer=street_blocks_layer,
+                patch_info={'index': index},
+                seed=seed
+            )
+            mask = torch.from_numpy(mask_np).float().unsqueeze(0)  # [1, H, W]
+            
+            # Build conditioning dict
+            cond = {
+                'mask': mask,  # [1, H, W] full resolution
+                'meta': patch_data['meta'].copy()
+            }
+            cond['meta']['layer_names'] = target_layer_names
+            cond['meta']['channel_names'] = target_channel_names
+            
+            # Downsample mask to latent resolution for decoder conditioning
+            latent_h = self.latent_size
+            latent_w = self.latent_size
+            mask_latent = torch.nn.functional.interpolate(
+                mask.unsqueeze(0),  # [1, 1, H, W]
+                size=(latent_h, latent_w),
+                mode='nearest'
+            ).squeeze(0)  # [1, H_lat, W_lat]
+            cond['mask_latent'] = mask_latent
+            
+            # Load latent-space conditioning (e.g., environmental)
+            cvae_config = getattr(self, 'cvae_config', {})
+            cond_latent_groups = cvae_config.get('conditioning', {}).get('latent_space', [])
+            latent_cond_list = [mask_latent]  # Start with mask at latent res
+            latent_cond_names = ['inpainting_mask']
+            
+            for cond_spec in cond_latent_groups:
+                group_name = cond_spec['group']
+                if group_name in self.group_latents and self.group_latents[group_name] is not None:
+                    cond_latent_path = self.group_latents[group_name][index]
+                    cond_latent = load_single_latent(cond_latent_path, device=None)
+                    if cond_latent is not None:
+                        cond[group_name] = cond_latent
+                        latent_cond_list.append(cond_latent)
+                        latent_cond_names.append(group_name)
+                    else:
+                        # Latent loading failed - will need on-the-fly encoding
+                        # Extract full-res image for this group
+                        cond_group_config = self.vae_groups[group_name]
+                        cond_layers = cond_group_config.get('layers', [])
+                        cond_image = self._extract_group_channels(
+                            unified_image, channel_names, layer_names, cond_layers
+                        )
+                        cond[f'{group_name}_image'] = cond_image  # Mark for encoding
+            
+            # Stack all latent-resolution conditioning into one tensor
+            cond['decoder_cond'] = torch.cat(latent_cond_list, dim=0)  # [cond_channels, H_lat, W_lat]
+            cond['meta']['decoder_cond_names'] = latent_cond_names
+            
+            # Scalar controls
+            cvae_scalar_controls = cvae_config.get('scalar_controls', None)
+            scalar_controls_enabled = (
+                isinstance(cvae_scalar_controls, list) and len(cvae_scalar_controls) > 0
+            ) or (
+                isinstance(cvae_scalar_controls, bool) and cvae_scalar_controls
+            )
+            
+            if scalar_controls_enabled:
+                stage_control_names = cvae_scalar_controls if isinstance(cvae_scalar_controls, list) else None
+                control_specs = parse_scalar_controls_config(self.config, stage_control_names=stage_control_names)
+                
+                for control_spec in control_specs:
+                    scalar_keys = control_spec['keys']
+                    training_config = control_spec['training']
+                    
+                    try:
+                        x_current = compute_scalar_from_layer(
+                            unified_image=unified_image,
+                            channel_names=channel_names,
+                            control_spec=control_spec,
+                            cond=cond
+                        )
+                    except Exception as e:
+                        continue  # Skip failed scalar computation
+                    
+                    if len(scalar_keys) == 1:
+                        target_scalar = generate_training_target_scalar(
+                            x_current=x_current,
+                            training_config=training_config,
+                            device=unified_image.device
+                        )
+                        cond[scalar_keys[0]] = target_scalar.reshape(1)
+                    elif len(scalar_keys) == 2:
+                        center = x_current
+                        delta_range = training_config.get('relative_delta_range', [-0.15, 0.15])
+                        delta_width = torch.FloatTensor(1).uniform_(
+                            abs(delta_range[0]), abs(delta_range[1])
+                        ).to(unified_image.device)
+                        cond[scalar_keys[0]] = torch.clamp(center - delta_width, 0.0, 1.0).reshape(1)
+                        cond[scalar_keys[1]] = torch.clamp(center + delta_width, 0.0, 1.0).reshape(1)
+            
+            return target, cond
         
         else:
             raise ValueError(f"Unsupported mode_type: {self.mode_type}")
