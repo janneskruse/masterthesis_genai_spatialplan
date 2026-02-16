@@ -609,7 +609,7 @@ train_params:
         vegetation: 1.0
       
       # Discriminator (adversarial loss for sharp outputs)
-      use_discriminator: true
+      use_discriminator: false
       disc_weight: 0.5
       disc_start: 5000  # Start discriminator after N steps (~30 epochs)
       
