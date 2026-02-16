@@ -704,6 +704,39 @@ train_params:
       #     use_dice: True
       #     weight: 0.75
       
+    semantic_structural:
+      epochs: 40
+      batch_size: 4
+      lr: 0.0001
+      kl_weight: 0.000001
+      binary_channel_weight: 1.0
+      continuous_channel_weight: 2.0 
+      dice_weight: 0.5  # Default dice weight
+      perceptual_weight: 0.0  # Not useful for semantic binary masks/height data
+      disc_weight: 0.5  # Adversarial loss to enforce sharp edges
+      # disc_start: 5000  # Start discriminator after 5k steps (~30 epochs at batch_size=4)
+      use_discriminator: False
+      use_perceptual: False  # Not useful for semantic binary masks/height data
+      tanh_activation: False  # as Binary + continuous mixed
+      img_save_steps: 64
+      
+      # Per-layer weight overrides
+      # Use to balance importance of individual layers in latent representation
+      layer_weights:
+        buildings: 2.5        # Boost buildings (reduce sparse noise)
+        streets: 0.4          # Suppress streets (prevent over-dominance)
+        buildings_heights: 2.0
+        building_shapes: 1.5
+      
+      # Per-layer dice loss configuration (overrides defaults from layer registry)
+      # layer_dice_config:
+      #   streets:
+      #     use_dice: True
+      #     weight: 0.75
+      #   water:
+      #     use_dice: True
+      #     weight: 0.75
+
     environmental:
       epochs: 50
       batch_size: 8
