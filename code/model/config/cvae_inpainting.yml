@@ -468,6 +468,8 @@ train_params:
     latent_temperature_predictor: 
       semantic: null
       satellite: null
+  existing_patch_size: 256 # optional override
+  existing_latent_size: 64 # optional override
 
   # Data augmentation for training (applies to all modes)
   augmentation:

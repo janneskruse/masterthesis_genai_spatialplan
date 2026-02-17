@@ -172,29 +172,38 @@ class UrbanInpaintingDataset(Dataset):
         im_channels = dataset_config.get('im_channels', 3)
         min_valid_percent = dataset_config.get('min_valid_percent', 90)
         self.big_data_storage_path = big_data_storage_path
+        train_config_global = config.get('train_params', {})
+        
+        existing_patch_size = train_config_global.get('existing_patch_size', None)
+        existing_latent_size = train_config_global.get('existing_latent_size', None)
 
         # Latent space configuration - store latent maps per VAE group
         # Structure: {'group_name': [list of latent file paths]}
         self.group_latents = {}
 
         # Compute patch and latent sizes using mode-specific configs
+        
+        # defaults (overriden in the function based on mode)
+        self.latent_size = 64
+        self.patch_size = 256
+        
         # use_latents=True for diffusion mode (always works in latent space)
         # use_latents_for_sizing = (self.mode_type == 'diffusion')
-        ldm_cfg = unet_config if self.mode_type != 'cvae' else None
-        patch_size, latent_size, vae_downsample_factor, unet_downsample_factor, total_divisor = compute_patch_and_latent_sizes(
+        ldm_cfg = unet_config if self.mode_type != 'cvae' else None  # LDM config only relevant for diffusion mode
+        compute_patch_and_latent_sizes(
             dataset_config=dataset_config,
             autoencoder_config=vae_config,
             ldm_config=ldm_cfg,
             # use_latents=use_latents_for_sizing,
+            existing_patch_size=existing_patch_size,
+            existing_latent_size=existing_latent_size,
             self=self
         )
         
         # Store parameters
         self.split = split
-        self.patch_size = patch_size
-        self.latent_size = latent_size
         self.stride_overlap = dataset_config.get('stride_overlap', 2)
-        self.stride = int(patch_size // self.stride_overlap)  # compute stride based on overlap
+        self.stride = int(self.patch_size // self.stride_overlap)  # compute stride based on overlap
         self.im_channels = im_channels
         self.min_valid_percent = min_valid_percent
 
@@ -217,7 +226,6 @@ class UrbanInpaintingDataset(Dataset):
         self.hole_config = self.inpainting_config
         
         # Data augmentation configuration
-        train_config_global = config.get('train_params', {})
         self.augmentation_config = train_config_global.get('augmentation', {'enabled': False})
         self.use_augmentation = (
             self.augmentation_config.get('enabled', False) and 
@@ -1319,7 +1327,7 @@ class UrbanInpaintingDataset(Dataset):
             # Build conditioning dictionary
             cond = {'meta': patch_data['meta'].copy()}
             
-            # Use pre-computed latent resolution (all VAEs must have same downsampling)
+            # Set latent resolution
             latent_h = self.latent_size
             latent_w = self.latent_size
             

@@ -200,6 +200,8 @@ def compute_patch_and_latent_sizes(
     dataset_config: dict,
     autoencoder_config: dict,
     ldm_config: dict = None,
+    existing_patch_size: int = None,
+    existing_latent_size: int = None,
     self=None
 ) -> tuple[int, int, int, int, int]:
     """
@@ -227,8 +229,12 @@ def compute_patch_and_latent_sizes(
     # Initial calculation
     pixel_size = dataset_config.get('patch_size_m', 650)
     im_res = dataset_config.get('res', 3)
-    patch_size = int(pixel_size / im_res) # compute patch size in pixels
-    patch_size = patch_size - (patch_size % 8) # make patch size divisible by 8
+    
+    if not existing_patch_size:
+        patch_size = int(pixel_size / im_res) # compute patch size in pixels
+        patch_size = patch_size - (patch_size % 8) # make patch size divisible by 8
+    else:
+        patch_size = existing_patch_size
     
     # VAE spatial downsample factor (from encoder architecture)
     # Always computed from the autoencoder config — the CVAE/VAE encoder
@@ -238,7 +244,9 @@ def compute_patch_and_latent_sizes(
     )
     
     # Ensure patch is divisible by VAE factor (needed for all modes)
-    patch_size = patch_size - (patch_size % vae_downsample_factor)
+    if not existing_patch_size:
+        patch_size = patch_size - (patch_size % vae_downsample_factor)
+
     
     # U-Net / LDM additional downsample factor
     unet_downsample_factor = 1
@@ -251,14 +259,20 @@ def compute_patch_and_latent_sizes(
     # share the same architecture as the base VAE)
     
     # Combined divisor — must satisfy all components
-    total_divisor = vae_downsample_factor * unet_downsample_factor
-    patch_size = patch_size - (patch_size % total_divisor)
+    if not existing_patch_size:
+        total_divisor = vae_downsample_factor * unet_downsample_factor
+        patch_size = patch_size - (patch_size % total_divisor)
     
     # Latent size
-    latent_size = patch_size // vae_downsample_factor
+    if not existing_latent_size:
+        latent_size = patch_size // vae_downsample_factor
+    else:
+        latent_size = existing_latent_size
     
     if self is not None:
         self.vae_downsample_factor = vae_downsample_factor
+        self.patch_size = patch_size
+        self.latent_size = latent_size
     
     # Summary
     print(f"Using patch size: {patch_size} pixels ({patch_size * im_res} m at {im_res} m resolution)")
