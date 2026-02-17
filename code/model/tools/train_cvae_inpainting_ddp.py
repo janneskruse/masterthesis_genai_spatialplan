@@ -69,11 +69,16 @@ def compute_masked_reconstruction_loss(
     """
     Compute reconstruction loss with separate weighting inside/outside mask.
     
-    Splits the loss into masked region (where generation happens) and
-    context region (where preservation matters), with configurable weights.
+    Uses per-pixel mask weighting on type-aware losses to emphasize the
+    inpainting region while preserving context reconstruction quality.
+    
+    For binary channels, sigmoid is applied to logits before computing
+    per-pixel differences (so L1 compares probabilities, not raw logits).
+    For categorical channels, softmax is applied before pixel diff.
+    Continuous channels are compared directly.
     
     Args:
-        recon: Reconstructed output [B, C, H, W]
+        recon: Reconstructed output [B, C, H, W] (logits for binary/categorical)
         target: Ground truth [B, C, H, W]
         mask: Inpainting mask [B, 1, H, W] (1 = inpaint region)
         channel_names: List of channel names
@@ -90,7 +95,8 @@ def compute_masked_reconstruction_loss(
     Returns:
         (loss_dict, total_loss) tuple
     """
-    # Compute full-image reconstruction loss (unmasked)
+    # Compute full-image typed reconstruction loss (BCE, Dice, MSE, etc.)
+    # This uses proper loss functions for each channel type
     loss_dict_full, recon_loss_full = compute_reconstruction_loss(
         recon, target, channel_names, layer_names,
         layers_registry,
@@ -102,30 +108,49 @@ def compute_masked_reconstruction_loss(
         layer_weights=layer_weights,
     )
     
-    # Compute per-pixel weighting: higher inside mask, lower outside
-    # mask shape: [B, 1, H, W] → broadcasts over channels
-    weight_map = mask * mask_loss_weight + (1.0 - mask) * outside_weight
-    
-    # Apply the weight map to per-pixel losses
-    # For simplicity and numerical stability, compute weighted L1/MSE manually
-    # on the already-computed channel-level losses
-    
-    # Pixel-level weighted loss for masked emphasis  
-    if recon.shape == target.shape:
-        pixel_diff = F.l1_loss(recon, target, reduction='none')  # [B, C, H, W]
-        weighted_pixel_loss = (pixel_diff * weight_map).mean()
-    else:
-        weighted_pixel_loss = recon_loss_full
-    
-    # The total loss combines:
-    # 1) The per-layer typed loss (BCE, Dice, etc.) from compute_reconstruction_loss
-    # 2) An additional masked weighting term to emphasize the inpainting region
-    # We blend them: use the typed loss for proper gradients, but scale by mask ratio
+    # Compute mask-weighted per-pixel loss for inpainting emphasis.
+    # Convert logits → probabilities for binary/categorical channels so that
+    # L1 differences are meaningful (comparing values in the same [0,1] range).
     mask_ratio = mask.mean()
     
-    # Effective loss: use typed loss but adjusted for mask emphasis
-    total_loss = recon_loss_full * outside_weight + weighted_pixel_loss * (mask_loss_weight - outside_weight) * mask_ratio
+    if recon.shape == target.shape:
+        recon_activated = recon.clone()
+        ch_idx = 0
+        processed_categorical = set()
+        
+        for layer_name in layer_names:
+            layer_info = layers_registry.get(layer_name, {})
+            layer_type = layer_info.get('type', 'continuous')
+            
+            if layer_type == 'binary':
+                recon_activated[:, ch_idx:ch_idx+1] = torch.sigmoid(recon[:, ch_idx:ch_idx+1])
+                ch_idx += 1
+            elif layer_type == 'categorical' and layer_name not in processed_categorical:
+                processed_categorical.add(layer_name)
+                num_classes = layer_info.get('num_classes', 1)
+                recon_activated[:, ch_idx:ch_idx+num_classes] = torch.softmax(
+                    recon[:, ch_idx:ch_idx+num_classes], dim=1
+                )
+                ch_idx += num_classes
+            elif layer_type == 'categorical':
+                ch_idx += 1  # already processed
+            else:
+                ch_idx += 1  # continuous: keep raw values
+        
+        # Per-pixel L1 on activated outputs vs targets (both in [0,1] for binary)
+        pixel_diff = F.l1_loss(recon_activated, target, reduction='none')  # [B, C, H, W]
+        
+        # Mask weighting: higher weight inside inpainting region
+        weight_map = mask * mask_loss_weight + (1.0 - mask) * outside_weight
+        weighted_pixel_loss = (pixel_diff * weight_map).mean()
+    else:
+        weighted_pixel_loss = torch.tensor(0.0, device=recon.device)
     
+    # Total loss: typed loss (correct gradients) + mask-weighted pixel loss (emphasis)
+    total_loss = recon_loss_full + weighted_pixel_loss
+    
+    loss_dict_full['typed_recon'] = recon_loss_full.item() if isinstance(recon_loss_full, torch.Tensor) else recon_loss_full
+    loss_dict_full['masked_pixel'] = weighted_pixel_loss.item() if isinstance(weighted_pixel_loss, torch.Tensor) else weighted_pixel_loss
     loss_dict_full['masked_recon'] = total_loss.item()
     loss_dict_full['mask_coverage'] = mask_ratio.item()
     
@@ -694,7 +719,8 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
             if is_main:
                 postfix = {
                     'loss': f'{cvae_loss.item():.4f}',
-                    'recon': f'{loss_dict.get("total_recon", recon_loss.item()):.4f}',
+                    'typed': f'{loss_dict.get("typed_recon", 0):.4f}',
+                    'mpx': f'{loss_dict.get("masked_pixel", 0):.4f}',
                     'kl': f'{kl_loss.item():.6f}',
                     'kl_w': f'{current_kl_weight:.5f}',
                 }
