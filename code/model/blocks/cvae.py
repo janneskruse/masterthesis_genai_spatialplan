@@ -260,11 +260,12 @@ class ConditionalVAE(nn.Module):
         out = self.decoder_conv_in(out)  # [B, mid_channels[-1], H', W']
         
         # Build scalar conditioning embedding (additive, like UNet time embedding)
-        cond_emb = None
+        # Always initialize to zeros — decoder blocks have t_emb_dim set and
+        # expect a valid tensor even when no scalar controls are configured.
+        cond_emb = torch.zeros(
+            z.shape[0], self.cond_emb_dim, device=z.device
+        )
         if self.scalar_mlps and scalar_cond is not None:
-            cond_emb = torch.zeros(
-                z.shape[0], self.cond_emb_dim, device=z.device
-            )
             for key, mlp in self.scalar_mlps.items():
                 if key in scalar_cond:
                     scalar = scalar_cond[key].float()
