@@ -622,7 +622,7 @@ train_params:
       # Other
       tanh_activation: false  # Mixed binary + continuous
       penalize_out_of_range: false
-      img_save_epochs: 5
+      img_save_steps: 64
       
       # Gradient clipping
       max_grad_norm: 1.0

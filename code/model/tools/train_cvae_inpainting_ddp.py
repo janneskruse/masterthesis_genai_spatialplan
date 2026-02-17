@@ -285,7 +285,7 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
     perceptual_weight = cvae_training_config.get('perceptual_weight', 0.0)
     max_grad_norm = cvae_training_config.get('max_grad_norm', 1.0)
     freeze_encoder_epochs = cvae_training_config.get('freeze_encoder_epochs', 0)
-    img_save_epochs = cvae_training_config.get('img_save_epochs', 5)
+    img_save_steps = cvae_training_config.get('img_save_steps', 64)
     tanh_activation = cvae_training_config.get('tanh_activation', False)
     
     # Checkpoint naming from cvae_inpainting config
@@ -729,7 +729,7 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
                 progress_bar.set_postfix(postfix)
             
             # Save sample reconstructions
-            if is_main and (epoch_idx + 1) % img_save_epochs == 0:
+            if is_main and global_step % img_save_steps == 0:
                 with torch.no_grad():
                     save_vae_reconstruction_samples(
                         input_tensor=target_tensor,
