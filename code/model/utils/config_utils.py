@@ -262,6 +262,8 @@ def compute_patch_and_latent_sizes(
     if not existing_patch_size:
         total_divisor = vae_downsample_factor * unet_downsample_factor
         patch_size = patch_size - (patch_size % total_divisor)
+    else:
+        total_divisor = patch_size // (patch_size // vae_downsample_factor)  # infer total divisor from existing patch size
     
     # Latent size
     if not existing_latent_size:
