@@ -448,7 +448,7 @@ cvae_sampling:
 
 train_params:
   seed: 45
-  task_name: 'two_stage_15'
+  task_name: 'cvae_inpainting'
 
   existing_paths: # to use parts from previous experiments
     # if specified, the respective training/creation will be skipped
