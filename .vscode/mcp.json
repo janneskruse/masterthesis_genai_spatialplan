@@ -11,6 +11,9 @@
     "ControlCity Docs": {
       "type": "sse",
       "url": "https://gitmcp.io/fangshuoz/ControlCity"
+    },
+    "Pluralistic-Inpainting Docs": {
+      "url": "https://gitmcp.io/lyndonzheng/Pluralistic-Inpainting"
     }
   }
 }

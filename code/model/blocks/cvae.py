@@ -129,6 +129,7 @@ class ConditionalVAE(nn.Module):
         self.encoder_conv_out = nn.Conv2d(
             self.down_channels[-1], 2 * self.z_channels, kernel_size=3, padding=1
         )
+        # Latent Dimension is 2*Latent because we are predicting mean & variance
         self.pre_quant_conv = nn.Conv2d(
             2 * self.z_channels, 2 * self.z_channels, kernel_size=1
         )
