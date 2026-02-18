@@ -38,7 +38,7 @@ from model.utils.data_utils import collate_fn
 from model.utils.load_cuda import load_cuda
 from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.vae_utils import (
-    save_vae_reconstruction_samples, 
+    save_layerwise_comparisons, 
     get_kl_weight, 
     PosWeightEMA, 
     compute_reconstruction_loss
@@ -763,16 +763,17 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
             # Save sample reconstructions
             if is_main and global_step % img_save_steps == 0:
                 with torch.no_grad():
-                    save_vae_reconstruction_samples(
+                    save_layerwise_comparisons(
                         input_tensor=target_tensor,
                         recon_tensor=recon,
                         channel_names=channel_names,
                         layer_names=layer_names_batch,
                         layers_registry=layers_registry,
                         save_dir=samples_dir,
-                        step=global_step,
+                        filename_prefix=f"recon_step_{global_step}",
                         n_samples=8,
-                        save_rgb_composite=False,
+                        use_colormaps=True,
+                        mask=mask,
                     )
         
         # Synchronize epoch
