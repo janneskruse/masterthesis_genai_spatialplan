@@ -23,6 +23,7 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -140,9 +141,14 @@ def compute_masked_reconstruction_loss(
         # Per-pixel L1 on activated outputs vs targets (both in [0,1] for binary)
         pixel_diff = F.l1_loss(recon_activated, target, reduction='none')  # [B, C, H, W]
         
-        # Mask weighting: higher weight inside inpainting region
-        weight_map = mask * mask_loss_weight + (1.0 - mask) * outside_weight
-        weighted_pixel_loss = (pixel_diff * weight_map).mean()
+        # Area-normalized mask weighting: compute inside/outside losses separately
+        # so the effective loss is independent of mask coverage
+        mask_pixels = mask.sum().clamp(min=1.0)
+        outside_pixels = (1.0 - mask).sum().clamp(min=1.0)
+        
+        inside_loss = (pixel_diff * mask).sum() / mask_pixels
+        outside_loss = (pixel_diff * (1.0 - mask)).sum() / outside_pixels
+        weighted_pixel_loss = mask_loss_weight * inside_loss + outside_weight * outside_loss
     else:
         weighted_pixel_loss = torch.tensor(0.0, device=recon.device)
     
@@ -507,6 +513,17 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
     if use_discriminator:
         optimizer_disc = Adam(discriminator.parameters(), lr=adjusted_lr)
     
+    # Learning rate scheduler (cosine annealing)
+    lr_scheduler_config = cvae_training_config.get('lr_scheduler', {})
+    scheduler_type = lr_scheduler_config.get('type', 'cosine')
+    eta_min = lr_scheduler_config.get('eta_min', 1e-6)
+    
+    scheduler = None
+    if scheduler_type == 'cosine':
+        scheduler = CosineAnnealingLR(
+            optimizer_cvae, T_max=num_epochs, eta_min=eta_min
+        )
+    
     # Load CVAE checkpoint if resuming
     start_epoch = 0
     if load_checkpoint_path and os.path.exists(load_checkpoint_path):
@@ -517,6 +534,19 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
             device=device,
             is_main=is_main
         )
+        # Load scheduler state if available, otherwise advance to correct epoch
+        if scheduler is not None:
+            ckpt_data = torch.load(load_checkpoint_path, map_location=device, weights_only=False)
+            if 'scheduler_state_dict' in ckpt_data:
+                scheduler.load_state_dict(ckpt_data['scheduler_state_dict'])
+                if is_main:
+                    print(f"  Loaded scheduler state (LR: {scheduler.get_last_lr()[0]:.8f})")
+            else:
+                # Advance scheduler to match resumed epoch
+                for _ in range(start_epoch):
+                    scheduler.step()
+                if is_main:
+                    print(f"  Advanced scheduler to epoch {start_epoch} (LR: {scheduler.get_last_lr()[0]:.8f})")
     
     if is_main:
         print(f"\n{'='*50}")
@@ -524,6 +554,7 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
         print(f"{'='*50}")
         print(f"  Epochs: {num_epochs} (starting from {start_epoch})")
         print(f"  Learning rate: {adjusted_lr:.6f} (base {base_lr:.6f} × {world_size})")
+        print(f"  LR scheduler: {scheduler_type} (eta_min={eta_min:.1e})" if scheduler else "  LR scheduler: none")
         print(f"  Batch size: {batch_size} per GPU, {batch_size * world_size} effective")
         print(f"  KL weight: {kl_weight_final} (annealing: {kl_annealing_config.get('enabled', False)})")
         print(f"  Mask loss weight: {mask_loss_weight} (outside: {outside_weight})")
@@ -750,7 +781,8 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
         # Epoch summary
         if is_main:
             epoch_loss = np.mean(losses_epoch)
-            summary = f'\n  Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f} | KL_w: {current_kl_weight:.6f}'
+            current_lr = scheduler.get_last_lr()[0] if scheduler else adjusted_lr
+            summary = f'\n  Epoch {epoch_idx + 1}/{num_epochs} | Loss: {epoch_loss:.4f} | KL_w: {current_kl_weight:.6f} | LR: {current_lr:.2e}'
             if use_discriminator and epoch_idx >= disc_start_epoch and losses_disc_epoch:
                 summary += f' | Disc: {np.mean(losses_disc_epoch):.4f}'
             print(summary)
@@ -764,6 +796,7 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
                 'epoch': epoch_idx + 1,
                 'model_state_dict': model_to_save.state_dict(),
                 'optimizer_state_dict': optimizer_cvae.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
                 'loss': epoch_loss,
                 'kl_weight': current_kl_weight,
                 'cvae_config': cvae_config,
@@ -782,6 +815,10 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
                 )
                 torch.save(checkpoint_state, periodic_path)
                 print(f'  Saved periodic checkpoint: {periodic_path}')
+        
+        # Step learning rate scheduler
+        if scheduler is not None:
+            scheduler.step()
         
         if world_size > 1:
             dist.barrier()
