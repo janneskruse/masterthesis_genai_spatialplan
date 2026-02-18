@@ -628,7 +628,7 @@ train_params:
       
       # Learning rate scheduler
       lr_scheduler:
-        type: 'cosine'        # 'cosine' or 'none'
+        type: null #'cosine'        # 'cosine' or 'none'
         eta_min: 0.000001     # minimum LR at end of cosine schedule
       
       # Encoder freezing for initial epochs (optional)
