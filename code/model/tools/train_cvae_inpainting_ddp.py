@@ -379,7 +379,7 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
     # 1) Check existing_paths.vae_checkpoints for the target group (absolute path)
     # 2) Fall back to vae_group_config.checkpoint_name in the results dir
     pretrained_path = existing_paths_result.vae_checkpoints.get(target_group, None)
-    print(["[DEBUG] Existing paths check:", pretrained_path, vae_group_config.get('checkpoint_name', None), existing_paths_result, target_group])
+    # print(["[DEBUG] Existing paths check:", pretrained_path, vae_group_config.get('checkpoint_name', None), existing_paths_result, target_group])
     if pretrained_path is None:
         # Use the checkpoint_name from the VAE group config
         vae_ckpt_name = vae_group_config.get('checkpoint_name', f'{target_group}_vae_ckpt.pth')
