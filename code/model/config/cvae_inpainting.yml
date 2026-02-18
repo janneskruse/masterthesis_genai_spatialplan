@@ -599,8 +599,10 @@ train_params:
       
       # Inpainting loss emphasis
       # Weight for loss inside inpainting mask vs outside
-      mask_loss_weight: 5.0   # Higher weight inside mask (where generation happens)
-      outside_weight: 1.0     # Also learn to preserve context
+      # Note: this L1 pixel loss is ADDITIVE to the typed reconstruction loss
+      # (BCE/MSE/Dice), so keep it moderate to avoid double-counting domination
+      mask_loss_weight: 2.0   # Moderate emphasis inside mask (typed loss already covers it)
+      outside_weight: 0.5     # Light context preservation (typed loss handles it)
       
       # Per-layer weight overrides (same as VAE training)
       layer_weights:
