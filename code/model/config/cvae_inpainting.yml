@@ -581,6 +581,9 @@ train_params:
       # Learning rate — lower than initial VAE training for fine-tuning
       lr: 0.00005
       
+      # Differential LR: pretrained weights learn slower than new weights
+      pretrained_lr_scale: 0.1  # Pretrained params get lr * 0.1
+      
       # KL divergence weight — MUCH higher than VAE reconstruction (1e-6)
       # This is critical for diverse sampling: too low → deterministic output,
       # too high → blurry/incoherent output
@@ -588,9 +591,12 @@ train_params:
       kl_weight: 0.001
       kl_annealing:
         enabled: true
-        start_weight: 0.0001    # Start low to stabilize reconstruction first
-        end_weight: 0.001       # Anneal to target KL weight
-        warmup_epochs: 20       # Linear warmup over first 20 epochs
+        start_weight: 0.0        # Start at zero — pure reconstruction first
+        end_weight: 0.0005       # Anneal to conservative KL weight
+        warmup_epochs: 30        # Slow warmup over 30 epochs
+      
+      # Free-bits KL: per-channel minimum KL (nats) to prevent posterior collapse
+      free_bits: 1.0
       
       # Reconstruction loss weights
       binary_channel_weight: 1.0

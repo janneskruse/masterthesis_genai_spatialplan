@@ -449,6 +449,41 @@ class PosWeightEMA:
             self.val[ch_idx] = self.m * self.val[ch_idx] + (1 - self.m) * pw
         return self.val[ch_idx].detach().clone()  # Return detached value as snapshot that won't change later
 
+def kl_with_free_bits(
+    mean: torch.Tensor,
+    logvar: torch.Tensor,
+    free_bits: float = 1.0,
+) -> torch.Tensor:
+    """
+    KL divergence with per-channel free-bits clamping.
+    
+    Prevents posterior collapse by ensuring each latent channel contributes
+    at least `free_bits` nats of KL, so the decoder is forced to use all
+    channels rather than ignoring some.
+    
+    Args:
+        mean: Encoder mean [B, C, H, W]
+        logvar: Encoder log-variance [B, C, H, W]
+        free_bits: Minimum KL per channel (nats). Channels whose KL is
+                   below this floor are clamped, removing gradient pressure.
+                   Typical value: 0.5–2.0.
+    
+    Returns:
+        Scalar KL loss (mean over batch)
+    """
+    # Per-element KL: 0.5 * (mu^2 + exp(logvar) - 1 - logvar)
+    kl_per_element = 0.5 * (mean.pow(2) + logvar.exp() - 1.0 - logvar)  # [B, C, H, W]
+    
+    # Average over spatial dims, keep channel dim → [B, C]
+    kl_per_channel = kl_per_element.mean(dim=[2, 3])
+    
+    # Clamp each channel from below at free_bits nats
+    kl_clamped = torch.clamp(kl_per_channel, min=free_bits)  # [B, C]
+    
+    # Sum over channels, mean over batch → scalar
+    return kl_clamped.sum(dim=1).mean()
+
+
 def get_kl_weight(epoch: int, kl_config: dict) -> float:
     """
     Compute KL weight with optional linear annealing.

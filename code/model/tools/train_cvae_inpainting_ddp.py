@@ -40,6 +40,7 @@ from model.utils.distributed import setup_distributed, cleanup_distributed
 from model.utils.vae_utils import (
     save_layerwise_comparisons, 
     get_kl_weight, 
+    kl_with_free_bits,
     PosWeightEMA, 
     compute_reconstruction_loss
 )
@@ -234,6 +235,7 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
     base_lr = cvae_training_config.get('lr', 0.00005)
     kl_weight_final = cvae_training_config.get('kl_weight', 0.001)
     kl_annealing_config = cvae_training_config.get('kl_annealing', {})
+    free_bits = cvae_training_config.get('free_bits', 1.0)
     mask_loss_weight = cvae_training_config.get('mask_loss_weight', 5.0)
     outside_weight = cvae_training_config.get('outside_weight', 1.0)
     binary_channel_weight = cvae_training_config.get('binary_channel_weight', 1.0)
@@ -466,7 +468,39 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     # Scale learning rate with world size
     adjusted_lr = base_lr * world_size
-    optimizer_cvae = Adam(model.parameters(), lr=adjusted_lr)
+    
+    # Differential learning rates: pretrained params get lower LR,
+    # new/randomly-initialized params get full LR
+    pretrained_lr_scale = cvae_training_config.get('pretrained_lr_scale', 0.1)
+    
+    # Identify new parameter prefixes (randomly initialized in CVAE)
+    new_param_prefixes = (
+        'cond_conv_in',       # conditioning projection (zero-init)
+        'decoder_conv_in',    # expanded decoder input (partial zero-init)
+        'decoder_mids',       # random init due to t_emb_dim mismatch
+        'decoder_layers',     # random init due to t_emb_dim mismatch
+        'scalar_mlps',        # new scalar control MLPs
+    )
+    
+    model_unwrapped = model.module if hasattr(model, 'module') else model
+    pretrained_params = []
+    new_params = []
+    for name, param in model_unwrapped.named_parameters():
+        if param.requires_grad:
+            if any(name.startswith(prefix) for prefix in new_param_prefixes):
+                new_params.append(param)
+            else:
+                pretrained_params.append(param)
+    
+    optimizer_cvae = Adam([
+        {'params': pretrained_params, 'lr': adjusted_lr * pretrained_lr_scale},
+        {'params': new_params, 'lr': adjusted_lr},
+    ])
+    
+    if is_main:
+        print(f"  Differential LR: pretrained={adjusted_lr * pretrained_lr_scale:.2e}, new={adjusted_lr:.2e}")
+        print(f"  Pretrained params: {sum(p.numel() for p in pretrained_params):,}")
+        print(f"  New params: {sum(p.numel() for p in new_params):,}")
     
     if use_discriminator:
         optimizer_disc = Adam(discriminator.parameters(), lr=adjusted_lr)
@@ -658,11 +692,8 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
                 layer_weights=layer_weights,
             )
             
-            # KL divergence loss (per-pixel normalized, then weighted)
-            kl_loss = -0.5 * torch.sum(
-                1 + logvar - mean.pow(2) - logvar.exp()
-            )
-            kl_loss = kl_loss / (target_tensor.shape[0] * target_tensor.shape[2] * target_tensor.shape[3])
+            # KL divergence loss with free-bits clamping (prevents posterior collapse)
+            kl_loss = kl_with_free_bits(mean, logvar, free_bits=free_bits)
             
             # Generator loss (fool discriminator)
             gen_loss = 0.0
