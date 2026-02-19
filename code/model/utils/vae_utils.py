@@ -96,7 +96,8 @@ def compute_reconstruction_loss(
     binary_weight=1.0, continuous_weight=1.0, categorical_weight=1.0,
     layer_dice_config=None, posw_ema=None,
     all_channels_tensor=None,  # Full tensor with all channels for mask lookup
-    layer_weights=None  # Per-layer weight overrides
+    layer_weights=None,  # Per-layer weight overrides
+    pixel_weights=None,  # Optional [B, 1, H, W] spatial weighting (e.g., inpainting mask focus)
 ):
     """
     Compute reconstruction loss for any tensor using dynamic layer configuration.
@@ -121,6 +122,10 @@ def compute_reconstruction_loss(
         posw_ema: Optional PosWeightEMA tracker for stable class weighting (indexed by binary channel index)
         all_channels_tensor: Full input/target tensor with all channels (for mask layer lookup)
         layer_weights: Optional dict mapping layer names to custom weights (overrides defaults)
+        pixel_weights: Optional [B, 1, H, W] per-pixel spatial weights for inpainting.
+                       When provided, all per-pixel losses are weighted by this tensor,
+                       focusing gradients on the masked (generation) region.
+                       Pass None for standard VAE training (uniform weighting).
         
     Layer Config Options:
         - loss_type: 'mse' (default), 'l1', 'smooth_l1', or 'cross_entropy' (categorical)
@@ -149,6 +154,17 @@ def compute_reconstruction_loss(
     # Categorical layers span multiple channels (num_classes) and must be processed as a group
     categorical_processed = set()
     
+    # Spatial weighting for inpainting (when pixel_weights is provided)
+    use_pw = pixel_weights is not None
+    
+    def _pw_reduce(per_pixel_loss):
+        """Reduce per-pixel loss with spatial weights (inpainting mask focus)."""
+        pw = pixel_weights
+        # Match dimensions: pixel_weights is [B,1,H,W], CE output is [B,H,W]
+        while pw.dim() > per_pixel_loss.dim():
+            pw = pw.squeeze(1)
+        return (per_pixel_loss * pw).sum() / pw.sum().clamp(min=1.0)
+    
     idx = 0
     while idx < len(channel_names):
         channel_name = channel_names[idx]
@@ -172,7 +188,11 @@ def compute_reconstruction_loss(
             target_indices = target_cat.argmax(dim=1)  # [B, H, W] long
             
             # Compute cross-entropy loss
-            loss = F.cross_entropy(recon_cat, target_indices, reduction='mean')
+            if use_pw:
+                ce_per_px = F.cross_entropy(recon_cat, target_indices, reduction='none')  # [B, H, W]
+                loss = _pw_reduce(ce_per_px)
+            else:
+                loss = F.cross_entropy(recon_cat, target_indices, reduction='mean')
             losses[f'{layer_name}_ce'] = loss.item()
             
             # Apply per-layer weight if specified, otherwise use default
@@ -200,11 +220,26 @@ def compute_reconstruction_loss(
             # Compute BCE with logits and class-imbalance weighting
             if posw_ema is not None:
                 pw = posw_ema.update(binary_ch_idx, target_ch)
-                bce = F.binary_cross_entropy_with_logits(
-                    recon_ch, target_ch, pos_weight=pw, reduction='mean'
-                )
+                if use_pw:
+                    bce_per_px = F.binary_cross_entropy_with_logits(
+                        recon_ch, target_ch, pos_weight=pw, reduction='none'
+                    )
+                    bce = _pw_reduce(bce_per_px)
+                else:
+                    bce = F.binary_cross_entropy_with_logits(
+                        recon_ch, target_ch, pos_weight=pw, reduction='mean'
+                    )
             else:
-                bce = bce_with_logits_pos_weight(recon_ch, target_ch)
+                if use_pw:
+                    # Compute pos_weight manually, then do per-pixel BCE
+                    pos = target_ch.mean().clamp(1e-6, 1 - 1e-6)
+                    pw = ((1 - pos) / pos).detach()
+                    bce_per_px = F.binary_cross_entropy_with_logits(
+                        recon_ch, target_ch, pos_weight=pw, reduction='none'
+                    )
+                    bce = _pw_reduce(bce_per_px)
+                else:
+                    bce = bce_with_logits_pos_weight(recon_ch, target_ch)
             
             # Get per-layer dice configuration
             dice_config = get_layer_dice_config(layers_registry, layer_name)
@@ -217,7 +252,9 @@ def compute_reconstruction_loss(
             
             # Compute Dice loss if enabled for this layer
             if use_dice:
-                dice = dice_loss_from_logits(recon_ch, target_ch)
+                # When spatially weighted, compute dice only within the focus region
+                dice_mask = (pixel_weights > 0.5) if use_pw else None
+                dice = dice_loss_from_logits(recon_ch, target_ch, spatial_mask=dice_mask)
                 loss = bce + dice_weight * dice
                 losses[f'{channel_name}_dice'] = dice.item()
             else:
@@ -261,35 +298,42 @@ def compute_reconstruction_loss(
                     else:  # 'mse'
                         loss_per_pixel = F.mse_loss(recon_ch, target_ch, reduction='none')
                     
-                    # Apply mask weighting
-                    mask_weight = mask * mask_loss_weight + (1 - mask) * 1.0
-                    weighted_loss = loss_per_pixel * mask_weight
+                    # Apply mask weighting (layer mask, e.g. buildings for heights)
+                    layer_mask_weight = mask * mask_loss_weight + (1 - mask) * 1.0
+                    # Combine layer mask with inpainting spatial weights if provided
+                    if use_pw:
+                        combined_weight = layer_mask_weight * pixel_weights
+                    else:
+                        combined_weight = layer_mask_weight
+                    weighted_loss = loss_per_pixel * combined_weight
                     
                     # Normalize by mean weight to keep loss scale consistent across batches
                     # This prevents loss magnitude from varying with mask coverage percentage
-                    mean_weight = mask_weight.mean() + 1e-8
-                    loss = weighted_loss.sum() / (mask_weight.numel() * mean_weight)
+                    mean_weight = combined_weight.mean() + 1e-8
+                    loss = weighted_loss.sum() / (combined_weight.numel() * mean_weight)
                     
                     # Log mask coverage for debugging
                     mask_coverage = mask.mean().item()
                     losses[f'{channel_name}_mask_coverage'] = mask_coverage
                     
                 except ValueError:
-                    # Mask layer not found, fall back to unmasked loss
+                    # Mask layer not found, fall back to standard loss
                     if loss_type == 'l1':
-                        loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
+                        lpp = F.l1_loss(recon_ch, target_ch, reduction='none')
                     elif loss_type == 'smooth_l1':
-                        loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
+                        lpp = F.smooth_l1_loss(recon_ch, target_ch, reduction='none')
                     else:
-                        loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
+                        lpp = F.mse_loss(recon_ch, target_ch, reduction='none')
+                    loss = _pw_reduce(lpp) if use_pw else lpp.mean()
             else:
-                # No masking - standard loss
+                # No layer mask — standard loss (optionally with spatial weighting)
                 if loss_type == 'l1':
-                    loss = F.l1_loss(recon_ch, target_ch, reduction='mean')
+                    lpp = F.l1_loss(recon_ch, target_ch, reduction='none')
                 elif loss_type == 'smooth_l1':
-                    loss = F.smooth_l1_loss(recon_ch, target_ch, reduction='mean')
+                    lpp = F.smooth_l1_loss(recon_ch, target_ch, reduction='none')
                 else:  # 'mse'
-                    loss = F.mse_loss(recon_ch, target_ch, reduction='mean')
+                    lpp = F.mse_loss(recon_ch, target_ch, reduction='none')
+                loss = _pw_reduce(lpp) if use_pw else lpp.mean()
             
             # Log appropriate loss metric
             if loss_type == 'l1':
@@ -349,7 +393,7 @@ def bce_with_logits_pos_weight(logits, targets, pos_weight=None, eps=1e-6):
     )
 
 
-def dice_loss_from_logits(logits, targets, eps=1e-6):
+def dice_loss_from_logits(logits, targets, eps=1e-6, spatial_mask=None):
     """
     Dice loss for thin structures (streets, vegetation edges).
     Applies sigmoid to logits before computing overlap.
@@ -358,12 +402,18 @@ def dice_loss_from_logits(logits, targets, eps=1e-6):
         logits: [B,1,H,W] raw decoder output
         targets: [B,1,H,W] in {0,1}
         eps: Small epsilon for numerical stability
+        spatial_mask: Optional [B,1,H,W] boolean mask to restrict computation
+                      (e.g., only compute dice inside inpainting mask)
         
     Returns:
         Dice loss (1 - Dice coefficient)
     """
     targets = targets.clamp(0.0, 1.0)
     probs = torch.sigmoid(logits)
+    
+    if spatial_mask is not None:
+        probs = probs * spatial_mask.float()
+        targets = targets * spatial_mask.float()
     
     intersection = (probs * targets).sum(dim=(2, 3))
     union = probs.sum(dim=(2, 3)) + targets.sum(dim=(2, 3))
