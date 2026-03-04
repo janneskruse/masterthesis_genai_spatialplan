@@ -575,7 +575,7 @@ diffusion_stages:
           
       latent_space:
         - group: 'semantic'
-          layers: ['buildings', 'streets', 'buildings_heights' ] # 'vegetation'
+          layers: ['buildings', 'streets', 'buildings_heights', 'vegetation' ] # 'vegetation'
           
         - group: 'environmental'
           layers: ['ndvi', 'temperature']
