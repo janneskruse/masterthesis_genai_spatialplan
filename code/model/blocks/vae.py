@@ -110,6 +110,7 @@ class VAE(nn.Module):
         mean, logvar = torch.chunk(out, 2, dim=1)
         std = torch.exp(0.5 * logvar)
         sample = mean + std * torch.randn(mean.shape).to(device=x.device)
+        # could also do sample = mean + std * torch.randn_like(mean)
         return sample, mean, logvar
     
     def decode(self, z):
