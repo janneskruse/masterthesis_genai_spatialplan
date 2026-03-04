@@ -21,6 +21,7 @@ import torch
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.blocks.vae_registry import VAERegistry
 from model.utils.vae_utils import save_vae_reconstruction_samples
+from model.utils.samples import save_single_sample_all_layers
 from model.utils.layer_config import count_layer_channels, get_layer_info
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
@@ -178,18 +179,34 @@ def validate_vae(
     
     # Save reconstruction samples using same utility as training
     if channel_names and layer_names:
-        save_vae_reconstruction_samples(
-            input_tensor=input_batch,
-            recon_tensor=recon_batch,
-            channel_names=channel_names,
-            layer_names=layer_names,
-            layers_registry=layers_registry,
-            save_dir=save_dir,
-            step=run_idx,
-            n_samples=num_samples,
-            save_rgb_composite=True
-        )
-        print(f"✓ Saved reconstruction visualizations to {save_dir}")
+        if num_samples == 1:
+            # Single sample: all layers side-by-side in one plot
+            combined_path = os.path.join(save_dir, f'recon_step_{run_idx}_all_layers.png')
+            save_single_sample_all_layers(
+                input_tensor=input_batch,
+                recon_tensor=recon_batch,
+                channel_names=channel_names,
+                layer_names=layer_names,
+                layers_registry=layers_registry,
+                save_path=combined_path,
+                use_colormaps=True,
+                title=f'{vae_group.upper()} VAE — Ground Truth vs Reconstruction',
+            )
+            print(f"✓ Saved single-sample combined visualization to {combined_path}")
+        else:
+            # Multiple samples: separate per-channel/layer plots
+            save_vae_reconstruction_samples(
+                input_tensor=input_batch,
+                recon_tensor=recon_batch,
+                channel_names=channel_names,
+                layer_names=layer_names,
+                layers_registry=layers_registry,
+                save_dir=save_dir,
+                step=run_idx,
+                n_samples=num_samples,
+                save_rgb_composite=True
+            )
+            print(f"✓ Saved reconstruction visualizations to {save_dir}")
     else:
         print("⚠ No channel/layer names available, skipping detailed visualizations")
     

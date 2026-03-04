@@ -621,6 +621,137 @@ def save_rgb_comparison(
         print(f"[WARNING] Failed to save RGB comparison: {e}")
 
 
+def save_single_sample_all_layers(
+    input_tensor: torch.Tensor,
+    recon_tensor: torch.Tensor,
+    channel_names: List[str],
+    layer_names: List[str],
+    layers_registry: Dict,
+    save_path: str,
+    use_colormaps: bool = True,
+    title: Optional[str] = None,
+) -> None:
+    """
+    Save a single-sample comparison with ALL layers side by side in one plot.
+    
+    Top row: ground truth for each layer/variable.
+    Bottom row: reconstruction for each layer/variable.
+    
+    Designed for num_samples == 1 so every variable is visible at a glance.
+    
+    Args:
+        input_tensor: Input tensor [1, C, H, W]
+        recon_tensor: Reconstruction tensor [1, C, H, W]
+        channel_names: List of channel names
+        layer_names: List of layer names per channel
+        layers_registry: Layer configuration registry
+        save_path: Path to save the combined figure
+        use_colormaps: Whether to apply colormaps to continuous layers
+        title: Optional super-title for the figure
+    """
+    # Collect per-layer visualizations
+    gt_images: List[Tuple[np.ndarray, str]] = []
+    recon_images: List[Tuple[np.ndarray, str]] = []
+
+    categorical_processed: set = set()
+    ch_idx = 0
+
+    while ch_idx < len(channel_names):
+        if ch_idx >= input_tensor.shape[1]:
+            break
+
+        channel_name = channel_names[ch_idx]
+        layer_name = layer_names[ch_idx]
+        layer_info = layers_registry.get(layer_name, {})
+        layer_type = layer_info.get('type', 'continuous')
+
+        # --- categorical layers: aggregate one-hot channels ---
+        if is_categorical_layer(layer_info) and layer_name not in categorical_processed:
+            categorical_processed.add(layer_name)
+            num_classes = layer_info.get('num_classes', 1)
+
+            input_cat = input_tensor[:, ch_idx:ch_idx + num_classes, :, :]
+            recon_cat = recon_tensor[:, ch_idx:ch_idx + num_classes, :, :]
+
+            input_vis = normalize_channel_for_visualization(input_cat, layer_info, is_reconstruction=False)
+            recon_vis = normalize_channel_for_visualization(recon_cat, layer_info, is_reconstruction=True)
+
+            cmap = get_categorical_colormap(num_classes)
+            input_rgb = apply_colormap_to_tensor(input_vis, cmap)  # [1, 3, H, W]
+            recon_rgb = apply_colormap_to_tensor(recon_vis, cmap)
+
+            gt_images.append((input_rgb[0].permute(1, 2, 0).cpu().numpy(), layer_name))
+            recon_images.append((recon_rgb[0].permute(1, 2, 0).cpu().numpy(), layer_name))
+
+            ch_idx += num_classes
+            continue
+
+        if is_categorical_layer(layer_info) and layer_name in categorical_processed:
+            ch_idx += 1
+            continue
+
+        # --- scalar (binary / continuous / rgb) channels ---
+        input_ch = input_tensor[:, ch_idx:ch_idx + 1, :, :]
+        recon_ch = recon_tensor[:, ch_idx:ch_idx + 1, :, :]
+
+        input_vis = normalize_channel_for_visualization(input_ch, layer_info, is_reconstruction=False)
+        recon_vis = normalize_channel_for_visualization(recon_ch, layer_info, is_reconstruction=True)
+
+        apply_cmap = (
+            use_colormaps
+            and layer_type != 'binary'
+            and 'rgb' not in layer_name.lower()
+        )
+
+        if apply_cmap:
+            cmap_obj = get_colormap_for_layer(layer_name)
+            input_rgb = apply_colormap_to_tensor(input_vis, cmap_obj)
+            recon_rgb = apply_colormap_to_tensor(recon_vis, cmap_obj)
+            gt_images.append((input_rgb[0].permute(1, 2, 0).cpu().numpy(), channel_name))
+            recon_images.append((recon_rgb[0].permute(1, 2, 0).cpu().numpy(), channel_name))
+        else:
+            # Grayscale or binary – squeeze to 2-D
+            gt_img = input_vis[0, 0].cpu().numpy()
+            recon_img = recon_vis[0, 0].cpu().numpy()
+            gt_images.append((gt_img, channel_name))
+            recon_images.append((recon_img, channel_name))
+
+        ch_idx += 1
+
+    # --- Build the matplotlib figure ---
+    n_cols = len(gt_images)
+    if n_cols == 0:
+        return
+
+    fig, axes = plt.subplots(2, n_cols, figsize=(3 * n_cols, 6))
+
+    # Handle single-column edge case
+    if n_cols == 1:
+        axes = axes.reshape(2, 1)
+
+    row_labels = ['Ground Truth', 'Reconstruction']
+    for row_idx, (images, label) in enumerate([(gt_images, row_labels[0]), (recon_images, row_labels[1])]):
+        for col_idx, (img, col_title) in enumerate(images):
+            ax = axes[row_idx, col_idx]
+            if img.ndim == 2:
+                ax.imshow(img, cmap='gray', vmin=0, vmax=1)
+            else:
+                ax.imshow(np.clip(img, 0, 1))
+            ax.axis('off')
+            if row_idx == 0:
+                ax.set_title(col_title.replace(':', '\n'), fontsize=9)
+        # Row label on the left
+        axes[row_idx, 0].set_ylabel(label, fontsize=11, fontweight='bold')
+        axes[row_idx, 0].yaxis.set_label_position('left')
+
+    if title:
+        fig.suptitle(title, fontsize=13, fontweight='bold', y=1.02)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200, bbox_inches='tight')
+    plt.close()
+
+
 def save_latent_visualization(
     latent: torch.Tensor,
     save_path: str,
