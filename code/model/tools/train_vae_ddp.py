@@ -570,7 +570,12 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
             sampler.set_epoch(epoch_idx)
         
         losses_vae = []
+        losses_recon = []
+        losses_kl = []
+        losses_perceptual = []
+        losses_gen = []
         losses_disc = []
+        losses_per_layer = {}  # per-layer loss tracking
         
         if is_main:
             progress_bar = tqdm(data_loader, desc=f'Epoch {epoch_idx + 1}/{num_epochs}')
@@ -721,6 +726,18 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
                 losses_disc.append(disc_loss.item())
             
             losses_vae.append(vae_loss.item())
+            losses_recon.append(loss_dict['total_recon'])
+            losses_kl.append(kl_loss.item())
+            if use_perceptual and isinstance(perceptual_loss, torch.Tensor):
+                losses_perceptual.append(perceptual_loss.item())
+            if use_discriminator and epoch_idx >= disc_start_epoch and isinstance(gen_loss, torch.Tensor):
+                losses_gen.append(gen_loss.item())
+            
+            # Track per-layer losses from loss_dict
+            for key, val in loss_dict.items():
+                if key not in ('total_recon', 'binary_avg', 'continuous_avg', 'categorical_avg'):
+                    losses_per_layer.setdefault(key, []).append(val)
+            
             global_step += 1
             
             # Update progress bar (main process only)
@@ -758,11 +775,29 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
         # Epoch summary (main process only)
         if is_main:
             epoch_vae_loss = np.mean(losses_vae)
-            if use_discriminator and epoch_idx >= disc_start_epoch:
+            epoch_recon = np.mean(losses_recon)
+            epoch_kl = np.mean(losses_kl)
+            
+            summary = (f'\n✓ Epoch {epoch_idx + 1}/{num_epochs}'
+                       f' | Total: {epoch_vae_loss:.4f}'
+                       f' | Recon: {epoch_recon:.4f}'
+                       f' | KL: {epoch_kl:.6f}')
+            
+            if losses_perceptual:
+                summary += f' | Percep: {np.mean(losses_perceptual):.4f}'
+            if losses_gen:
+                summary += f' | Gen: {np.mean(losses_gen):.4f}'
+            if use_discriminator and epoch_idx >= disc_start_epoch and losses_disc:
                 epoch_disc_loss = np.mean(losses_disc)
-                print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | VAE Loss: {epoch_vae_loss:.4f} | Disc Loss: {epoch_disc_loss:.4f}')
-            else:
-                print(f'\n✓ Epoch {epoch_idx + 1}/{num_epochs} | VAE Loss: {epoch_vae_loss:.4f}')
+                summary += f' | Disc: {epoch_disc_loss:.4f}'
+            
+            print(summary)
+            
+            # Per-layer loss breakdown
+            if losses_per_layer:
+                print(f'  Per-layer losses:')
+                for key in sorted(losses_per_layer.keys()):
+                    print(f'    {key:40s} {np.mean(losses_per_layer[key]):.6f}')
         
         # Save checkpoint (main process only)
         if is_main:
