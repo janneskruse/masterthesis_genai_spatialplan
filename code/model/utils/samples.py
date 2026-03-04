@@ -718,6 +718,29 @@ def save_single_sample_all_layers(
 
         ch_idx += 1
 
+    # --- Prepend RGB composite if RGB channels are present ---
+    rgb_indices = [i for i, ln in enumerate(layer_names) if 'rgb' in ln.lower()]
+    if len(rgb_indices) >= 3:
+        try:
+            rgb_input = input_tensor[:, rgb_indices[:3], :, :]  # [1, 3, H, W]
+            rgb_recon = recon_tensor[:, rgb_indices[:3], :, :]
+
+            # Per-channel normalization for better colour balance
+            def _norm_rgb(t: torch.Tensor) -> np.ndarray:
+                channels = []
+                for c in range(3):
+                    ch = t[0, c]
+                    ch_min, ch_max = ch.min(), ch.max()
+                    if ch_max > ch_min:
+                        ch = (ch - ch_min) / (ch_max - ch_min + 1e-8)
+                    channels.append(ch.cpu().numpy())
+                return np.stack(channels, axis=-1)  # [H, W, 3]
+
+            gt_images.insert(0, (_norm_rgb(rgb_input), 'RGB composite'))
+            recon_images.insert(0, (_norm_rgb(rgb_recon), 'RGB composite'))
+        except Exception as e:
+            print(f"[WARNING] Failed to add RGB composite column: {e}")
+
     # --- Build the matplotlib figure ---
     n_cols = len(gt_images)
     if n_cols == 0:
