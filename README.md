@@ -11,7 +11,7 @@
 ```bash
 conda env create -f environment.yml
 conda activate genaiSpatialplan
-pip install -e .  # Installs project in editable mode
+pip install -e .  # Installs project in editable mode so modules can imported from everywhere
 python -m ipykernel install --user --name genaiSpatialplan
 ```
 
@@ -38,25 +38,43 @@ conda env update -f environment.yml --prune
 conda env export --name genaiSpatialplan --file environment.yml
 ```
 
-### What does `pip install -e .` do?
-
-Installs the project package structure so you can import modules from anywhere:
-```python
-from helpers.load_configs import load_configs
-from model.dataset.dataset import UrbanInpaintingDataset
-```
-
-The `-e` (editable) flag means changes to your code are immediately available without reinstalling.
-
 ## Data acquisition and processing
 The data acquisition and processing scripts and notebooks are located in the [code/data_acquisition](./code/data_acquisition) folder. The final model input dataset is a zarr file containing multiple data sources combined and aligned to the same spatial grid. The data acquisition and processing pipeline consists of the following steps:
-1. OpenStreetMap and building heights data acquisition and processing to an xarray dataset
-2. Landsat and temperature data acquisition and processing to an xarray dataset
-3. PlanetScope data acquisition and processing to an xarray dataset
-4. Combining all datasets and clipping rural areas to create the final model input dataset
+1. **OpenStreetMap** and building heights data acquisition and rasterization — `osm_to_xarray.py`
+2. **Landsat** land-surface temperature and DWD weather station data — `landsat_to_xarray.py`
+3. **PlanetScope** high-resolution satellite imagery — two-step process:
+   - `request_planetscope.py` searches the Planet API and downloads scene assets
+   - `process_planetscope.py` processes all dates in parallel using multiprocessing and combines them into a single Zarr cube
+4. **Combining** all datasets and clipping rural areas — `combine_datasets.py`
+
+### Pipeline architecture
+
+The pipeline orchestrator [`submit_pipeline.py`](./code/data_acquisition/tools/submit_pipeline.py) submits SLURM jobs per region with the following dependencies:
+- **PlanetScope depends on Landsat** — `request_planetscope` uses the Landsat Zarr's time dimension to know which dates to request.
+- **Combine depends on all three upstream steps** — it is automatically submitted when the last of `osm_to_xarray` or `process_planetscope` finishes, or on the next run of `submit_pipeline.py`
+
+### Job tracking
+
+Each script records its status to a per-region CSV file at `{big_data_storage_path}/processed/{region}/jobs/{script_name}.csv`. Each run appends a row with:
+
+| Column | Description |
+|--------|-------------|
+| `job_id` | SLURM job ID (or `"local"` when running outside SLURM) |
+| `script_name` | Logical script name |
+| `start_time` | ISO timestamp when the job started |
+| `end_time` | ISO timestamp when the job finished |
+| `duration_seconds` | Wall-clock duration |
+| `status` | `in_progress`, `completed`, or `failed` |
+| `error_message` | Error details (if failed) |
+
+`submit_pipeline.py` reads these CSVs to decide what to submit:
+- **`None`** (no CSV) or **`failed`** → submit the job
+- **`in_progress`** or **`completed`** → skip
+
+This means you can safely re-run `submit_pipeline.py` after a failure — it will only resubmit failed steps, not duplicate running or completed jobs.
 
 ### Running the pipeline
-There is a pipeline for the data acquisition and processing to acquire the model input dataset. The pipeline can be configured to choose different regions and different temperature settings using the [code/data_acquisition/config.yml](./code/data_acquisition/config.yml) file. The pipeline is designed to be run on an HPC cluster using SLURM job scheduling. If you don't have access to an HPC cluster, you can also run the individual scripts and notebooks standalone as described below.
+The pipeline can be configured to choose different regions and different temperature settings using the [code/data_acquisition/config.yml](./code/data_acquisition/config.yml) file. The pipeline is designed to be run on an HPC cluster using SLURM job scheduling. If you don't have access to an HPC cluster, you can also run the individual scripts standalone as described below.
 
 To run the pipeline:
 
@@ -65,25 +83,40 @@ To run the pipeline:
 3. Make sure to download and convert the respective building height dataset like done and explained in the notebook [osm_to_xarray.ipynb](./code/data_acquisition/osm_to_xarray.ipynb). For Germany there already is a parquet file containing the building height data [here](https://www.dropbox.com/scl/fi/g1krcq2zj5wb6letsf65m/building_heights_germany.parquet?rlkey=a8pmpqtlu9wowttvfxgcb5rjp&st=twctw6j3&dl=0) that you can download and save to [data/che_etal/Germany_Hungary_Iceland](./data/che_etal/Germany_Hungary_Iceland) for the pipeline to work on all German regions.
 4. Create the conda environment like indicated above and activate it: `conda activate genaiSpatialplan`.
 5. Download the Corine Landcover dataset from https://land.copernicus.eu/en/products/corine-land-cover/clc2018 and save it to the [data/corine](./data/corine) folder. Unfortunately, this dataset cannot be downloaded automatically due to the required user agreement, so you have to do this step manually. You will have to create an account at EU Copernicus and agree to the terms of use. After downloading, unzip the dataset and rename it to `Corine_Landcover_<year>` (rename the folder with DATA, Legend etc. - not the .tif file).
-6. Submit the pipeline to the HPC cluster using the [`submit_pipeline.py`](./code/data_acquisition/slurm/submit_pipeline.py) script: `python submit_pipeline.py`. This script will automatically create jobs for all pipeline steps. To check the status, run `squeue -u <username>` on the HPC cluster.
+6. Navigate to the SLURM scripts directory and submit the pipeline:
+```bash
+cd code/data_acquisition/tools/slurm
+python ../submit_pipeline.py
+```
+This will automatically submit jobs for all regions and pipeline steps. To check status, run `squeue -u <username>` on the HPC cluster. You can re-run `submit_pipeline.py` at any time — it will only resubmit failed or not-yet-started steps.
 
 ### Running the scripts standalone
 1. Create the conda environment like indicated above and activate it: `conda activate genaiSpatialplan`
-2. Run the osm_to_xarray script with the region as environment variable using: 
-```powershell
-$env:REGION = "your_region" # e.g. "Leipzig"
-python ./code/data_acquisition/slurm/osm_to_xarray.py
+2. Navigate to the tools directory: `cd code/data_acquisition/tools`
+3. Run the OSM script:
+```bash
+python osm_to_xarray.py --REGION Leipzig
 ```
-3. Run the landsat_to_xarray script with the region as environment variable using: 
-```powershell
-$env:REGION = "your_region" 
-python ./code/data_acquisition/slurm/landsat_to_xarray.py
+4. Run the Landsat script:
+```bash
+python landsat_to_xarray.py --REGION Leipzig
 ```
-4. Run the planetscope_to_xarray notebook
-5. Download the Corine Landcover dataset from https://land.copernicus.eu/en/products/corine-land-cover/clc2018 and save it to the [data/corine](./data/corine) folder. Unfortunately, this dataset cannot be downloaded automatically due to the required user agreement, so you have to do this step manually. You will have to create an account at EU Copernicus and agree to the terms of use. After downloading, unzip the dataset and rename it to `Corine_Landcover_<year>` (rename the folder with DATA, Legend etc. - not the .tif file).
-6. Lastly, use the combine_datasets notebook to combine all datasets to the final model input dataset.
+5. Run the PlanetScope request script (requires a completed Landsat Zarr):
+```bash
+python request_planetscope.py --REGION Leipzig --LANDSAT_ZARR_NAME <path_to_landsat.zarr> --REGION_FILENAMES_JSON '<json_string>'
+```
+6. Run the PlanetScope processing script (requires the completed request script):
+```bash
+python process_planetscope.py --REGION Leipzig --LANDSAT_ZARR_NAME <path_to_landsat.zarr> --FILENAMES "file1.parquet:file2.parquet:..."
+```
+The filenames should be printed in the right format with ':' seperation at the end of step 5 (the run command). 
+7. Download the Corine Landcover dataset from https://land.copernicus.eu/en/products/corine-land-cover/clc2018 and save it to the [data/corine](./data/corine) folder. Unfortunately, this dataset cannot be downloaded automatically due to the required user agreement, so you have to do this step manually. You will have to create an account at EU Copernicus and agree to the terms of use. After downloading, unzip the dataset and rename it to `Corine_Landcover_<year>` (rename the folder with DATA, Legend etc. - not the .tif file).
+8. Combine all datasets into the final model input dataset:
+```bash
+python combine_datasets.py --REGION Leipzig
+```
 
-| Note, that also here, you can tweak the settings in the [code/data_acquisition/config.yml](./code/data_acquisition/config.yml) file before running the scripts and notebooks.
+| Note, that also here, you can tweak the settings in the [code/data_acquisition/config.yml](./code/data_acquisition/config.yml) file before running the scripts.
 
 
 ## Model
