@@ -18,5 +18,5 @@ source activate genaiSpatialplan
 # Print region to be processed
 echo "Processing region: $REGION"
 
-# Run the planetscop request script
-python3 -u ../request_planetscope.py --REGION ${REGION} --LANDSAT_ZARR_NAME ${LANDSAT_ZARR_NAME}
+# Run the planetscope request script
+python3 -u ../request_planetscope.py --REGION ${REGION} --LANDSAT_ZARR_NAME ${LANDSAT_ZARR_NAME} --REGION_FILENAMES_JSON "${REGION_FILENAMES_JSON}"

@@ -19,4 +19,4 @@ source activate genaiSpatialplan
 echo "Processing region: $REGION"
 
 # Execute the landsat_to_xarray.py script
-python3 ../landsat_to_xarray.py --region=${region}
+python3 -u ../landsat_to_xarray.py --REGION ${REGION}

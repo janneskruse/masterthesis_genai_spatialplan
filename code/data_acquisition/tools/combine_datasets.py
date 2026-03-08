@@ -20,7 +20,16 @@ import xarray as xr
 # local imports
 from helpers.load_configs import add_config_arguments, load_configs
 from helpers.get_region_filenames import get_region_filenames
+from helpers.job_tracker import (
+    get_job_csv_path,
+    record_job_start,
+    record_job_complete,
+    record_job_failure,
+    is_script_completed,
+)
 from data_acquisition.cube.combine import combine_region_datasets
+
+SCRIPT_NAME = "combine_datasets"
 
 #### Function to exit on error ######
 def exit_with_error(message):
@@ -51,6 +60,17 @@ def main(args):
         # setup folders
         filenames = region_filenames_json[region]
 
+        ###### Job tracking setup ######
+        job_csv = get_job_csv_path(big_data_storage_path, region, SCRIPT_NAME)
+        job_id = os.environ.get("SLURM_JOB_ID", "local")
+
+        # Skip if already completed
+        if is_script_completed(job_csv):
+            print(f"[{SCRIPT_NAME}] Already completed for region {region}, skipping.")
+            exit(0)
+
+        record_job_start(job_csv, job_id, SCRIPT_NAME)
+
         ###### Combine datasets for the region #######
         combined_ds = combine_region_datasets(
             region=region,
@@ -59,12 +79,15 @@ def main(args):
             filenames=filenames
         )
 
+        record_job_complete(job_csv, job_id)
 
     except Exception as e:
         print(f"An error occurred: {e}")
         
         # print full stack trace for debugging
         traceback.print_exc()
+
+        record_job_failure(job_csv, job_id, str(e))
         
         exit_with_error(f"An error occurred: {e}")
 

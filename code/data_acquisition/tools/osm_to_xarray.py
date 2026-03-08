@@ -21,6 +21,13 @@ from pyproj import CRS
 # local imports
 from helpers.bbox import create_grid
 from helpers.load_configs import add_config_arguments, load_configs
+from helpers.job_tracker import (
+    get_job_csv_path,
+    record_job_start,
+    record_job_complete,
+    record_job_failure,
+    is_script_completed,
+)
 from data_acquisition.osm.process import (
     extract_features_grid,
     process_building_shapes,
@@ -29,6 +36,8 @@ from data_acquisition.osm.process import (
 )
 from data_acquisition.cube.combine import merge_datasets
 from data_acquisition.cube.metropolitan_regions import get_region_bbox
+
+SCRIPT_NAME = "osm_to_xarray"
 
 
 #### Function to exit on error ######
@@ -58,6 +67,17 @@ def main(args):
     os.makedirs(osm_region_folder, exist_ok=True)
 
     osm_zarr_name = f"{osm_region_folder}/osm_rasterized.zarr"
+
+    ###### Job tracking setup ######
+    job_csv = get_job_csv_path(big_data_storage_path, region, SCRIPT_NAME)
+    job_id = os.environ.get("SLURM_JOB_ID", "local")
+
+    # Skip if already completed
+    if is_script_completed(job_csv):
+        print(f"[{SCRIPT_NAME}] Already completed for region {region}, skipping.")
+        exit(0)
+
+    record_job_start(job_csv, job_id, SCRIPT_NAME)
 
     print("Processing region:", region, "at", time.strftime("%Y-%m-%d %H:%M:%S"), "to produce zarr file:", osm_zarr_name)
     # exit(0)  # Exit early for testing purposes
@@ -288,11 +308,15 @@ def main(args):
         
         print(f"OSM data processing completed successfully for region {region} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
+        record_job_complete(job_csv, job_id)
+
     except Exception as e:
         print(f"An error occurred: {e}")
         
         # print full stack trace for debugging
         traceback.print_exc()
+
+        record_job_failure(job_csv, job_id, str(e))
         
         exit_with_error(f"An error occurred: {e}")
     

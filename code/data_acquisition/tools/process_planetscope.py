@@ -29,12 +29,21 @@ from pyproj import CRS
 
 # local imports
 from helpers.load_configs import add_config_arguments, load_configs
+from helpers.job_tracker import (
+    get_job_csv_path,
+    record_job_start,
+    record_job_complete,
+    record_job_failure,
+    is_script_completed,
+)
 from data_acquisition.cube.metropolitan_regions import get_region_bbox
 from data_acquisition.planet_scope.process import (
     create_reference_da_from_bounds,
     process_single_date,
 )
 from data_acquisition.planet_scope.combine import combine_planetscope_zarrs
+
+SCRIPT_NAME = "process_planetscope"
 
 
 #### Function to exit on error ######
@@ -61,6 +70,17 @@ def main(args):
     big_data_storage_path = config.get("big_data_storage_path", "/work/zt75vipu-master/data")
     planet_region_folder = f"{big_data_storage_path}/planet_scope/{region.lower()}"
     os.makedirs(planet_region_folder, exist_ok=True)
+
+    ###### Job tracking setup ######
+    job_csv = get_job_csv_path(big_data_storage_path, region, SCRIPT_NAME)
+    job_id = os.environ.get("SLURM_JOB_ID", "local")
+
+    # Skip if already completed
+    if is_script_completed(job_csv):
+        print(f"[{SCRIPT_NAME}] Already completed for region {region}, skipping.")
+        exit(0)
+
+    record_job_start(job_csv, job_id, SCRIPT_NAME)
 
     ##### get the landsat zarr file name ######
     landsat_zarr_name = args.LANDSAT_ZARR_NAME
@@ -161,11 +181,15 @@ def main(args):
 
         print(f"Finished processing PlanetScope data at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
+        record_job_complete(job_csv, job_id)
+
     except Exception as e:
         print(f"An error occurred: {e}")
 
         # print full stack trace for debugging
         traceback.print_exc()
+
+        record_job_failure(job_csv, job_id, str(e))
 
         exit_with_error(f"An error occurred: {e}")
 

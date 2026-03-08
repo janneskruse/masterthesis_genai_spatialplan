@@ -21,6 +21,13 @@ from dotenv import load_dotenv
 # local imports
 from helpers.landsat_config import get_landsat_config_vars
 from helpers.load_configs import add_config_arguments, load_configs
+from helpers.job_tracker import (
+    get_job_csv_path,
+    record_job_start,
+    record_job_complete,
+    record_job_failure,
+    is_script_completed,
+)
 from data_acquisition.cube.metropolitan_regions import get_region_bbox
 from data_acquisition.lst.dwd import get_high_temperature_dates
 from data_acquisition.lst.landsat import (
@@ -29,6 +36,8 @@ from data_acquisition.lst.landsat import (
     download_all_products,
     build_landsat_zarr,
 )
+
+SCRIPT_NAME = "landsat_to_xarray"
 
 
 #### Function to exit on error ######
@@ -43,6 +52,7 @@ def main(args):
     ###### setup config variables #######
     config = load_configs()
     repo_dir = config.get("repo_dir", ".")
+    data_config = config.get("data_config", {})
 
     # Load .env file
     load_dotenv(dotenv_path=f"{repo_dir}/.env")
@@ -52,6 +62,18 @@ def main(args):
 
     # ensure title case for region name to match GHSL data
     region = region.title()
+
+    ###### Job tracking setup ######
+    big_data_storage_path = data_config.get("big_data_storage_path", "/work/zt75vipu-master/data")
+    job_csv = get_job_csv_path(big_data_storage_path, region, SCRIPT_NAME)
+    job_id = os.environ.get("SLURM_JOB_ID", "local")
+
+    # Skip if already completed
+    if is_script_completed(job_csv):
+        print(f"[{SCRIPT_NAME}] Already completed for region {region}, skipping.")
+        exit(0)
+
+    record_job_start(job_csv, job_id, SCRIPT_NAME)
 
     print(f"Processing region: {region} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     # exit(0)  # Exit early for testing purposes
@@ -131,11 +153,15 @@ def main(args):
         else:
             print(f"Landsat zarr dataset already exists at {landsat_zarr_name}, skipping creation at", time.strftime("%Y-%m-%d %H:%M:%S"))
 
+        record_job_complete(job_csv, job_id)
+
     except Exception as e:
         print(f"An error occurred: {e}")
         
         # print full stack trace for debugging
         traceback.print_exc()
+
+        record_job_failure(job_csv, job_id, str(e))
         
         exit_with_error(f"An error occurred: {e}")
 
