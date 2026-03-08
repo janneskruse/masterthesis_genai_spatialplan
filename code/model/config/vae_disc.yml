@@ -1,0 +1,824 @@
+# Configuration for Two-Stage Urban Inpainting
+# Stage 1: Generate semantic layouts (e.g. buildings/roads/vegetation/height) with optional temperature control
+# Stage 2: Render satellite imagery from semantics
+
+# ===========================================================================
+# GLOBAL LAYER REGISTRY
+# Defines all available data layers and their properties
+# ===========================================================================
+
+layers:
+  # Satellite RGB imagery
+  rgb:
+    layer: 'planetscope_sr_4band'
+    channels: ['red', 'green', 'blue']
+    type: 'continuous'
+    normalize: 'percentile'  # normalize to [0,1] via percentile clipping
+    loss_type: 'l1'  # L1 loss for better edge preservation in satellite imagery
+    
+  # OpenStreetMap features
+  buildings:
+    layer: 'buildings'
+    type: 'binary'
+    dice_loss:
+      use_dice: True
+      weight: 0.5  # Dice loss for crisp edges
+    min_coverage_percent: 7.0  # Ignore patches where not at least 7% buildings are present
+    
+  buildings_heights:
+    layer: 'buildings_heights'
+    type: 'continuous'
+    normalize: 'minmax'
+    mask_layer: 'buildings'  # Apply building mask to height values (dataset + loss)
+    mask_loss_weight: 5.0  # Focus loss on building regions
+
+  building_shapes:
+    layer: 'building_shapes_structural_types'
+    type: 'categorical'
+    num_classes: 10  # e.g. 5 structural types
+    loss_type: 'cross_entropy'  # Cross-entropy for multi-class classification
+    
+  streets:
+    layer: 'streets'
+    type: 'binary'
+    dice_loss:
+      use_dice: True
+      weight: 0.75  # Higher weight for thin structures
+    # min_coverage_percent: 2.0  # Ignore patches where not at least 2% streets are present
+    
+  street_blocks:
+    layer: 'street_blocks'
+    type: 'binary'
+    
+  water:
+    layer: 'water'
+    type: 'binary'
+    dice_loss:
+      use_dice: True
+      weight: 0.75
+    
+  # Derived vegetation mask from NDVI
+  vegetation:
+    layer: 'ndvi'
+    type: 'binary'
+    filter:
+      gte: 0.7 # NDVI threshold for dense vegetation
+      
+  # Environmental layers
+  ndvi:
+    layer: 'ndvi'
+    type: 'continuous'
+    normalize: 'clip'
+    clip_range: [-1, 1]
+    
+  temperature:
+    layer: 'landsat_surface_temp_b10_masked'
+    type: 'continuous'
+    normalize: 'custom'
+    normalize_params:
+      min: 0  # degree celsius
+      max: 80 # degree celsius
+  
+  # Inpainting mask (generated on-the-fly)
+  inpainting_mask:
+    layer: 'inpainting_mask'  # Special layer: generated per patch
+    type: 'binary'
+
+# ===========================================================================
+# INPAINTING PARAMETERS
+# Shared across all training stages
+# ===========================================================================
+
+inpainting_params:
+  # Mask generation strategy
+  # Options: 'mixed' (diverse training), 'street_blocks', 'random_polygon', 'random_rectangle', 'random_square', 'center_square'
+  type: 'mixed'
+  seed: 42 # for reproducibility in inpainting shuffle of patches
+  
+  methods:
+    - name: 'street_blocks'
+      weight: 0.50  # 50% of training samples use street blocks
+      max_coverage_percent: 35  # Reject blocks larger than 35% of image
+      
+    - name: 'random_polygon'
+      weight: 0.30 
+      min_nodes: 3  # Triangle minimum
+      max_nodes: 10  # Complex irregular boundaries
+      min_area_percent: 10.0  # Small interventions
+      max_area_percent: 25.0  # Large redevelopments
+      
+    - name: 'random_rectangle'
+      weight: 0.15
+      min_aspect_ratio: 0.33  # 1:3 (tall narrow)
+      max_aspect_ratio: 3.0   # 3:1 (wide corridor)
+      min_area_percent: 10.0
+      max_area_percent: 25.0
+      
+    - name: 'random_square'
+      weight: 0.05
+      size_px: 80
+  
+  # Fallback method when street_blocks fails (no blocks or too large)
+  fallback_method: 'random_rectangle'
+  
+  # Legacy
+  max_coverage_percent: 25  # Used when type != 'mixed'
+  size_px: 80  # Used for 'random_square' or 'center_square'
+
+# ===========================================================================
+# DATASET PARAMETERS
+# ===========================================================================
+
+dataset_params:
+  big_data_storage_path: "/work/zt75vipu-thesis/data"
+  train_regions: ['Dresden', 'Hamburg', 'Stuttgart']
+  eval_regions: ['Leipzig']
+  zarr_name: "input_config_ge25_cc10_2019_2024_clipped.zarr"
+  res: 3  # resolution in meters
+  patch_size_m: 800  # patch size in meters
+  min_valid_percent: 90
+  stride_overlap: 2  # 50% overlap
+
+# ===========================================================================
+# TEMPERATURE THRESHOLD CONTROL
+# Three-layer control stack for controlling generated layouts by max temperature
+# ===========================================================================
+# Phase 1: Scalar conditioning (via time embedding)
+# Phase 2: Soft gradient guidance using Latent temperature Predictor
+# Phase 3: Hard accept/reject check after sampling - TODO
+# ===========================================================================
+
+temperature_control:
+  temp_max: 80.0  # Maximum LST value in Celsius for normalization
+
+  guidance:
+    enabled: false # true to enable guidance
+    scale: 1.0  # Guidance strength (0.0 = no guidance, higher = stronger)
+    target_p95_celsius: 35.0  # Target max temperature in Celsius
+    eval_every_n_steps: 1  # Apply guidance every N denoising steps
+    warmup_fraction: 0.1  # Skip first 10% of steps (too noisy for guidance)
+    cooldown_fraction: 0.1  # Skip last 10% of steps (for quality)
+  
+  # Phase 3: Hard check (optional)
+  # Reject samples that violate threshold, retry with stronger guidance
+  hard_check:
+    enabled: false  # true to enable acceptance/retry logic
+    max_tries: 4  # Maximum retry attempts
+    accept_margin: 2.0  # Accept if predicted_p95 <= threshold + margin (Celsius)
+    guidance_scale_increase: 0.5  # Increase guidance scale per retry
+
+
+
+# ===========================================================================
+# GENERIC SCALAR CONTROLS
+# Flexible framework for multiple scalar conditioning (vegetation, heights, etc.)
+# 
+# USAGE:
+# 1. Define all available controls here
+# 2. Then, enable specific controls per-stage:
+#    diffusion_stages:
+#      semantic:
+#        scalar_controls: ["temperature", "building_coverage"]  # List of control names
+# ===========================================================================
+
+scalar_controls:
+  
+  controls:
+    # Temperature control
+    - name: "temperature"
+      keys: ["tmax"]  # scalar key
+      layer: "temperature"
+      statistic: "p95"
+      region: "mask"
+      training:
+        strategy: "relative"
+        relative_delta_range: [-0.15, 0.15] # Allow ±15% variation during training, so ≈ ±10°C for LST range [0, 80]°C
+        unconditional_value: 0.0
+        drop_prob: 0.15  # Increased for stronger CFG guidance
+      conditioning:
+        # inject_mode: "time_embed"  # todo: support other modes
+        mlp_hidden: 128
+    
+    # Vegetation coverage control
+    - name: "vegetation_coverage"
+      keys: ["veg_mean"]  # Or ["veg_min", "veg_max"] for range
+      layer: "vegetation"
+      statistic: "mean"
+      region: "mask"
+      training:
+        strategy: "relative"
+        relative_delta_range: [-0.15, 0.15]
+        unconditional_value: 0.5  # Neutral: 50% coverage
+        drop_prob: 0.15
+      conditioning:
+        mlp_hidden: 128
+    
+    # Building coverage control
+    - name: "building_coverage"
+      keys: ["bldg_mean"] # Or ["bldg_min", "bldg_max"] for range
+      layer: "buildings"
+      statistic: "mean"
+      region: "mask"
+      training:
+        strategy: "relative"
+        relative_delta_range: [-0.15, 0.15]
+        unconditional_value: 0.5
+        drop_prob: 0.15
+      conditioning:
+        mlp_hidden: 128
+    
+    # Building height control
+    - name: "building_height"
+      keys: ["height_p95"] # Or ["height_min", "height_max"] for range
+      layer: "buildings_heights"
+      statistic: "p95"
+      region: "mask"
+      mask_by_layer: "buildings"  # Only compute where buildings exist
+      training:
+        strategy: "relative"
+        relative_delta_range: [-0.10, 0.10]
+        unconditional_value: 0.0  # Low height baseline
+        drop_prob: 0.15
+      conditioning:
+        mlp_hidden: 128
+
+# ===========================================================================
+# VAE GROUP CONFIGURATIONS
+# Each VAE specializes in encoding a layer group to latent space
+# ===========================================================================
+
+vae_groups:
+  # RGB satellite imagery VAE
+  satellite:
+    layers: ['rgb']
+    z_channels: 4
+    down_channels: [32, 64, 128, 128]
+    mid_channels: [128, 128]
+    down_sample: [True, True, False]  # 2× downsample → 64×64 latent
+    attn_down: [False, False, False]
+    norm_channels: 32
+    num_heads: 2
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+    checkpoint_name: 'satellite_vae_ckpt.pth'
+    latents_dir: 'satellite_latents'
+    stats_dir: 'satellite_stats'
+    samples_dir: 'satellite_samples'
+    
+  # Land-use/urban layout VAE
+  semantic:
+    layers: ['buildings', 'streets', 'buildings_heights', 'vegetation']
+    z_channels: 4  # Tight bottleneck for clean binary representations
+    down_channels: [32, 64, 128, 128]
+    mid_channels: [128, 128]
+    down_sample: [True, True, False]
+    attn_down: [False, False, False]
+    norm_channels: 32
+    num_heads: 2
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+    checkpoint_name: 'semantic_vae_ckpt.pth'
+    latents_dir: 'semantic_latents'
+    stats_dir: 'semantic_stats'
+    samples_dir: 'semantic_samples'
+
+  semantic_structural:
+    layers: ['buildings', 'streets', 'buildings_heights', 'building_shapes']
+    z_channels: 13  # encounting for categorical building shapes (10 classes) + binary masks + heights
+    down_channels: [32, 64, 128, 128]
+    mid_channels: [128, 128]
+    down_sample: [True, True, False]
+    attn_down: [False, False, False]
+    norm_channels: 32
+    num_heads: 2
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+    checkpoint_name: 'semantic_structural_vae_ckpt.pth'
+    latents_dir: 'semantic_structural_latents'
+    stats_dir: 'semantic_structural_stats'
+    samples_dir: 'semantic_structural_samples'
+    
+  # Environmental conditions VAE
+  environmental:
+    layers: ['temperature', 'ndvi']
+    z_channels: 2
+    down_channels: [16, 32, 64, 64]
+    mid_channels: [64, 64]
+    down_sample: [True, True, False]
+    attn_down: [False, False, False]
+    norm_channels: 16
+    num_heads: 2
+    num_down_layers: 2
+    num_mid_layers: 2
+    num_up_layers: 2
+    checkpoint_name: 'environmental_vae_ckpt.pth'
+    latents_dir: 'environmental_latents'
+    stats_dir: 'environmental_stats'
+    samples_dir: 'environmental_samples'
+
+
+# ===========================================================================
+# LATENT TEMPERATURE PREDICTOR
+# Predicts statistics from VAE latent space for guidance/hard checks
+# ===========================================================================
+
+latent_temperature_predictor:
+  # Architecture
+  # 64x64 latent → 32x32 → 16x16 → 8x8 → 4x4 → global pool
+  hidden_dims: [64, 128, 256, 256]  # 4 conv blocks
+  dropout: 0.2
+  
+  # Training
+  epochs: 200
+  batch_size: 64
+  lr: 0.0005
+  loss: 'mse'
+  
+  # Learning rate scheduling
+  lr_scheduler: 'cosine'   # 'cosine', 'step', 'plateau', or null
+  lr_warmup_epochs: 5      # Linear warmup for first N epochs
+  lr_min: 0.00001          # Minimum LR for cosine schedule
+  
+  # Regularization
+  weight_decay: 0.0001     # L2 regularization to prevent overfitting
+  
+  # Early stopping (based on validation loss)
+  early_stopping: true     # Enable/disable early stopping
+  patience: 20             # wait for 20 epochs without improvement before stopping
+  min_delta: 0.00001       # Minimum change in validation loss to qualify as an improvement
+  
+  # Target computation
+  statistic: 'p95'         # statistic to predict: 'p95', 'mean', 'max'
+  region: 'full'           # 'full' (whole patch) or 'mask' (inside inpainting mask only)
+  
+  # Mode-specific settings - TO-DO: automaticly detect from vae configs
+  modes:
+    semantic:
+      z_channels: 3
+      latent_size: 64
+      checkpoint_name: 'latent_temperature_predictor_semantic.pth'
+      
+    satellite:
+      z_channels: 4
+      latent_size: 64
+      checkpoint_name: 'latent_temperature_predictor_satellite.pth'
+
+
+# ===========================================================================
+# FULL RES TEMPERATURE PREDICTOR
+# Predicts statistics from full resolution for hard checks
+# ===========================================================================
+
+temperature_predictor:
+  # Temperature predictor training
+  epochs: 50
+  batch_size: 16
+  lr: 0.0001
+  checkpoint_name: 'temperature_predictor_best.pth'
+  use_ndvi: True  # Include NDVI as input to Temperature predictor
+  hidden_dims: [64, 128, 256]
+  loss: 'huber'  # 'l1', 'l2', 'huber'
+  mask_weighting: True
+  mask_weight: 3.0
+
+
+# ===========================================================================
+# GENERAL DIFFUSION PARAMETERS
+# ===========================================================================
+
+diffusion_params:
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  
+  # Beta schedule type (affects noise distribution across timesteps)
+  # Options: 
+  #   'linear' (scaled-linear): Original DDPM
+  #   'cosine': More gradual noise at early steps, better high-res quality
+  #   'laplace': Concentrates compute at medium noise (log(SNR)≈0), fastest convergence
+  beta_schedule: 'cosine'
+  
+  # Laplace schedule parameters
+  laplace_mu: 0.0   # Location: 0.0 centers at log(SNR)=0
+  laplace_b: 0.5    # Scale: 0.5 for 256px, 0.75 for 512px (smaller = sharper peak)
+  
+  # Prediction type (what the model learns to predict)
+  prediction_type: 'epsilon'  # Options: 'epsilon' (noise, default) | 'v_prediction' (velocity)
+  # Epsilon: Standard DDPM, predicts noise ε. Works good with min-SNR.
+  # V-prediction: Predicts velocity v = √ᾱ_t·ε - √(1-ᾱ_t)·x_0. More balanced gradients.
+
+# ===========================================================================
+# DIFFUSION STAGES
+# Define what each stage generates and conditions on
+# ===========================================================================
+
+diffusion_stages:
+  # Stage 1: Generates semantic urban layouts
+  semantic:
+    validate: true  # Enables validation sampling during training (disable for faster iteration)
+    scalar_controls: None # ["temperature", "building_coverage"] 
+    prediction_group: 'semantic'
+    
+    # U-Net architecture
+    unet_config:
+      down_channels: [64, 96, 192, 384]
+      mid_channels: [384, 384, 192]
+      down_sample: [True, True, False]
+      attn_down: [True, True, False]     # Attention at higher resolutions
+      time_emb_dim: 128
+      norm_channels: 32
+      num_heads: 8
+      conv_out_channels: 192
+      num_down_layers: 2
+      num_mid_layers: 2
+      num_up_layers: 2
+    
+    # Conditioning inputs
+    conditioning:
+      # Pixel-space conditioning (not encoded through VAE)
+      pixel_space:
+        - layer: 'inpainting_mask'
+          interpolation: 'nearest'
+          
+      # Latent-space conditioning (encoded through respective VAEs)
+      latent_space:
+        # - group: 'environmental'
+        #   layers: ['temperature', 'ndvi']
+          
+        # - group: 'semantic'
+        #   layers: ['street_blocks']  # Optional: constrain to valid blocks
+    
+    # Inpainting configuration
+    inpainting:
+      mode: 'hard'  # or 'sdlike'
+      loss: 'masked'  # 'weighted' to learn full distribution
+      mask_loss_weight: 10.0
+      outside_weight: 0.0 
+      
+      # Inpainting sampler for boundary harmonization during sampling
+      # Options: 'standard' (simple replace), 'repaint' (time-travel), 'lanpaint' (SHO dynamics)
+      sampler:
+        type: 'standard'  # 'repaint' or 'lanpaint'
+        # RePaint params - See: https://arxiv.org/abs/2201.09865
+        repaint:
+          jump_length: 10      # Timesteps to jump back (10 default)
+          jump_n_sample: 10    # Resample iterations per jump (10 default)
+        # LanPaint params - See: https://arxiv.org/abs/2502.03491
+        lanpaint:
+          num_steps: 5         # K: Inner Langevin iterations (5-10)
+          lambda: 16.0         # λ: BiG score alignment (16 default)
+          step_size: 0.2       # η: Langevin step size (0.1-0.3)
+          friction: 15.0       # γ: Friction for stability (10-20)
+          early_stop: 1        # Stop iterations before final N steps
+      
+      # Seam improvement strategy (optional, separate for training and sampling)
+      seam:
+        training: dilate       # 'dilate' (boundary ring loss) | 'feather' (mask blurring) | None
+        sampling: None         # 'dilate' | 'feather' | None
+        config:
+          ring_width_px: 1      # For 'dilate' mode: boundary ring width
+          ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
+          blur_radius: 2        # For 'feather' mode: mask blur radius (smaller for satellite to preserve detail)
+          resample_steps: 10    # For 'repaint' like mode: resample interval
+          jump_length: 3        # For 'repaint' like mode: timesteps to jump back
+      
+      cfg:
+        drop_prob: 0.2  # Higher for stronger CFG effect
+        drop_groups: None
+        sample_mask_groups: ['environmental']  # No special handling during sampling
+    
+    # Class balancing via latent weighting to optionally address class imbalance
+    class_balancing:
+      
+      # Latent-space weighting (derived from Jacobian sensitivity)
+      latent_weights:
+        enabled: false
+        method: 'non_linear_jacobian'  # 'linear_jacobian' | 'non_linear_jacobian' | null
+        
+        # For non_linear_jacobian only
+        non_linear_predictor: 'polynomial'  # Only 'polynomial' supported for now
+        polynomial_degree: 2
+        
+        # Apply layer weights
+        # Higher = more emphasis on that layer in loss
+        layer_weights:
+          buildings: 10.0
+          buildings_heights: 8.0
+          streets: 0.2
+          # vegetation: 1.5
+      
+      # Ground truth auxiliary losses for addit. supervision beyond noise prediction loss
+      ground_truth_loss:
+        weight: 1.0  # Global multiplier for all ground truth losses
+        
+        # Perceptual loss using VAE encoder features
+        # Compares predicted vs target
+        perceptual:
+          enabled: true
+          weight: 0.5                # Loss weight
+          relative_weight: true      # If true, weight is fraction of noise loss (0.01 = 1% of noise loss)
+                                     # If false, weight is absolute multiplier on perceptual loss
+          normalize_features: true   # L2-normalize features before MSE (reduces magnitude ~10-100x)
+          start_epoch: 10            # Start applying after N epochs (0=from start)
+          warmup_epochs: 20           
+          layers: [0, 1, 2]          # VAE encoder layers for feature extraction
+          apply_every_n_steps: 1     # Apply every N training steps
+          apply_below_timestep: 1000 # Only apply when t < threshold (999=all timesteps)
+        
+        # TODO: Additional ground truth losses for future implementation
+        # - Pixel-space reconstruction: Decode x0_pred and apply VAE-style losses
+        #   * BCE + Dice for binary layers (buildings, streets, vegetation)
+        #   * MSE/L1 for continuous layers (buildings_heights)
+        #   * Per-layer weights from layer_dice_config
+        # - Feature matching: Compare intermediate U-Net features (discriminator-style)
+        # - Adversarial loss: Add discriminator for sharper semantic boundaries
+        # - Topology loss: Penalize disconnected buildings/streets (morphological) 
+
+    # Latent scaling to match noise level as Noise schedule assumes data variance ≈ 1
+    latent_scaling:
+      enabled: True
+      scale_factor: 1.0 # 1/global std ~0.9-1.0 → 1.0 scaling to match noise level
+
+    post_process:
+      normalize_mask_region: False  # Normalize generated region to [0,1], keep context unchanged
+      sharpen_binary: False         # Threshold binary layers to {0, 1}
+      threshold: 0.5                # Threshold for binary sharpening
+  
+  # Stage 2: Render satellite RGB from semantic layout
+  satellite:
+    validate: true  # Enable validation sampling during training
+    scalar_controls: None
+    prediction_group: 'satellite'
+    
+    # U-Net architecture
+    unet_config:
+      down_channels: [32, 64, 128, 256]
+      mid_channels: [256, 256, 128]
+      down_sample: [True, True, False]
+      attn_down: [True, True, False]
+      time_emb_dim: 128
+      norm_channels: 32
+      num_heads: 4
+      conv_out_channels: 128
+      num_down_layers: 2
+      num_mid_layers: 2
+      num_up_layers: 2
+    
+    # Conditioning inputs
+    conditioning:
+      pixel_space:
+        - layer: 'inpainting_mask'
+          interpolation: 'nearest'
+          
+      latent_space:
+        - group: 'semantic'
+          layers: ['buildings', 'streets', 'buildings_heights', 'vegetation' ] # 'vegetation'
+          
+        - group: 'environmental'
+          layers: ['ndvi', 'temperature']
+    
+    # Inpainting configuration
+    inpainting:
+      mode: 'hard'  # or 'sdlike'
+      loss: 'masked'  # 'masked' to focus on masked region, 'weighted' to learn full distribution
+      mask_loss_weight: 8.0 
+      outside_weight: 1.0  # > 0 Learn photorealistic context
+      
+      # Inpainting sampler for boundary harmonization during sampling
+      # Options: 'standard' (simple replace), 'repaint' (time-travel), 'lanpaint' (SHO dynamics)
+      sampler:
+        type: 'standard'  # 'repaint' or 'lanpaint'
+        # RePaint params - See: https://arxiv.org/abs/2201.09865
+        repaint:
+          jump_length: 10      # Timesteps to jump back (10 default)
+          jump_n_sample: 10    # Resample iterations per jump (10 default)
+        # LanPaint params - See: https://arxiv.org/abs/2502.03491
+        lanpaint:
+          num_steps: 5         # K: Inner Langevin iterations (5-10)
+          lambda: 16.0         # λ: BiG score alignment (16 default)
+          step_size: 0.2       # η: Langevin step size (0.1-0.3)
+          friction: 15.0       # γ: Friction for stability (10-20)
+          early_stop: 1        # Stop iterations before final N steps
+      
+      # Seam improvement strategy (optional, separate for training and sampling)
+      seam:
+        training: dilate       # 'dilate' (boundary ring loss) | 'feather' (mask blurring) | None
+        sampling: feather        # 'dilate' | 'feather' | None
+        config:
+          ring_width_px: 1      # For 'dilate' mode: boundary ring width
+          ring_weight: 2.0      # For 'dilate' mode: ring region loss weight
+          blur_radius: 2        # For 'feather' mode: mask blur radius (smaller for satellite to preserve detail)
+          resample_steps: 10    # For 'repaint' like mode: resample interval
+          jump_length: 3        # For 'repaint' like mode: timesteps to jump back
+      
+      cfg:
+        drop_prob: 0.15  # Higher for stronger CFG effect
+        drop_groups: ['semantic', 'environmental']
+        # for rendering, keep semantic group inside mask 
+        sample_mask_groups: ['environmental']  # Apply inpainting mask to these groups during sampling only
+
+# ===========================================================================
+# TRAINING PARAMETERS
+# ===========================================================================
+
+train_params:
+  seed: 45
+  task_name: 'vae_disc'
+
+  existing_paths: # to use parts from previous experiments
+    # if specified, the respective training/creation will be skipped
+    patches: /work/zt75vipu-thesis/data/processed/two_stage_15/patches/ 
+    latents:
+      satellite: null
+      semantic: null
+      environmental: null
+    vae_checkpoints: 
+      satellite: null
+      semantic: null
+      environmental: null
+    diffusion_checkpoints:
+      semantic: null
+      satellite: null
+      environmental: null
+    latent_temperature_predictor: 
+      semantic: null
+      satellite: null
+
+  # Data augmentation for training (applies to all modes)
+  augmentation:
+    enabled: True  # Toggle on/off (only applies to train split)
+    horizontal_flip: True  # 50% chance horizontal flip
+    vertical_flip: True    # 50% chance vertical flip
+    rotation_90: True      # Random 0°/90°/180°/270° rotation
+  
+  # VAE training (per group)
+  vae_training:
+    satellite:
+      epochs: 50
+      batch_size: 2
+      lr: 0.0001
+      kl_weight: 0.000001
+      perceptual_weight: 1.0
+      disc_weight: 0.5
+      # disc_start: 10000
+      use_discriminator: True
+      use_perceptual: True
+      penalize_out_of_range: True
+      tanh_activation: True
+      tanh_scaling: 0.95
+      img_save_steps: 64
+
+    semantic:
+      epochs: 50
+      batch_size: 4
+      lr: 0.0001
+      kl_weight: 0.000001
+      binary_channel_weight: 1.0
+      continuous_channel_weight: 2.0 
+      dice_weight: 0.5  # Default dice weight
+      perceptual_weight: 0.0  # Not useful for semantic binary masks/height data
+      disc_weight: 0.5  # Adversarial loss to enforce sharp edges
+      # disc_start: 5000  # Start discriminator after 5k steps (~30 epochs at batch_size=4)
+      use_discriminator: True
+      use_perceptual: False  # Not useful for semantic binary masks/height data
+      tanh_activation: False  # as Binary + continuous mixed
+      img_save_steps: 64
+      
+      # Per-layer weight overrides
+      # Use to balance importance of individual layers in latent representation
+      layer_weights:
+        buildings: 2.5        # Boost buildings (reduce sparse noise)
+        streets: 0.4          # Suppress streets (prevent over-dominance)
+        buildings_heights: 2.0
+        # vegetation: 1.0
+      
+      # Per-layer dice loss configuration (overrides defaults from layer registry)
+      # layer_dice_config:
+      #   streets:
+      #     use_dice: True
+      #     weight: 0.75
+      #   water:
+      #     use_dice: True
+      #     weight: 0.75
+      
+    semantic_structural:
+      epochs: 40
+      batch_size: 4
+      lr: 0.0001
+      kl_weight: 0.000001
+      binary_channel_weight: 1.0
+      continuous_channel_weight: 2.0 
+      dice_weight: 0.5  # Default dice weight
+      perceptual_weight: 0.0  # Not useful for semantic binary masks/height data
+      disc_weight: 0.5  # Adversarial loss to enforce sharp edges
+      # disc_start: 5000  # Start discriminator after 5k steps (~30 epochs at batch_size=4)
+      use_discriminator: True
+      use_perceptual: False  # Not useful for semantic binary masks/height data
+      tanh_activation: False  # as Binary + continuous mixed
+      img_save_steps: 64
+      
+      # Per-layer weight overrides
+      # Use to balance importance of individual layers in latent representation
+      layer_weights:
+        buildings: 2.5        # Boost buildings (reduce sparse noise)
+        streets: 0.4          # Suppress streets (prevent over-dominance)
+        buildings_heights: 2.0
+        building_shapes: 1.5
+      
+      # Per-layer dice loss configuration (overrides defaults from layer registry)
+      # layer_dice_config:
+      #   streets:
+      #     use_dice: True
+      #     weight: 0.75
+      #   water:
+      #     use_dice: True
+      #     weight: 0.75
+
+    environmental:
+      epochs: 50
+      batch_size: 8
+      lr: 0.0001
+      kl_weight: 0.000001
+      use_discriminator: True
+      use_perceptual: False
+      tanh_activation: True
+      tanh_scaling: 0.95
+      img_save_steps: 64
+
+  
+  # Diffusion training (per stage)
+  diffusion_training:
+    semantic:
+      epochs: 300
+      batch_size: 4
+      gradient_accumulation_steps: 4  # Effective batch size: 16
+      lr: 0.0001  # learning rate with scheduler
+      lr_scheduler: 'cosine'  # Options: 'cosine' | 'linear' | 'constant'
+      lr_warmup_steps: 1000  # Warmup for stable training start
+      
+      # Exponential Moving Average - for stable high-quality samples
+      use_ema: True
+      ema_decay: 0.9999  # Slow decay for better averaging
+      
+      # Loss improvements (timestep-dependent loss)
+      loss_type: 'min_snr'  # Options: 'simple' | 'snr' | 'min_snr' | 'v_loss'
+      min_snr_gamma: 5.0  # Clamp SNR to reduce loss from very noisy timesteps
+      
+      # Clamp x0 latents for numerical stability in sampling 
+      # after VAE training run validate_vae.py for latent statistics and adjust if necessary
+      clamp_range: [-7.0, 7.0]  
+
+      # DDPM sampling
+      sample_epochs: 5  # Sample every N epochs during training
+      sample_steps: 500 # half DDPM steps for intermediate quality checks
+
+      # Validation sampling during training
+      val_sample_epochs: 10  # Sample every N epochs (0 to disable)
+      val_num_samples: 4  # Number of samples per epoch
+      val_sample_steps: 50  # DDIM steps for fast validation
+      # Higher eta can help explore diverse modes and reduce class collapse
+      val_ddim_eta: 0.5  # DDIM stochasticity: 0.0=deterministic, 1.0=DDPM-like noise
+                         
+      val_guidance_scale: 7.5  # CFG scale for validation (None to disable CFG)
+      
+      checkpoint_name: 'semantic_diffusion_ckpt.pth'
+      
+    satellite:
+      epochs: 400
+      batch_size: 4
+      gradient_accumulation_steps: 4  # Effective batch size: 16
+      lr: 0.0001  
+      lr_scheduler: 'cosine'
+      lr_warmup_steps: 1000
+      
+      # Exponential Moving Average for stable sampling
+      use_ema: True
+      ema_decay: 0.9999
+      
+      # Loss improvements
+      loss_type: 'min_snr'
+      min_snr_gamma: 5.0
+
+      # Clamp x0 latents for numerical stability in sampling
+      clamp_range: [-6.0, 6.0]  
+
+      # full DDPM sampling
+      sample_epochs: 50  # Sample every N epochs during training
+      sample_steps: 500 # half DDPM steps for intermediate quality checks
+      
+      # Validation sampling
+      val_sample_epochs: 15  # Sample every N epochs
+      val_num_samples: 4
+      val_sample_steps: 50  # DDIM steps for fast validation
+      val_ddim_eta: 0.0  # Deterministic for satellite (photorealistic consistency)
+      val_guidance_scale: 7.5
+      
+      checkpoint_name: 'satellite_diffusion_ckpt.pth'
+  
+  # Sampling
+  num_samples: 16
+  num_grid_rows: 4
+  cf_guidance_scale: 7.5
