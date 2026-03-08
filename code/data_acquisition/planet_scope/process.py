@@ -2,11 +2,15 @@
 ================================================================================
 Module to process PlanetScope satellite imagery tiles into xarray datasets.
 Provides functions for reading tifs, quality scoring, histogram matching,
-reference grid creation, and zarr assembly.
+reference grid creation, zarr assembly, and single-date processing pipeline.
 ================================================================================
 """
 
 ##### Import libraries ######
+# system
+import os
+import time
+
 # data manipulation
 import json
 import numpy as np
@@ -18,6 +22,8 @@ import xarray as xr
 import rioxarray as rxr
 from skimage.exposure import match_histograms
 from rioxarray.merge import merge_arrays
+import utm
+from pyproj import CRS
 
 
 ###### Prepare reference dataset ##########
@@ -233,71 +239,136 @@ def build_planetscope_date_zarr(
     if not xds_list:
         raise ValueError(f"No valid xarray datasets for date {scene_date}")
 
-    # Sort by quality
-    xds_list.sort(key=extract_quality_score, reverse=True)
+    try:
+        # Sort by quality
+        xds_list.sort(key=extract_quality_score, reverse=True)
 
-    dataarrays = [
-        ds["planetscope_sr_4band"].squeeze("time").transpose("channel", "y", "x")
-        for ds in xds_list
-    ]
+        dataarrays = [
+            ds["planetscope_sr_4band"].squeeze("time").transpose("channel", "y", "x")
+            for ds in xds_list
+        ]
 
-    # set crs for all dataarrays
-    # for da in dataarrays:
-    #     da.rio.write_crs("EPSG:32633", inplace=True)
+        # set crs for all dataarrays
+        # for da in dataarrays:
+        #     da.rio.write_crs("EPSG:32633", inplace=True)
 
-    # as float for rio merge later
-    dataarrays = [
-        da.astype("float32") for da in dataarrays
-    ]
+        # as float for rio merge later
+        dataarrays = [
+            da.astype("float32") for da in dataarrays
+        ]
 
-    reference = dataarrays[0]
-    matched_dataarrays = [reference]
+        reference = dataarrays[0]
+        matched_dataarrays = [reference]
 
-    print(f"Merging {len(dataarrays)} tiles...")
-    if len(dataarrays) > 1:
-        for da in dataarrays[1:]:
-            try:
-                matched_dataarrays.append(histogram_match(da, reference))
-            except Exception as e:
-                print(f"    Histogram matching failed for one tile: {e} -- using original tile")
-                matched_dataarrays.append(da)
+        print(f"Merging {len(dataarrays)} tiles...")
+        if len(dataarrays) > 1:
+            for da in dataarrays[1:]:
+                try:
+                    matched_dataarrays.append(histogram_match(da, reference))
+                except Exception as e:
+                    print(f"    Histogram matching failed for one tile: {e} -- using original tile")
+                    matched_dataarrays.append(da)
 
-        merged = merge_arrays(
-            matched_dataarrays,
-            method="first",
-            nodata=np.nan,
-            res=None,
+            merged = merge_arrays(
+                matched_dataarrays,
+                method="first",
+                nodata=np.nan,
+                res=None,
+            )
+        else:
+            # single tile -> no merge needed
+            merged = reference
+
+        # back to int
+        # merged = (merged * 1).astype("int16")
+        
+        # resample to reference dataset
+        merged = merged.rio.reproject_match(ref)
+        
+        # drop nan coords
+        merged = merged.dropna("x", how="all").dropna("y", how="all")
+
+        # Add time dimension and rechunk
+        scene_date_np = np.datetime64(pd.to_datetime(scene_date))
+        merged = merged.expand_dims(time=[scene_date_np])
+        merged = merged.rio.write_nodata(np.nan)
+        merged = merged.chunk({'y': 1024, 'x': 1024, 'time': 1, 'channel': 4})
+
+        # Derive NDVI dataarray from the planetscope data
+        # create dataset from merged
+        merged = merged.to_dataset(name="planetscope_sr_4band")
+
+        # create ndvi
+        merged["ndvi"] = (
+            (merged.planetscope_sr_4band.isel(channel=3) - merged.planetscope_sr_4band.isel(channel=2)) / 
+            (merged.planetscope_sr_4band.isel(channel=3) + merged.planetscope_sr_4band.isel(channel=2))
         )
-    else:
-        # single tile -> no merge needed
-        merged = reference
 
-    # back to int
-    # merged = (merged * 1).astype("int16")
+        # this also applies all the transformations (mean() etc. and therefore might take some time)
+        merged.to_zarr(output_path, mode='w', consolidated=True)
+
+        # merged=xr.open_zarr(f"{planet_region_folder}/planet_scope_{scene_date}.zarr")
+    finally:
+        # close all opened xarray datasets to free memory/file handles
+        for xds in xds_list:
+            try:
+                xds.close()
+            except Exception:
+                pass
+
+
+def process_single_date(
+    filename: str,
+    bbox_gdf: gpd.GeoDataFrame,
+    ref: xr.DataArray,
+    planet_region_folder: str
+) -> str | None:
+    """
+    Process a single PlanetScope date from a collection parquet file into a Zarr file.
     
-    # resample to reference dataset
-    merged = merged.rio.reproject_match(ref)
+    This is a self-contained function suitable for multiprocessing. It reads the
+    collection parquet, derives the scene date, then calls build_planetscope_date_zarr
+    with the pre-computed bbox and reference grid to produce the output zarr.
     
-    # drop nan coords
-    merged = merged.dropna("x", how="all").dropna("y", how="all")
+    Args:
+        filename: Path to the collection parquet file for this date.
+        bbox_gdf: GeoDataFrame with the bounding box geometry (in UTM CRS).
+        ref: Reference DataArray for reprojection matching.
+        planet_region_folder: Folder for this region's PlanetScope data.
+        
+    Returns:
+        Path to the output zarr file on success, or None on failure.
+    """
+    try:
+        folderpath = f"{planet_region_folder}/planet_tmp"
+        collection = gpd.read_parquet(filename)
+        scene_date = collection.date_id.iloc[0]
+        scene_date = scene_date.replace("-", "")
+        collection_folder = f"{folderpath}/psscene_{scene_date}"
+        collection_files = os.listdir(collection_folder)
+        collection_files = [f"{collection_folder}/{file}" for file in collection_files]
+        collection = None  # free memory
+            
+        planet_date_zarr_name = f"{planet_region_folder}/planet_scope_{scene_date}.zarr"
+        
+        if os.path.exists(planet_date_zarr_name):
+            print(f"PlanetScope data for date {scene_date} already exists at {planet_date_zarr_name}, skipping processing.")
+            return planet_date_zarr_name
 
-    # Add time dimension and rechunk
-    scene_date_np = np.datetime64(pd.to_datetime(scene_date))
-    merged = merged.expand_dims(time=[scene_date_np])
-    merged = merged.rio.write_nodata(np.nan)
-    merged = merged.chunk({'y': 1024, 'x': 1024, 'time': 1, 'channel': 4})
+        ######### Build the zarr for this date #########
+        build_planetscope_date_zarr(
+            collection_files=collection_files,
+            bbox_gdf=bbox_gdf,
+            ref=ref,
+            scene_date=scene_date,
+            output_path=planet_date_zarr_name
+        )
 
-    # Derive NDVI dataarray from the planetscope data
-    # create dataset from merged
-    merged = merged.to_dataset(name="planetscope_sr_4band")
+        print(f"[{scene_date}] Saved PlanetScope dataset to {planet_date_zarr_name} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        return planet_date_zarr_name
 
-    # create ndvi
-    merged["ndvi"] = (
-        (merged.planetscope_sr_4band.isel(channel=3) - merged.planetscope_sr_4band.isel(channel=2)) / 
-        (merged.planetscope_sr_4band.isel(channel=3) + merged.planetscope_sr_4band.isel(channel=2))
-    )
-
-    # this also applies all the transformations (mean() etc. and therefore might take some time)
-    merged.to_zarr(output_path, mode='w', consolidated=True)
-
-    # merged=xr.open_zarr(f"{planet_region_folder}/planet_scope_{scene_date}.zarr")
+    except Exception as e:
+        print(f"[process_single_date] Error processing {filename}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None

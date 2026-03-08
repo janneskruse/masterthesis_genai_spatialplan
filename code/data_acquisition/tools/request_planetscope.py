@@ -193,6 +193,8 @@ def main(args):
         )
             
         print("Finished processing PlanetScope data at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        print("Submitting job to process PlanetScope data with dependency on downloaded files at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        print("Filenames for processing:", filenames)
         submit_job_with_dependency("./process_planetscope.sh", region=region, landsat_zarr_name=landsat_zarr_name, filenames=filenames, region_filenames_json=region_filenames_json)
         exit(0)
 

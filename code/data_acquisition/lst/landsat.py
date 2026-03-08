@@ -29,7 +29,7 @@ import xarray as xr
 import rioxarray as rxr
 
 # visualization
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 ################## Get LST Data from Landsat #################
