@@ -98,12 +98,13 @@ def compute_reconstruction_loss(
     all_channels_tensor=None,  # Full tensor with all channels for mask lookup
     layer_weights=None,  # Per-layer weight overrides
     pixel_weights=None,  # Optional [B, 1, H, W] spatial weighting (e.g., inpainting mask focus)
+    binary_loss_type='bce',  # 'bce' (BCE with logits + pos_weight) or 'mse' (simple MSE baseline)
 ):
     """
     Compute reconstruction loss for any tensor using dynamic layer configuration.
     
     Handles:
-    - Binary layers: BCE with logits + optional Dice loss
+    - Binary layers: BCE with logits + optional Dice loss (default), or MSE (baseline)
     - Categorical layers: Cross-entropy loss (logits vs one-hot targets)
     - Continuous layers: MSE/L1/Smooth-L1 loss (configurable per layer)
     - RGB layers: MSE/L1 loss (perceptual loss handled externally)
@@ -126,6 +127,9 @@ def compute_reconstruction_loss(
                        When provided, all per-pixel losses are weighted by this tensor,
                        focusing gradients on the masked (generation) region.
                        Pass None for standard VAE training (uniform weighting).
+        binary_loss_type: Loss function for binary layers. Options:
+                          'bce' (default): BCE with logits + pos_weight + optional Dice
+                          'mse': Simple MSE loss (treats binary like continuous, no Dice)
         
     Layer Config Options:
         - loss_type: 'mse' (default), 'l1', 'smooth_l1', or 'cross_entropy' (categorical)
@@ -212,61 +216,75 @@ def compute_reconstruction_loss(
         recon_ch = recon[:, idx:idx+1, :, :]
         target_ch = target[:, idx:idx+1, :, :]
         
-        # === BINARY LAYERS: BCE with logits + optional Dice loss ===
+        # === BINARY LAYERS: BCE with logits + optional Dice loss, or MSE baseline ===
         if is_binary:
             # Clamp target to valid range (recon_ch is logits, no clamping)
             target_ch = target_ch.clamp(0.0, 1.0)
             
-            # Compute BCE with logits and class-imbalance weighting
-            if posw_ema is not None:
-                pw = posw_ema.update(binary_ch_idx, target_ch)
-                if use_pw:
-                    bce_per_px = F.binary_cross_entropy_with_logits(
-                        recon_ch, target_ch, pos_weight=pw, reduction='none'
-                    )
-                    bce = _pw_reduce(bce_per_px)
-                else:
-                    bce = F.binary_cross_entropy_with_logits(
-                        recon_ch, target_ch, pos_weight=pw, reduction='mean'
-                    )
+            # --- MSE baseline: treat binary like continuous (no BCE, no Dice, no pos_weight) ---
+            if binary_loss_type == 'mse':
+                lpp = F.mse_loss(recon_ch, target_ch, reduction='none')
+                loss = _pw_reduce(lpp) if use_pw else lpp.mean()
+                losses[f'{channel_name}_mse'] = loss.item()
+                
+                # Apply per-layer weight if specified, otherwise use default
+                layer_weight = layer_weights.get(layer_name, binary_weight) if layer_weights else binary_weight
+                binary_loss += loss * layer_weight
+                binary_count += 1
+                binary_ch_idx += 1
+            
+            # --- BCE mode (default): BCE with logits + pos_weight + optional Dice ---
             else:
-                if use_pw:
-                    # Compute pos_weight manually, then do per-pixel BCE
-                    pos = target_ch.mean().clamp(1e-6, 1 - 1e-6)
-                    pw = ((1 - pos) / pos).detach()
-                    bce_per_px = F.binary_cross_entropy_with_logits(
-                        recon_ch, target_ch, pos_weight=pw, reduction='none'
-                    )
-                    bce = _pw_reduce(bce_per_px)
+                # Compute BCE with logits and class-imbalance weighting
+                if posw_ema is not None:
+                    pw = posw_ema.update(binary_ch_idx, target_ch)
+                    if use_pw:
+                        bce_per_px = F.binary_cross_entropy_with_logits(
+                            recon_ch, target_ch, pos_weight=pw, reduction='none'
+                        )
+                        bce = _pw_reduce(bce_per_px)
+                    else:
+                        bce = F.binary_cross_entropy_with_logits(
+                            recon_ch, target_ch, pos_weight=pw, reduction='mean'
+                        )
                 else:
-                    bce = bce_with_logits_pos_weight(recon_ch, target_ch)
-            
-            # Get per-layer dice configuration
-            dice_config = get_layer_dice_config(layers_registry, layer_name)
-            # Override with training config if provided
-            if layer_dice_config and layer_name in layer_dice_config:
-                dice_config.update(layer_dice_config[layer_name])
-            
-            use_dice = dice_config.get('use_dice', False)
-            dice_weight = dice_config.get('weight', 0.5)
-            
-            # Compute Dice loss if enabled for this layer
-            if use_dice:
-                # When spatially weighted, compute dice only within the focus region
-                dice_mask = (pixel_weights > 0.5) if use_pw else None
-                dice = dice_loss_from_logits(recon_ch, target_ch, spatial_mask=dice_mask)
-                loss = bce + dice_weight * dice
-                losses[f'{channel_name}_dice'] = dice.item()
-            else:
-                loss = bce
-            
-            losses[f'{channel_name}_bce'] = bce.item()
-            
-            # Apply per-layer weight if specified, otherwise use default
-            layer_weight = layer_weights.get(layer_name, binary_weight) if layer_weights else binary_weight
-            binary_loss += loss * layer_weight
-            binary_count += 1
-            binary_ch_idx += 1  # Increment binary channel index
+                    if use_pw:
+                        # Compute pos_weight manually, then do per-pixel BCE
+                        pos = target_ch.mean().clamp(1e-6, 1 - 1e-6)
+                        pw = ((1 - pos) / pos).detach()
+                        bce_per_px = F.binary_cross_entropy_with_logits(
+                            recon_ch, target_ch, pos_weight=pw, reduction='none'
+                        )
+                        bce = _pw_reduce(bce_per_px)
+                    else:
+                        bce = bce_with_logits_pos_weight(recon_ch, target_ch)
+                
+                # Get per-layer dice configuration
+                dice_config = get_layer_dice_config(layers_registry, layer_name)
+                # Override with training config if provided
+                if layer_dice_config and layer_name in layer_dice_config:
+                    dice_config.update(layer_dice_config[layer_name])
+                
+                use_dice = dice_config.get('use_dice', False)
+                dice_weight = dice_config.get('weight', 0.5)
+                
+                # Compute Dice loss if enabled for this layer
+                if use_dice:
+                    # When spatially weighted, compute dice only within the focus region
+                    dice_mask = (pixel_weights > 0.5) if use_pw else None
+                    dice = dice_loss_from_logits(recon_ch, target_ch, spatial_mask=dice_mask)
+                    loss = bce + dice_weight * dice
+                    losses[f'{channel_name}_dice'] = dice.item()
+                else:
+                    loss = bce
+                
+                losses[f'{channel_name}_bce'] = bce.item()
+                
+                # Apply per-layer weight if specified, otherwise use default
+                layer_weight = layer_weights.get(layer_name, binary_weight) if layer_weights else binary_weight
+                binary_loss += loss * layer_weight
+                binary_count += 1
+                binary_ch_idx += 1  # Increment binary channel index
             
         # === CONTINUOUS LAYERS: MSE or L1 loss based on config ===
         else:

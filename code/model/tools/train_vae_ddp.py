@@ -353,6 +353,13 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
     # Get per-layer weight overrides (optional)
     layer_weights = train_config.get('layer_weights', None)
     
+    # Binary loss configuration
+    use_bce = train_config.get('use_bce', True)  # True: BCE with logits | False: MSE baseline
+    binary_loss_type = 'bce' if use_bce else 'mse'
+    posw_ema_config = train_config.get('pos_weight_ema', {})
+    use_posw_ema = posw_ema_config.get('enabled', True) if isinstance(posw_ema_config, dict) else True
+    posw_ema_momentum = posw_ema_config.get('momentum', 0.95) if isinstance(posw_ema_config, dict) else 0.95
+    
     # Directory and naming setup from VAE group config
     checkpoint_name = vae_group_config.get('checkpoint_name', f'{mode}_vae_ckpt.pth')
     latent_dir_name = vae_group_config.get('latents_dir', f'{mode}_latents')
@@ -495,21 +502,26 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
     
     ########## Training Setup #############
     
-    # Initialize PosWeightEMA for binary channels (if any)
+    # Initialize PosWeightEMA for binary channels (if configured)
     posw_ema = None
     binary_channel_count = sum(
         1 for layer_name in layer_names 
         if layers_registry.get(layer_name, {}).get('type') == 'binary'
     )
-    if binary_channel_count > 0:
+    if binary_channel_count > 0 and use_bce and use_posw_ema:
         posw_ema = PosWeightEMA(
             num_channels=binary_channel_count,
-            momentum=0.95,
+            momentum=posw_ema_momentum,
             init=1.0,
             device=device
         )
         if is_main:
-            print(f"\n✓ Initialized PosWeightEMA for {binary_channel_count} binary channels in {mode} VAE")
+            print(f"\n✓ Initialized PosWeightEMA for {binary_channel_count} binary channels in {mode} VAE (momentum={posw_ema_momentum})")
+    elif binary_channel_count > 0 and is_main:
+        if not use_bce:
+            print(f"\n✓ Binary loss: MSE baseline (BCE disabled) for {binary_channel_count} binary channels")
+        else:
+            print(f"\n✓ Binary loss: BCE with per-batch pos_weight (PosWeightEMA disabled) for {binary_channel_count} binary channels")
     
     # Scale learning rate with world size
     adjusted_lr = base_lr * world_size
@@ -663,7 +675,8 @@ def train_vae(mode: str = 'satellite', load_checkpoint_path: str = None):
                 continuous_weight=continuous_channel_weight,
                 layer_dice_config=layer_dice_config,
                 posw_ema=posw_ema,
-                all_channels_tensor=input_tensor  # Pass full tensor for mask lookup
+                all_channels_tensor=input_tensor,  # Pass full tensor for mask lookup
+                binary_loss_type=binary_loss_type,
             )
                 
             # Out-of-bounds penalization for satellite

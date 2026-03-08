@@ -67,6 +67,7 @@ def compute_masked_reconstruction_loss(
     layer_dice_config: dict = None,
     posw_ema=None,
     layer_weights: dict = None,
+    binary_loss_type: str = 'bce',
 ) -> tuple[dict, torch.Tensor]:
     """
     Compute reconstruction loss with spatial focus on the inpainting mask.
@@ -113,6 +114,7 @@ def compute_masked_reconstruction_loss(
         all_channels_tensor=target,
         layer_weights=layer_weights,
         pixel_weights=pixel_weights,
+        binary_loss_type=binary_loss_type,
     )
     
     loss_dict['masked_recon'] = total_loss.item() if isinstance(total_loss, torch.Tensor) else total_loss
@@ -244,6 +246,13 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
     layer_weights = cvae_training_config.get('layer_weights', None)
     layer_dice_config = cvae_training_config.get('layer_dice_config', {})
     use_discriminator = cvae_training_config.get('use_discriminator', True)
+    
+    # Binary loss configuration
+    use_bce = cvae_training_config.get('use_bce', True)  # True: BCE with logits | False: MSE baseline
+    binary_loss_type = 'bce' if use_bce else 'mse'
+    posw_ema_config = cvae_training_config.get('pos_weight_ema', {})
+    use_posw_ema = posw_ema_config.get('enabled', True) if isinstance(posw_ema_config, dict) else True
+    posw_ema_momentum = posw_ema_config.get('momentum', 0.95) if isinstance(posw_ema_config, dict) else 0.95
     disc_weight = cvae_training_config.get('disc_weight', 0.5)
     disc_start_steps = cvae_training_config.get('disc_start', 5000)
     use_perceptual = cvae_training_config.get('use_perceptual', False)
@@ -452,19 +461,26 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
     
     ########## Training Setup #############
     
-    # PosWeightEMA for binary channels
+    # PosWeightEMA for binary channels (if configured)
     posw_ema = None
     binary_channel_count = sum(
         1 for layer_name in layer_names
         if layers_registry.get(layer_name, {}).get('type') == 'binary'
     )
-    if binary_channel_count > 0:
+    if binary_channel_count > 0 and use_bce and use_posw_ema:
         posw_ema = PosWeightEMA(
             num_channels=binary_channel_count,
-            momentum=0.95,
+            momentum=posw_ema_momentum,
             init=1.0,
             device=device
         )
+        if is_main:
+            print(f"\n✓ Initialized PosWeightEMA for {binary_channel_count} binary channels (momentum={posw_ema_momentum})")
+    elif binary_channel_count > 0 and is_main:
+        if not use_bce:
+            print(f"\n✓ Binary loss: MSE baseline (BCE disabled) for {binary_channel_count} binary channels")
+        else:
+            print(f"\n✓ Binary loss: BCE with per-batch pos_weight (PosWeightEMA disabled) for {binary_channel_count} binary channels")
     
     # Scale learning rate with world size
     adjusted_lr = base_lr * world_size
@@ -690,6 +706,7 @@ def train_cvae(mode: str = 'semantic', load_checkpoint_path: str = None):
                 layer_dice_config=layer_dice_config,
                 posw_ema=posw_ema,
                 layer_weights=layer_weights,
+                binary_loss_type=binary_loss_type,
             )
             
             # KL divergence loss with free-bits clamping (prevents posterior collapse)

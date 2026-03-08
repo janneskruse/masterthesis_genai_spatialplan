@@ -687,6 +687,12 @@ train_params:
       tanh_activation: False  # as Binary + continuous mixed
       img_save_steps: 64
       
+      # Binary loss configuration
+      use_bce:  False  # True: BCE with logits for binary layers | False: MSE (simple baseline)
+      pos_weight_ema:
+        enabled: False  # EMA-smoothed pos_weight for class-imbalance | False: per-batch pos_weight
+        momentum: 0.95
+      
       # Per-layer weight overrides
       # Use to balance importance of individual layers in latent representation
       # layer_weights:
