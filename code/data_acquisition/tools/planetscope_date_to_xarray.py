@@ -1,8 +1,7 @@
 """
 ================================================================================
-Script to process all PlanetScope date collections into per-date Zarr files
-(using multiprocessing) and then combine them into a single multi-temporal
-Zarr cube for a region.
+Script to acquire and pre-process Planet Lab's (PlanetScope) data to an Xarray 
+cube for a single date, saved as a Zarr file.
 ================================================================================
 """
 # Planetscope images are high resolution (3m) satellite images from Planet Labs
@@ -17,33 +16,20 @@ import argparse
 import os
 import time
 import traceback
-from multiprocessing import Pool, cpu_count
-from functools import partial
 
 # data manipulation
+import json
+import geopandas as gpd
 import utm
-
-# visualization
-from tqdm.auto import tqdm
 from pyproj import CRS
 
 # local imports
 from helpers.load_configs import add_config_arguments, load_configs
-from helpers.job_tracker import (
-    get_job_csv_path,
-    record_job_start,
-    record_job_complete,
-    record_job_failure,
-    is_script_completed,
-)
 from data_acquisition.cube.metropolitan_regions import get_region_bbox
 from data_acquisition.planetscope.process import (
     create_reference_da_from_bounds,
-    process_single_date,
+    build_planetscope_date_zarr,
 )
-from data_acquisition.planetscope.combine import combine_planetscope_zarrs
-
-SCRIPT_NAME = "process_planetscope"
 
 
 #### Function to exit on error ######
@@ -71,17 +57,6 @@ def main(args):
     planet_region_folder = f"{big_data_storage_path}/planet_scope/{region.lower()}"
     os.makedirs(planet_region_folder, exist_ok=True)
 
-    ###### Job tracking setup ######
-    job_csv = get_job_csv_path(big_data_storage_path, region, SCRIPT_NAME)
-    job_id = os.environ.get("SLURM_JOB_ID", "local")
-
-    # Skip if already completed
-    if is_script_completed(job_csv):
-        print(f"[{SCRIPT_NAME}] Already completed for region {region}, skipping.")
-        exit(0)
-
-    record_job_start(job_csv, job_id, SCRIPT_NAME)
-
     ##### get the landsat zarr file name ######
     landsat_zarr_name = args.LANDSAT_ZARR_NAME
 
@@ -103,7 +78,7 @@ def main(args):
 
     planet_zarr_name = f"{planet_region_folder}/planet_config_ge{min_temperature}_cc{max_cloud_cover}_{start_year}_{end_year}.zarr"
 
-    print(f"Processing PlanetScope for region: {region} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("Processing region:", region, "at", time.strftime("%Y-%m-%d %H:%M:%S"))
 
     ######## Try except Planet data processing ########
     try:
@@ -111,100 +86,72 @@ def main(args):
         if os.path.exists(planet_zarr_name):
             print(f"PlanetScope data already exists at {planet_zarr_name}, skipping processing.")
             exit(0)
+        
+        filename = args.FILENAME
 
-        # parse filenames (colon-separated from the request script)
-        filenames = args.FILENAMES.split(":")
-        filenames = [f.strip() for f in filenames if f.strip()]
+        print("Processing file:", filename, "at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        # exit(0)  # Exit early for testing purposes
 
-        if not filenames:
-            exit_with_error(f"No filenames provided, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-        print(f"Processing {len(filenames)} date collections into per-date Zarr files at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-        ############ Compute bbox and reference grid once for the region ############
+        folderpath = f"{planet_region_folder}/planet_tmp"
+        collection = gpd.read_parquet(filename)
+        scene_date = collection.date_id.iloc[0]
+        scene_date = scene_date.replace("-", "")
+        collection_folder = f"{folderpath}/psscene_{scene_date}"
+        collection_files = os.listdir(collection_folder)
+        collection_files = [f"{collection_folder}/{file}" for file in collection_files]
+            
+        planet_date_zarr_name = f"{planet_region_folder}/planet_scope_{scene_date}.zarr"
+        
+        if os.path.exists(planet_date_zarr_name):
+            print(f"PlanetScope data for date {scene_date} already exists at {planet_date_zarr_name}, skipping processing.")
+            exit(0)
+            
+        ############ Define the bbox ############ 
         bbox_gdf = get_region_bbox(region=region, repo_dir=repo_dir)
 
-        # reproject to utm zone
-        easting, northing, zone_number, zone_letter = utm.from_latlon(
-            bbox_gdf.geometry.centroid.y.values[0],
-            bbox_gdf.geometry.centroid.x.values[0]
-        )
+        # reproject gdfs to utm zone
+        easting, northing, zone_number, zone_letter = utm.from_latlon(bbox_gdf.geometry.centroid.y.values[0], bbox_gdf.geometry.centroid.x.values[0])
         is_south = zone_letter < 'N'  # True for southern hemisphere
         utm_crs = CRS.from_dict({'proj': 'utm', 'zone': int(zone_number), 'south': is_south})
         print(f"UTM CRS: {utm_crs.to_authority()} with zone {zone_number}{zone_letter}")
         bbox_gdf = bbox_gdf.to_crs(utm_crs)
 
-        # prepare reference dataset
-        bounds = bbox_gdf.total_bounds  # minx, miny, maxx, maxy
+        ###### Prepare reference dataset ##########
+        utm_bounds_gdf = bbox_gdf.to_crs(utm_crs)
+        bounds = utm_bounds_gdf.total_bounds  # minx, miny, maxx, maxy
         res_m = 3.0
         ref = create_reference_da_from_bounds(bounds, res_m, crs=utm_crs.to_string())
+        # ref = ref.rio.reproject("EPSG:4326")
 
-        ########## Step 1: Process each date in parallel ##########
-        n_workers = min(len(filenames), max(1, cpu_count() - 1))
-        print(f"Using {n_workers} parallel workers for date processing")
-
-        # use partial to fix the shared arguments
-        process_fn = partial(
-            process_single_date,
+        ######### Build the zarr for this date #########
+        build_planetscope_date_zarr(
+            collection_files=collection_files,
             bbox_gdf=bbox_gdf,
             ref=ref,
-            planet_region_folder=planet_region_folder
+            scene_date=scene_date,
+            output_path=planet_date_zarr_name
         )
 
-        with Pool(n_workers) as pool:
-            results = list(tqdm(
-                pool.imap(process_fn, filenames),
-                total=len(filenames),
-                desc="Processing dates",
-                unit="date"
-            ))
-
-        # check results
-        successful = [r for r in results if r is not None]
-        failed = [f for f, r in zip(filenames, results) if r is None]
-
-        print(f"Successfully processed {len(successful)}/{len(filenames)} dates")
-        if failed:
-            print(f"Failed dates: {failed}")
-
-        if not successful:
-            exit_with_error(f"All date processing failed, finishing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-        ########## Step 2: Combine all date zarrs into one ##########
-        print(f"Combining {len(successful)} date zarrs into {planet_zarr_name} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        combine_planetscope_zarrs(
-            filenames=filenames,
-            planet_region_folder=planet_region_folder,
-            planet_zarr_name=planet_zarr_name
-        )
-
-        print(f"Finished processing PlanetScope data at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-        record_job_complete(job_csv, job_id)
+        print(f"Saved PlanetScope dataset to {planet_date_zarr_name} at", time.strftime("%Y-%m-%d %H:%M:%S"))
 
     except Exception as e:
         print(f"An error occurred: {e}")
-
+        
         # print full stack trace for debugging
         traceback.print_exc()
-
-        record_job_failure(job_csv, job_id, str(e))
-
+        
         exit_with_error(f"An error occurred: {e}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description='Process and combine PlanetScope data for a region (multiprocessing per-date, then combine)'
-    )
+    parser = argparse.ArgumentParser(description='Process PlanetScope data for a single date into a Zarr cube')
     
     # Add config file arguments
     add_config_arguments(parser)
     
     parser.add_argument('--REGION', type=str, required=True, help='Metropolitan region to process (e.g. Berlin, London, New York)')
     parser.add_argument('--LANDSAT_ZARR_NAME', type=str, required=True, help='Path to the Landsat zarr file (used to derive config parameters)')
-    parser.add_argument('--FILENAMES', type=str, required=True, help='Colon-separated list of collection parquet file paths for each date')
+    parser.add_argument('--FILENAME', type=str, required=True, help='Path to the collection parquet file for the date to process')
     
     args = parser.parse_args()
     

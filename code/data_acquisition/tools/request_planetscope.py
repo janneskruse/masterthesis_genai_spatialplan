@@ -36,7 +36,7 @@ from helpers.job_tracker import (
     is_script_completed,
 )
 from data_acquisition.cube.metropolitan_regions import get_region_bbox
-from data_acquisition.planet_scope.request import (
+from data_acquisition.planetscope.request import (
     search_planet_scenes_for_dates,
     get_planetscope_scenes_cover_for_date,
     download_all_collections,
