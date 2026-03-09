@@ -627,11 +627,11 @@ diffusion_stages:
 
 train_params:
   seed: 45
-  task_name: 'vae_simple'
+  task_name: 'stats'
 
   existing_paths: # to use parts from previous experiments
     # if specified, the respective training/creation will be skipped
-    patches: /work/zt75vipu-thesis/data/processed/two_stage_15/patches/ 
+    patches: null
     latents:
       satellite: null
       semantic: null
