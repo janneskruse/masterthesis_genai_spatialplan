@@ -211,7 +211,8 @@ def search_planet_scenes_for_dates(
 def merge_nearest_rows(
     df: gpd.GeoDataFrame,
     bbox_gdf: gpd.GeoDataFrame,
-    max_distance: float = 0.01
+    max_distance: float = 0.1,
+    cover_frac_threshold: float = 1,
 ) -> gpd.GeoDataFrame:
     '''
     Merges nearest rows of a GeoDataFrame until the merged geometry fully covers a reference bbox_gdf.
@@ -224,6 +225,8 @@ def merge_nearest_rows(
         Contains the target bounding box (1 row with 1 Polygon/Multipolygon)
     max_distance : float
         Maximum allowed distance for adding new geometries (same units as CRS)
+    cover_frac_threshold : float
+        Minimum coverage fraction to consider the bbox as sufficiently covered (between 0 and 1)
 
     Returns
     -------
@@ -252,14 +255,22 @@ def merge_nearest_rows(
         bbox_area = bbox_geom.area if bbox_geom is not None else 0
         cover_frac = inter_area / bbox_area if bbox_area > 0 else 0
         
-        if cover_frac >= 1:
+        if cover_frac >= cover_frac_threshold:
             break
 
-        # Find the nearest geometry to the current merged geometry
+        # Find the nearest geometries to the current merged geometry
         distances = df.distance(merged_geom)
         if distances.empty:
             break
+        
         nearest_idx = distances.idxmin()
+        
+        # check if others within same distance
+        nearby_indices = distances[distances <= distances[nearest_idx]].index.tolist()
+        
+        # choose the closest one in time
+        if len(nearby_indices) > 1:
+            nearest_idx = df.loc[nearby_indices, 'time_diff'].idxmin()
 
         if distances[nearest_idx] < max_distance:
             nearest_row = df.loc[[nearest_idx]]
@@ -276,7 +287,7 @@ def merge_nearest_rows(
     print(f"Coverage fraction of the first date's merged geometries over the bbox: {cover_frac:.2%}")
 
     # Final check
-    if not merged_gdf.union_all().covers(bbox_geom) and cover_frac < 1:
+    if not merged_gdf.union_all().covers(bbox_geom) and cover_frac < cover_frac_threshold:
         raise ValueError("Failed to fully cover the target bbox with available geometries.")
 
     return merged_gdf
@@ -491,6 +502,7 @@ def request_planet_item_download(
         planet_api_key: Tuple of (api_key, "") for authentication.
         asset_names: List of asset names to download.
     """
+    print(f"Requesting Planet item downloads for collection file: {collection_gdf_file} at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     collection = gpd.read_parquet(collection_gdf_file)
     collection_ids = collection.id.to_list()
 
@@ -506,56 +518,74 @@ def request_planet_item_download(
     for asset_name in asset_names:
         if not f'download_url_{asset_name}' in collection.columns or collection[f'download_url_{asset_name}'].isnull().any():
 
-            # get download urls
-            download_urls = []
+            # get download urls (fixed-length list with proper index tracking)
+            download_urls = [None] * len(collection)
             
             # check the rows with missing download urls
             if f'download_url_{asset_name}' in collection.columns:
                 missing_rows = collection[collection[f'download_url_{asset_name}'].isnull()]
                 # update download urls with existing ones
-                download_urls = collection.loc[collection[f'download_url_{asset_name}'].notnull(), f'download_url_{asset_name}'].to_list()
+                for idx, url in collection[f'download_url_{asset_name}'].items():
+                    if pd.notna(url):
+                        download_urls[idx] = url
             else:
                 missing_rows = collection
+            missing_indices = missing_rows.index.tolist()
+                
+            print(f"Requesting download URLs for {len(missing_rows)} missing assets of type {asset_name}...")
 
             lock = threading.Lock()
             
-            urls = pd.DataFrame(missing_rows["_links"].to_list()).assets
+            assets_urls = pd.DataFrame(missing_rows["_links"].to_list()).assets  # all asset links
 
             with ThreadPoolExecutor(max_workers=10) as executor:
+                # Submit tasks with their corresponding indices
                 futures = {
-                    executor.submit(_process_asset, url, planet_api_key, asset_name): url 
-                    for url in urls
+                    executor.submit(_process_asset, url, planet_api_key, asset_name): (url, idx)
+                    for url, idx in zip(assets_urls, missing_indices)
                 }
 
                 for future in as_completed(futures):
+                    url, idx = futures[future]
                     try:
                         download_url = future.result()
                     except Exception as e:
-                        print(f"Asset worker raised an exception for {futures[future]}: {e}")
+                        print(f"Asset worker raised an exception for {url}: {e}")
+                        with lock:
+                            download_urls[idx] = None
                         continue
 
-                    if download_url:
-                        with lock:
-                            download_urls.append(download_url)
-                            
-            # check if doubled download urls
-            if len(set(download_urls)) < len(download_urls):
-                print(f"Warning: Duplicate download URLs found for {collection_gdf_file}.")
-                # drop duplicates
-                download_urls = list(set(download_urls))
+                    with lock:
+                        download_urls[idx] = download_url
             
+            print(f"Received {sum(1 for url in download_urls if url is not None)} download URLs for asset type {asset_name}, updating GeoDataFrame...")
             # save to parquet
             collection[f'download_url_{asset_name}'] = pd.Series(download_urls)
             collection.to_parquet(collection_gdf_file)
         else:
             print(f"Download URLs for {collection_gdf_file} already exist, skipping activation request.")
-            download_urls = collection[f'download_url_{asset_name}'].to_list()
+        
+        # get download urls from collection
+        download_urls = collection[f'download_url_{asset_name}'].to_list()
+          
+        # prepare indices for download  
+        download_urls_dict = {url: i for i, url in enumerate(download_urls)}
 
-        print(f"Collected {len(download_urls)} download URLs.")
+        # filter out "downloaded" urls
+        download_urls = [url for url in download_urls if url != "downloaded"]
+
+        # check if doubled download urls
+        if len(set(download_urls)) < len(download_urls):
+            print(f"Warning: Duplicate download URLs found for {collection_gdf_file}.")
+            # drop duplicates but keep
+            download_urls = list(set(download_urls))
+
+        print(f"Collected {len(download_urls)} download URLs. Starting downloads for asset type {asset_name}...")
 
         # download files
         downloaded_files = 0
-        for i, url in enumerate(download_urls):
+        for url in download_urls:
+            i = download_urls_dict[url]
             if _download_file(url, collection_ids[i], scene_folderpath, f"{asset_name}_{i}", planet_api_key):
                 downloaded_files += 1
 

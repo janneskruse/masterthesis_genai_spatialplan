@@ -152,26 +152,37 @@ def main(args):
         time_ids = [(i, t) for i, t in enumerate(time_ranges)]
 
         ###### get planet scenes for the bbox and time ranges ######
-        planet_bydate_gdf = search_planet_scenes_for_dates(
-            time_ranges=time_ranges,
-            coordinates=coordinates,
-            planet_api_key=planet_api_key,
-            url=url,
-            cloud_cover_limit=cloud_cover_limit
-        )
-
-        # reproject gdfs to utm zone
         easting, northing, zone_number, zone_letter = utm.from_latlon(bbox_gdf.geometry.centroid.y.values[0], bbox_gdf.geometry.centroid.x.values[0])
         is_south = zone_letter < 'N'  # True for southern hemisphere
         utm_crs = CRS.from_dict({'proj': 'utm', 'zone': int(zone_number), 'south': is_south})
         print(f"UTM CRS: {utm_crs.to_authority()} with zone {zone_number}{zone_letter}")
-
-        planet_bydate_gdf = planet_bydate_gdf.to_crs(utm_crs)
-        bbox_gdf = bbox_gdf.to_crs(utm_crs)
-
+        
         # Save scene metadata as geoparquet
         meta_filename = f"{planet_region_folder}/planet_ge{min_temperature}_{start_year}_{end_year}_meta.parquet"
-        planet_bydate_gdf.to_parquet(meta_filename)
+
+        if not os.path.exists(meta_filename):
+            planet_bydate_gdf = search_planet_scenes_for_dates(
+                time_ranges=time_ranges,
+                coordinates=coordinates,
+                planet_api_key=planet_api_key,
+                url=url,
+                cloud_cover_limit=cloud_cover_limit
+            )
+
+            # reproject gdfs to utm zone
+            planet_bydate_gdf = planet_bydate_gdf.to_crs(utm_crs)
+            bbox_gdf = bbox_gdf.to_crs(utm_crs)
+
+            planet_bydate_gdf.to_parquet(meta_filename)
+        else:
+            print(f"Metadata file {meta_filename} already exists, loading existing metadata.")
+            planet_bydate_gdf = gpd.read_parquet(meta_filename)
+
+            # reproject gdfs to utm zone
+            planet_bydate_gdf = planet_bydate_gdf.to_crs(utm_crs)
+            bbox_gdf = bbox_gdf.to_crs(utm_crs)
+
+        print(f"Found {len(planet_bydate_gdf)} PlanetScope scenes for region {region} between {start_year} and {end_year} with max {cloud_cover_limit*100}% cloud cover, metadata saved to {meta_filename}")
         
         ########## compute scene covers for all dates ##########
         folderpath = f"{planet_region_folder}/planet_tmp"
