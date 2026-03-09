@@ -172,6 +172,7 @@ class UrbanInpaintingDataset(Dataset):
         im_channels = dataset_config.get('im_channels', 3)
         min_valid_percent = dataset_config.get('min_valid_percent', 90)
         self.big_data_storage_path = big_data_storage_path
+        self.stats_on_all_layers = dataset_config.get('stats_on_all_layers', False)
         train_config_global = config.get('train_params', {})
         
         existing_patch_size = train_config_global.get('existing_patch_size', None)
@@ -363,6 +364,11 @@ class UrbanInpaintingDataset(Dataset):
                 }
             
             print(f"✓ Loaded statistics for {len(self.layer_stats)} layers from cache\n")
+            print(f"Statistics:")
+            for layer_name, stats in self.layer_stats.items():
+                print(f"  - {layer_name}: min={stats['min']:.3f}, max={stats['max']:.3f}, "
+                      f"mean={stats['mean']:.3f}, std={stats['std']:.3f}, "
+                      f"q01={stats['q01']:.3f}, q99={stats['q99']:.3f}")
             return
         else:
             if stats_path.exists():
@@ -388,11 +394,11 @@ class UrbanInpaintingDataset(Dataset):
             
             # Check if this layer needs normalization
             normalize_method = layer_config.get('normalize', None)
-            if normalize_method is None:
+            if normalize_method is None and not self.stats_on_all_layers:
                 continue
             if normalize_method == 'custom':
                 normalize_params = layer_config.get('normalize_params', {})
-                if 'min' in normalize_params and 'max' in normalize_params:
+                if 'min' in normalize_params and 'max' in normalize_params and not self.stats_on_all_layers:
                     # Custom min/max provided - skip stats computation
                     print(f"  ✓ Skipping '{layer_name}' (custom min/max provided)")
                     continue
