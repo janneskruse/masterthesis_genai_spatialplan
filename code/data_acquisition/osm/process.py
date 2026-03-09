@@ -38,6 +38,10 @@ from zarr import config
 
 # Street width classifications based on German road standards
 # Richtlinien für die Anlage von Autobahnen and Landstraßen
+# see 
+# - Richtlinien für die Anlage von Autobahnen https://www.fgsv-verlag.de/raa-guidelines-for-the-design-of-motorways-edition-2008-translation-2011-englische-ubersetzung
+# - Richtlinien für die Anlage von Landstraßen https://www.bast.de/DE/Verkehrstechnik/Fachthemen/v1-strassentypen.html
+# The following simplifies the values for the different highway classes:
 STREET_WIDTHS = {
     'motorway': 24,
     'motorway_link': 16,
