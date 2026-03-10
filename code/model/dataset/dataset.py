@@ -439,6 +439,10 @@ class UrbanInpaintingDataset(Dataset):
                         layer_da = date_data[source_layer].sel(channel=layer_channels)
                     else:
                         layer_da = date_data[source_layer]
+                        
+                    # if ndvi, clip (legacy for old datasets - planetscope histogram macthing was fixed)
+                    if layer_name == 'ndvi':
+                        layer_da = layer_da.clip(-1, 1)
                     
                     # Load data (materialize from dask)
                     data_np = layer_da.values
