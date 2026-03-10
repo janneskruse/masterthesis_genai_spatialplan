@@ -442,10 +442,10 @@ def histogram_match_global(source: xr.DataArray, reference: xr.DataArray) -> xr.
         matched_band = src_band.astype('float32')
 
         if valid_src.any() and valid_ref.any():
-            matched_band[valid_src] = match_histograms(
-                src_band[valid_src],
-                ref_band[valid_ref],
-            )
+            matched_band[valid_src] = np.maximum(
+                match_histograms(src_band[valid_src], ref_band[valid_ref]),
+                0,
+            )  # reflectance >= 0
 
         matched_band[~valid_src] = np.nan
         matched_bands.append(matched_band)
@@ -513,7 +513,7 @@ def histogram_match(source: xr.DataArray, reference: xr.DataArray) -> xr.DataArr
             ref_overlap_band[valid_ref],
         )
 
-        matched_band[valid_full] = hist_matched
+        matched_band[valid_full] = np.maximum(hist_matched, 0)  # reflectance >= 0
         matched_band[~valid_full] = np.nan
 
         matched_bands.append(matched_band)
@@ -716,11 +716,13 @@ def build_planetscope_date_zarr(
         # Derive NDVI dataarray from the planetscope data
         merged = merged.to_dataset(name="planetscope_sr_4band")
 
-        # create ndvi
-        merged["ndvi"] = (
+        # create ndvi and clip to natural range (histogram matching can push reflectance
+        # values beyond valid bounds, producing NDVI outside [-1, 1])
+        ndvi = (
             (merged.planetscope_sr_4band.isel(channel=3) - merged.planetscope_sr_4band.isel(channel=2))
             / (merged.planetscope_sr_4band.isel(channel=3) + merged.planetscope_sr_4band.isel(channel=2))
         )
+        merged["ndvi"] = ndvi.clip(-1, 1)
 
         print(f"Shape of merged dataset for date {scene_date}: {merged.dims} with CRS {merged.rio.crs}")
 
