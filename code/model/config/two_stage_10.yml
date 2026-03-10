@@ -125,7 +125,7 @@ inpainting_params:
 # ===========================================================================
 
 dataset_params:
-  big_data_storage_path: "/work/zt75vipu-thesis/data"
+  big_data_storage_path: "/work2/zt75vipu-thesis/data"
   train_regions: ['Dresden', 'Hamburg', 'Stuttgart']
   eval_regions: ['Leipzig']
   zarr_name: "input_config_ge25_cc10_2019_2024_clipped.zarr"
@@ -526,15 +526,15 @@ train_params:
 
   existing_paths: # to use parts from previous experiments
     # if specified, the respective training/creation will be skipped
-    patches: /work/zt75vipu-thesis/data/processed/two_stage_7/patches/ 
+    patches: /work2/zt75vipu-thesis/data/processed/two_stage_7/patches/ 
     latents:
       satellite: null
-      semantic: /work/zt75vipu-thesis/data/results/two_stage_7/semantic_latents/
-      environmental: /work/zt75vipu-thesis/data/results/two_stage_7/environmental_latents/
+      semantic: /work2/zt75vipu-thesis/data/results/two_stage_7/semantic_latents/
+      environmental: /work2/zt75vipu-thesis/data/results/two_stage_7/environmental_latents/
     vae_checkpoints: 
       satellite: null
-      semantic: /work/zt75vipu-thesis/data/results/two_stage_7/semantic_vae_ckpt.pth
-      environmental: /work/zt75vipu-thesis/data/results/two_stage_7/environmental_vae_ckpt.pth
+      semantic: /work2/zt75vipu-thesis/data/results/two_stage_7/semantic_vae_ckpt.pth
+      environmental: /work2/zt75vipu-thesis/data/results/two_stage_7/environmental_vae_ckpt.pth
     diffusion_checkpoints:
       semantic: null
       satellite: null
