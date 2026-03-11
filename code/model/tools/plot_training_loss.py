@@ -138,6 +138,12 @@ def detect_model_type(log_path: str) -> str:
     """Detect training type from filename."""
     name = Path(log_path).stem.lower()
     if 'diffusion' in name:
+        if 'satellite' in name:
+            return 'Satellite Diffusion'
+        elif 'semantic' in name:
+            return 'Semantic Diffusion'
+        elif 'environmental' in name:
+            return 'Environmental Diffusion'
         return 'Diffusion'
     elif 'cvae' in name:
         return 'CVAE'
@@ -260,39 +266,68 @@ def plot_comparison(
     log_paths: List[str],
     save_path: Optional[str] = None,
     log_scale: bool = False,
+    loss_keys: Optional[List[str]] = None,
+    title: Optional[str] = None,
 ) -> None:
     """
-    Plot primary loss curves from multiple log files for comparison.
+    Plot loss components from multiple log files for comparison.
+    
+    For each file, plots all requested loss_keys that are present.
+    Labels include both model type and loss key for clarity.
     """
     fig, ax = plt.subplots(1, 1, figsize=(12, 6))
     
-    compare_palette = sns.color_palette("rocket", n_colors=max(len(log_paths), 2))
+    n_files = len(log_paths)
+    compare_palette = sns.color_palette("rocket", n_colors=max(n_files, 2))
+    linestyles = ['-', '--', ':', '-.']
     
     for idx, log_path in enumerate(log_paths):
         losses = parse_log_file(log_path)
         model_type = detect_model_type(log_path)
-        job_id = Path(log_path).stem.split('-')[-1] if '-' in Path(log_path).stem else ''
-        label = f'{model_type} ({job_id})' if job_id else model_type
         
-        # Pick the primary loss key
-        primary_key = None
-        for candidate in ('VAE Loss', 'Total', 'Noise Loss'):
-            if candidate in losses:
-                primary_key = candidate
-                break
+        # Determine which keys to plot for this file
+        if loss_keys:
+            keys_to_plot = [k for k in loss_keys if k in losses]
+            missing = [k for k in loss_keys if k not in losses]
+            if missing:
+                print(f"⚠ Keys {missing} not found in {log_path}, available: {list(losses.keys())}")
+        else:
+            # Auto-detect primary loss
+            keys_to_plot = []
+            for candidate in ('VAE Loss', 'Total', 'Noise Loss'):
+                if candidate in losses:
+                    keys_to_plot.append(candidate)
+                    break
+            if not keys_to_plot:
+                print(f"⚠ No recognized primary loss in {log_path}")
+                continue
         
-        if primary_key is None:
-            print(f"⚠ No recognized primary loss in {log_path}")
-            continue
-        
-        epochs, values = zip(*losses[primary_key])
-        ax.plot(epochs, values, label=f'{label} — {primary_key}',
-                color=compare_palette[idx % len(compare_palette)], linewidth=2,
-                marker='.', markersize=4)
+        primary_epochs = None
+        primary_values = None
+        for key_idx, key in enumerate(keys_to_plot):
+            epochs, values = zip(*losses[key])
+            label = f'{model_type} — {key}'
+            base_color = np.array(compare_palette[idx % len(compare_palette)])
+            
+            if key_idx == 0:
+                color = base_color
+            else:
+                # Lighter shade: blend toward white
+                color = base_color + (1.0 - base_color) * 0.4
+                color = np.clip(color, 0, 1)
+            
+            ax.plot(epochs, values, label=label,
+                    color=color, linewidth=2.0,
+                    linestyle='-', marker='.', markersize=4)
     
+    if title is None:
+        if loss_keys:
+            title = f'{", ".join(loss_keys)} Comparison'
+        else:
+            title = 'Training Loss Comparison'
     ax.set_xlabel('Epoch', fontsize=12)
     ax.set_ylabel('Loss', fontsize=12)
-    ax.set_title('Training Loss Comparison', fontsize=14, fontweight='bold')
+    ax.set_title(title, fontsize=14, fontweight='bold')
     ax.legend(loc='upper right', fontsize=10)
     ax.grid(True, alpha=0.3)
     ax.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
@@ -353,10 +388,18 @@ if __name__ == '__main__':
         '--summary', action='store_true',
         help='Print summary table of parsed losses'
     )
+    parser.add_argument(
+        '--loss_key', type=str, nargs='+', default=None,
+        help='Loss component(s) to plot in comparison mode (e.g. Recon KL "Noise Loss" Perc). Auto-detects if not set.'
+    )
+    parser.add_argument(
+        '--title', type=str, default=None,
+        help='Custom title for the plot'
+    )
     
     args = parser.parse_args()
     
-    config = load_configs()
+    config = load_configs(parser)
     
     repo_dir = Path(config["repo_dir"])
     task_name = config.get('train_params', {}).get('task_name', 'urban_inpainting')
@@ -367,7 +410,7 @@ if __name__ == '__main__':
         save_path = args.save
         if save_path is None:
             save_path = str(results_dir / 'loss_comparison.png')
-        plot_comparison(args.log_files, save_path=save_path, log_scale=args.log_scale)
+        plot_comparison(args.log_files, save_path=save_path, log_scale=args.log_scale, loss_keys=args.loss_key, title=args.title)
     else:
         for log_path in args.log_files:
             print(f"\nParsing: {log_path}")
