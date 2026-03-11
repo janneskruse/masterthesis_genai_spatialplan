@@ -21,7 +21,7 @@ from torchvision.utils import make_grid, save_image
 # Local libraries
 from model.blocks.unet_cond_base import Unet
 from model.blocks.vae_registry import VAERegistry
-from model.scheduler.linear_noise_scheduler import LinearNoiseScheduler
+from model.scheduler.scheduler_factory import get_scheduler, get_inpainting_sampler_for_stage
 from model.dataset.dataset import UrbanInpaintingDataset
 from model.utils.config_utils import compute_patch_and_latent_sizes, build_unet_condition_config
 from model.utils.checkpoint import load_checkpoint, check_existing_paths
@@ -31,7 +31,6 @@ from model.utils.diffusion_utils import (
     sample_with_repaint,
     make_uncond_input_keep_mask
 )
-from model.scheduler.scheduler_factory import get_inpainting_sampler_for_stage
 from helpers.load_configs import load_configs
 from helpers.indexed_outputs import get_next_run_idx
 
@@ -445,11 +444,21 @@ def render_satellite_from_semantics(
                 show_progress=True
             )
         else:
-            # Standard sampling loop
-            print(f"  Denoising {scheduler.num_timesteps} steps...")
+            # Standard sampling loop (modular DDIM/DDPM)
+            if sampler_type == 'ddim':
+                num_steps = scheduler.ddim_steps
+            else:
+                num_steps = scheduler.num_timesteps
+            
+            print(f"  Denoising {num_steps} steps ({sampler_type.upper()})...")
             with torch.no_grad():
-                for i in tqdm(reversed(range(scheduler.num_timesteps)), desc="  ", leave=False):
-                    t = torch.full((1,), i, device=device, dtype=torch.long)
+                for step_idx in tqdm(reversed(range(num_steps)), desc="  ", total=num_steps, leave=False):
+                    # Map step index to full timestep for the model
+                    if sampler_type == 'ddim':
+                        t_value = scheduler.ddim_timesteps[step_idx].item()
+                        t = torch.full((1,), t_value, device=device, dtype=torch.long)
+                    else:
+                        t = torch.full((1,), step_idx, device=device, dtype=torch.long)
                     
                     # Classifier-free guidance
                     if guidance_scale > 0:
@@ -459,20 +468,23 @@ def render_satellite_from_semantics(
                     else:
                         noise_pred = model(x, t, cond_input=cond_input)
                     
-                    # FIX: Denoise step with proper inpainting behavior
+                    # Denoise step (scheduler-specific)
                     if inpainting_mode == "hard":
                         # Hard mode: use inpainting scheduler with fixed noise_context
                         x, x0 = scheduler.sample_prev_timestep_inpainting(
-                            x, noise_pred, i, rgb_context_latent, mask_latent, noise_context=noise_context
+                            x, noise_pred, step_idx, rgb_context_latent, mask_latent, noise_context=noise_context
                         )
                     else:
                         # SD-like: standard denoising
-                        x, x0 = scheduler.sample_prev_timestep(x, noise_pred, i)
+                        x, x0 = scheduler.sample_prev_timestep(x, noise_pred, step_idx)
                         
-                        # RECOMMENDED: Enforce outside distribution each step for SD-like mode
-                        # Prevents outside drift from affecting inside, improves seam quality
-                        if rgb_context_latent is not None and noise_context_sd is not None and i > 0:
-                            t_batch = torch.full((1,), i-1, device=device, dtype=torch.long)
+                        # Enforce outside distribution each step for SD-like mode
+                        if rgb_context_latent is not None and noise_context_sd is not None and step_idx > 0:
+                            if sampler_type == 'ddim':
+                                t_prev_value = scheduler.ddim_timesteps[step_idx - 1].item() if step_idx > 0 else 0
+                                t_batch = torch.full((1,), t_prev_value, device=device, dtype=torch.long)
+                            else:
+                                t_batch = torch.full((1,), step_idx - 1, device=device, dtype=torch.long)
                             x_context_noisy = scheduler.add_noise(rgb_context_latent, noise_context_sd, t_batch)
                             x = mask_latent * x + (1 - mask_latent) * x_context_noisy
         
@@ -630,12 +642,14 @@ def infer(args, config):
     print(f"Stage config: {mode}")
     
     ########## Create Scheduler #############
-    scheduler = LinearNoiseScheduler(
-        num_timesteps=diffusion_config['num_timesteps'],
-        beta_start=diffusion_config['beta_start'],
-        beta_end=diffusion_config['beta_end']
-    )
-    print(f"\n✓ Created noise scheduler with {diffusion_config['num_timesteps']} timesteps")
+    scheduler = get_scheduler(diffusion_config)
+    
+    # Determine sampler type for modular loop
+    sampler_type = diffusion_config.get('sampler', 'ddpm')
+    if sampler_type == 'ddim':
+        print(f"\n✓ Created DDIM scheduler with {scheduler.ddim_steps} steps (from {diffusion_config['num_timesteps']} total)")
+    else:
+        print(f"\n✓ Created DDPM scheduler with {diffusion_config['num_timesteps']} timesteps")
     
     ########## Load Models #############
     print("\n" + "="*60)

@@ -371,6 +371,12 @@ diffusion_params:
   beta_start: 0.0001
   beta_end: 0.02
   
+  # Sampler type for inference/sampling
+  # Options: 'ddpm' (full 1000 steps) | 'ddim' (fast, default 50 steps)
+  sampler: 'ddpm'
+  ddim_steps: 50    # Only used when sampler: 'ddim'
+  ddim_eta: 0.0     # DDIM stochasticity: 0.0=deterministic, 1.0=DDPM-like
+  
   # Beta schedule type (affects noise distribution across timesteps)
   # Options: 
   #   'linear' (scaled-linear): Original DDPM
